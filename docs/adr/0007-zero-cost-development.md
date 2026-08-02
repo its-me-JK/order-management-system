@@ -1,6 +1,6 @@
 # ADR-0007: Keep development and demonstration infrastructure at zero cost
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0008](0008-zero-cost-public-showcase.md)
 - **Date:** 2026-08-02
 
 ## Context

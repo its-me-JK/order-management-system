@@ -24,7 +24,8 @@ A material change requires a new ADR that supersedes the old one.
 | [0004](0004-transactional-outbox.md) | Accepted | Use a transactional outbox for integration events |
 | [0005](0005-pnpm-workspace.md) | Accepted | Use a native pnpm workspace |
 | [0006](0006-persistence-boundaries.md) | Accepted | Centralize persistence infrastructure without surrendering module ownership |
-| [0007](0007-zero-cost-development.md) | Accepted | Keep development and demonstration infrastructure at zero cost |
+| [0007](0007-zero-cost-development.md) | Superseded | Keep development and demonstration infrastructure at zero cost |
+| [0008](0008-zero-cost-public-showcase.md) | Accepted | Operate a zero-cost public showcase environment |
 
 ## Template
 

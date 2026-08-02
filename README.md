@@ -16,6 +16,9 @@ Prisma database package, automated tests, and CI quality gates are in place.
 No business models, business modules, migrations, or public feature endpoints
 have been implemented yet.
 
+**Overall project progress: 13%.** The fixed, deployment-inclusive scoring
+model and evidence are maintained in [Project progress](docs/progress.md).
+
 ## Planned technology
 
 - Node.js, NestJS, and TypeScript
@@ -61,7 +64,8 @@ Significant decisions are recorded as Architecture Decision Records (ADRs):
 - [ADR-0004: Use a transactional outbox for integration events](docs/adr/0004-transactional-outbox.md)
 - [ADR-0005: Use a native pnpm workspace](docs/adr/0005-pnpm-workspace.md)
 - [ADR-0006: Centralize persistence infrastructure without surrendering module ownership](docs/adr/0006-persistence-boundaries.md)
-- [ADR-0007: Keep development and demonstration infrastructure at zero cost](docs/adr/0007-zero-cost-development.md)
+- [ADR-0007: Keep development and demonstration infrastructure at zero cost (superseded)](docs/adr/0007-zero-cost-development.md)
+- [ADR-0008: Operate a zero-cost public showcase environment](docs/adr/0008-zero-cost-public-showcase.md)
 
 The [ADR index](docs/adr/README.md) explains the lifecycle and format of these
 records.
@@ -99,10 +103,11 @@ Prerequisites:
 - pnpm `11.18.0`, as pinned in the root `packageManager` field.
 - Docker Engine and Docker Compose `2.20` or newer.
 
-This repository provisions no cloud resources. Local dependencies use
-open-source containers, and standard GitHub-hosted Actions runners are free for
-this public repository. The AWS topology remains a future design, not a running
-environment.
+This repository currently provisions no cloud resources. Local dependencies
+use open-source containers, and standard GitHub-hosted Actions runners are free
+for this public repository. A no-card public showcase environment is approved
+but will not be provisioned until it has a meaningful, secure vertical slice.
+The AWS topology remains a future design, not a running environment.
 
 Create local-only password files and start MySQL:
 
