@@ -13,8 +13,8 @@ accepted outcomes, not lines of code, generated files, commits, or activity.
 
 | Workstream | Weight | Earned | Current evidence |
 | --- | ---: | ---: | --- |
-| Architecture and contracts | 6% | 3.5% | Architecture overview and eight ADRs; detailed policy and feature contracts remain |
-| Platform and persistence | 9% | 4.5% | Workspace, runtime shells, MySQL, Prisma, migrations tooling, and database integration test |
+| Architecture and contracts | 6% | 3.5% | Architecture overview and nine ADRs; detailed policy and feature contracts remain |
+| Platform and persistence | 9% | 5% | Workspace, runtime shells, validated API bootstrap configuration, MySQL, Prisma, migrations tooling, and database integration test |
 | Backend business capabilities | 35% | 0% | No business module or endpoint implemented |
 | Redis, RabbitMQ, and workers | 9% | 0% | Architecture only |
 | Testing, security, and resilience | 11% | 1.5% | Strict quality gates, composition-root tests, and a real MySQL contract test |
@@ -22,7 +22,7 @@ accepted outcomes, not lines of code, generated files, commits, or activity.
 | Observability and operations | 5% | 0% | Not started |
 | CI/CD and public deployment | 8% | 1.5% | CI quality and database jobs exist; no release pipeline or live environment |
 | Documentation and demo polish | 5% | 2% | README, architecture overview, and ADR history exist; OpenAPI and demo guides remain |
-| **Total** | **100%** | **13%** | |
+| **Total** | **100%** | **13.5%** | Displayed overall is rounded down |
 
 The weights are fixed unless the project scope is formally re-baselined. A
 workstream may use fractional earned points internally, but the displayed

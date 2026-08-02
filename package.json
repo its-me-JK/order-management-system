@@ -12,6 +12,7 @@
   },
   "scripts": {
     "build": "pnpm db:generate && pnpm --recursive --if-present run build",
+    "build:api": "pnpm --filter @oms/api... --if-present run build",
     "check": "pnpm format:check && pnpm db:schema:validate && pnpm db:generate && pnpm lint && pnpm typecheck && pnpm test && pnpm --recursive --if-present run build",
     "db:generate": "pnpm --filter @oms/database run prisma:generate",
     "db:migrate:create": "pnpm --filter @oms/database run prisma:migrate:create",
@@ -19,7 +20,7 @@
     "db:migrate:dev": "pnpm --filter @oms/database run prisma:migrate:dev",
     "db:migrate:status": "pnpm --filter @oms/database run prisma:migrate:status",
     "db:schema:validate": "pnpm --filter @oms/database run prisma:validate",
-    "dev:api": "pnpm --filter @oms/api run dev",
+    "dev:api": "pnpm --filter @oms/configuration run build && pnpm --filter @oms/api run dev",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "infra:down": "docker compose down",

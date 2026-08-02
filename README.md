@@ -10,11 +10,11 @@ the additional distributed-systems cost.
 
 ## Project status
 
-**Persistence foundation.** The architecture decisions, pinned workspace
-toolchain, API and worker composition roots, local MySQL 8.4 environment,
-Prisma database package, automated tests, and CI quality gates are in place.
-No business models, business modules, migrations, or public feature endpoints
-have been implemented yet.
+**Platform and persistence foundation.** The architecture decisions, pinned
+workspace toolchain, API and worker composition roots, validated API runtime
+configuration, local MySQL 8.4 environment, Prisma database package, automated
+tests, and CI quality gates are in place. No business models, business modules,
+migrations, or public feature endpoints have been implemented yet.
 
 **Overall project progress: 13%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
@@ -66,6 +66,7 @@ Significant decisions are recorded as Architecture Decision Records (ADRs):
 - [ADR-0006: Centralize persistence infrastructure without surrendering module ownership](docs/adr/0006-persistence-boundaries.md)
 - [ADR-0007: Keep development and demonstration infrastructure at zero cost (superseded)](docs/adr/0007-zero-cost-development.md)
 - [ADR-0008: Operate a zero-cost public showcase environment](docs/adr/0008-zero-cost-public-showcase.md)
+- [ADR-0009: Validate runtime configuration at process boundaries](docs/adr/0009-validate-runtime-configuration-at-boundaries.md)
 
 The [ADR index](docs/adr/README.md) explains the lifecycle and format of these
 records.
@@ -180,9 +181,12 @@ Start the API in watch mode:
 pnpm dev:api
 ```
 
-The API listens on port `3000` by default. Set `PORT` to a valid integer from
-`1` through `65535` to override it. There are intentionally no controllers in
-this scaffold, so an HTTP request returns the standard NestJS `404` response.
+The API listens on port `3000` by default. Set `PORT` to a canonical integer
+from `1` through `65535` to override it. `NODE_ENV` accepts `development`,
+`test`, or `production` and defaults to `development`. Invalid runtime
+configuration stops bootstrap before the API binds a socket. There are
+intentionally no controllers in this scaffold, so an HTTP request returns the
+standard NestJS `404` response.
 
 The worker is buildable and its composition root is tested, but it has no run
 script yet. An empty worker has no legitimate long-lived workload; a RabbitMQ
@@ -194,6 +198,7 @@ Useful repository commands:
 | Command | Purpose |
 | --- | --- |
 | `pnpm build` | Build every workspace project |
+| `pnpm build:api` | Build the API and its workspace dependencies |
 | `pnpm typecheck` | Run strict TypeScript checks |
 | `pnpm lint` | Run type-aware ESLint with zero warnings allowed |
 | `pnpm test` | Run the Jest test suite |
