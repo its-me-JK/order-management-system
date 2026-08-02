@@ -4,11 +4,12 @@
   "private": true,
   "type": "commonjs",
   "license": "MIT",
+  "sideEffects": false,
   "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "types": "src/index.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
+      "types": "./src/index.ts",
       "default": "./dist/index.js"
     }
   },
@@ -20,7 +21,7 @@
     "prisma:migrate:dev": "prisma migrate dev --config prisma.config.ts",
     "prisma:migrate:status": "prisma migrate status --config prisma.config.ts",
     "prisma:validate": "prisma validate --config prisma.config.ts",
-    "test:integration": "pnpm prisma:generate && tsc --project tsconfig.integration.json && node --test .integration-dist/test/database.integration-test.js",
+    "test:integration": "pnpm --filter @oms/configuration run build && pnpm prisma:generate && tsc --project tsconfig.integration.json && node --test .integration-dist/test/database.integration-test.js",
     "typecheck": "pnpm prisma:generate && tsc --noEmit --project tsconfig.json"
   },
   "dependencies": {
@@ -28,6 +29,7 @@
     "@prisma/client": "7.9.1"
   },
   "devDependencies": {
+    "@oms/configuration": "workspace:*",
     "dotenv": "17.4.2",
     "prisma": "7.9.1",
     "react": "19.2.8",

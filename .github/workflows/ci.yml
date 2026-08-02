@@ -46,7 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      MYSQL_PORT: 33060
+      DATABASE_PORT: 33060
 
     steps:
       - name: Check out repository
@@ -73,7 +73,8 @@ jobs:
           umask 077
           app_password_file="$RUNNER_TEMP/mysql-app-password"
           root_password_file="$RUNNER_TEMP/mysql-root-password"
-          echo "MYSQL_APP_PASSWORD_FILE=$app_password_file" >> "$GITHUB_ENV"
+          echo "DATABASE_PASSWORD_FILE=$app_password_file" >> "$GITHUB_ENV"
+          echo "COMPOSE_MYSQL_APP_PASSWORD_FILE=$app_password_file" >> "$GITHUB_ENV"
           echo "MYSQL_ROOT_PASSWORD_FILE=$root_password_file" >> "$GITHUB_ENV"
           openssl rand -hex 32 > "$app_password_file"
           openssl rand -hex 32 > "$root_password_file"

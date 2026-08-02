@@ -12,11 +12,12 @@ the additional distributed-systems cost.
 
 **Platform and persistence foundation.** The architecture decisions, pinned
 workspace toolchain, API and worker composition roots, validated API runtime
-configuration, local MySQL 8.4 environment, Prisma database package, automated
-tests, and CI quality gates are in place. No business models, business modules,
-migrations, or public feature endpoints have been implemented yet.
+and database configuration, local MySQL 8.4 environment, Prisma-private
+database lifecycle boundary, automated tests, and CI quality gates are in
+place. No business models, business modules, migrations, or public feature
+endpoints have been implemented yet.
 
-**Overall project progress: 13%.** The fixed, deployment-inclusive scoring
+**Overall project progress: 14%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
 
 ## Planned technology
@@ -113,6 +114,7 @@ The AWS topology remains a future design, not a running environment.
 Create local-only password files and start MySQL:
 
 ```bash
+test -f .env || cp .env.example .env
 mkdir -p .local/secrets
 umask 077
 openssl rand -hex 32 > .local/secrets/mysql-app-password
@@ -122,9 +124,8 @@ pnpm infra:up
 pnpm infra:status
 ```
 
-MySQL listens only on `127.0.0.1:3306`. If that port is occupied, copy
-`.env.example` to `.env` and change `MYSQL_PORT`. Local passwords and `.env` are
-ignored by Git.
+MySQL listens only on `127.0.0.1:3306`. If that port is occupied, change
+`DATABASE_PORT` in `.env`. Local passwords and `.env` are ignored by Git.
 
 Stop MySQL without deleting its data:
 
@@ -162,6 +163,13 @@ secret file. Runtime integration uses the restricted `oms_app` principal.
 Shared deployment environments must inject `DATABASE_MIGRATION_URL` through
 their secret mechanism and use a separate DDL-capable migration principal.
 Applications never apply migrations during startup.
+
+Runtime database settings use the `DATABASE_*` namespace documented in
+`.env.example`. A runtime receives exactly one of `DATABASE_PASSWORD` or
+`DATABASE_PASSWORD_FILE`; migration URLs are never part of its configuration.
+Production and showcase configuration requires `DATABASE_TLS_MODE` to be
+`verify-identity`. The only supported TLS behavior verifies the server
+certificate and hostname; there is no certificate-bypass option.
 
 Create a migration only after adding and reviewing a module-owned schema
 change:

@@ -43,8 +43,8 @@ function resolveLocalMigrationUrl(): string | undefined {
   url.username = 'root';
   url.password = password;
   url.hostname = optionalEnvironmentValue('DATABASE_HOST') ?? '127.0.0.1';
-  url.port = optionalEnvironmentValue('MYSQL_PORT') ?? '3306';
-  url.pathname = `/${optionalEnvironmentValue('MYSQL_DATABASE') ?? 'oms'}`;
+  url.port = optionalEnvironmentValue('DATABASE_PORT') ?? '3306';
+  url.pathname = `/${optionalEnvironmentValue('DATABASE_NAME') ?? 'oms'}`;
 
   return url.toString();
 }

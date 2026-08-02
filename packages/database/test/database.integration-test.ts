@@ -3,12 +3,15 @@ import { existsSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { dirname, resolve } from 'node:path';
 
+import {
+  parseDatabaseRuntimeConfiguration,
+  resolveDatabaseRuntimeConfiguration,
+} from '@oms/configuration';
 import { config as loadEnvironment } from 'dotenv';
 
-import {
-  createPrismaClient,
-  type PrismaClientConnectionOptions,
-} from '../src/client/prisma-client.factory';
+import type { DatabaseConnectionOptions } from '../src/database.contract';
+import { createPrismaClient } from '../src/client/prisma-client.factory';
+import { createDatabase } from '../src';
 
 function findRepositoryRoot(startDirectory: string): string {
   let currentDirectory = startDirectory;
@@ -33,51 +36,13 @@ loadEnvironment({
   quiet: true,
 });
 
-function environmentValue(name: string, fallback: string): string {
-  const value = process.env[name]?.trim();
+function databaseOptions(): DatabaseConnectionOptions {
+  const configuration = parseDatabaseRuntimeConfiguration(process.env, 'test');
 
-  return value === undefined || value === '' ? fallback : value;
-}
-
-function positiveIntegerEnvironmentValue(name: string, fallback: number): number {
-  const rawValue = environmentValue(name, String(fallback));
-  const value = Number(rawValue);
-
-  if (!Number.isSafeInteger(value) || value < 1) {
-    throw new Error(`${name} must be a positive integer`);
-  }
-
-  return value;
-}
-
-function databaseOptions(): PrismaClientConnectionOptions {
-  const passwordFile = resolve(
-    repositoryRoot,
-    environmentValue('MYSQL_APP_PASSWORD_FILE', '.local/secrets/mysql-app-password'),
-  );
-  const password = readFileSync(passwordFile, 'utf8').trim();
-
-  if (password === '') {
-    throw new Error('The configured MySQL application password file is empty');
-  }
-
-  return {
-    acquireTimeoutMilliseconds: positiveIntegerEnvironmentValue(
-      'DATABASE_ACQUIRE_TIMEOUT_MS',
-      10_000,
-    ),
-    connectTimeoutMilliseconds: positiveIntegerEnvironmentValue(
-      'DATABASE_CONNECT_TIMEOUT_MS',
-      5_000,
-    ),
-    connectionLimit: positiveIntegerEnvironmentValue('DATABASE_CONNECTION_LIMIT', 5),
-    database: environmentValue('MYSQL_DATABASE', 'oms'),
-    host: environmentValue('DATABASE_HOST', '127.0.0.1'),
-    idleTimeoutSeconds: positiveIntegerEnvironmentValue('DATABASE_IDLE_TIMEOUT_SECONDS', 300),
-    password,
-    port: positiveIntegerEnvironmentValue('MYSQL_PORT', 3306),
-    user: environmentValue('MYSQL_USER', 'oms_app'),
-  };
+  return resolveDatabaseRuntimeConfiguration(configuration, {
+    baseDirectory: repositoryRoot,
+    readFile: (path): string => readFileSync(path, 'utf8'),
+  });
 }
 
 interface DatabaseContractRow {
@@ -94,6 +59,14 @@ interface DatabaseContractRow {
 
 void test('Prisma connects as the application principal and observes the database contract', async () => {
   const options = databaseOptions();
+  const database = createDatabase(options);
+
+  try {
+    await database.probe();
+  } finally {
+    await database.close();
+  }
+
   const client = createPrismaClient(options);
 
   try {

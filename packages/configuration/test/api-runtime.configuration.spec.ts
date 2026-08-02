@@ -1,7 +1,4 @@
-import {
-  InvalidConfigurationError,
-  parseApiRuntimeConfiguration,
-} from '../src';
+import { InvalidConfigurationError, parseApiRuntimeConfiguration } from '../src';
 
 describe('parseApiRuntimeConfiguration', (): void => {
   it('applies safe local defaults when optional values are absent', (): void => {
