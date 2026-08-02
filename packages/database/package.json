@@ -1,0 +1,36 @@
+{
+  "name": "@oms/database",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "pnpm prisma:generate && tsc --project tsconfig.build.json",
+    "prisma:generate": "prisma generate --config prisma.config.ts",
+    "prisma:migrate:create": "prisma migrate dev --create-only --config prisma.config.ts",
+    "prisma:migrate:deploy": "prisma migrate deploy --config prisma.config.ts",
+    "prisma:migrate:dev": "prisma migrate dev --config prisma.config.ts",
+    "prisma:migrate:status": "prisma migrate status --config prisma.config.ts",
+    "prisma:validate": "prisma validate --config prisma.config.ts",
+    "test:integration": "pnpm prisma:generate && tsc --project tsconfig.integration.json && node --test .integration-dist/test/database.integration-test.js",
+    "typecheck": "pnpm prisma:generate && tsc --noEmit --project tsconfig.json"
+  },
+  "dependencies": {
+    "@prisma/adapter-mariadb": "7.9.1",
+    "@prisma/client": "7.9.1"
+  },
+  "devDependencies": {
+    "dotenv": "17.4.2",
+    "prisma": "7.9.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  }
+}

@@ -11,8 +11,14 @@
     "pnpm": ">=11.18.0 <12"
   },
   "scripts": {
-    "build": "pnpm --recursive --if-present run build",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "build": "pnpm db:generate && pnpm --recursive --if-present run build",
+    "check": "pnpm format:check && pnpm db:schema:validate && pnpm db:generate && pnpm lint && pnpm typecheck && pnpm test && pnpm --recursive --if-present run build",
+    "db:generate": "pnpm --filter @oms/database run prisma:generate",
+    "db:migrate:create": "pnpm --filter @oms/database run prisma:migrate:create",
+    "db:migrate:deploy": "pnpm --filter @oms/database run prisma:migrate:deploy",
+    "db:migrate:dev": "pnpm --filter @oms/database run prisma:migrate:dev",
+    "db:migrate:status": "pnpm --filter @oms/database run prisma:migrate:status",
+    "db:schema:validate": "pnpm --filter @oms/database run prisma:validate",
     "dev:api": "pnpm --filter @oms/api run dev",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -24,6 +30,7 @@
     "start:api": "pnpm --filter @oms/api run start",
     "test": "jest --runInBand",
     "test:coverage": "jest --coverage --runInBand",
+    "test:integration:database": "pnpm --filter @oms/database run test:integration",
     "test:watch": "jest --watch",
     "typecheck": "pnpm --recursive --if-present run typecheck"
   },

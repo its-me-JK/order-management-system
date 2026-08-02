@@ -10,9 +10,10 @@ the additional distributed-systems cost.
 
 ## Project status
 
-**Engineering foundation.** The architecture decisions, pinned workspace
-toolchain, API composition root, worker composition root, automated tests, and
-CI quality gate are in place. No business modules or public feature endpoints
+**Persistence foundation.** The architecture decisions, pinned workspace
+toolchain, API and worker composition roots, local MySQL 8.4 environment,
+Prisma database package, automated tests, and CI quality gates are in place.
+No business models, business modules, migrations, or public feature endpoints
 have been implemented yet.
 
 ## Planned technology
@@ -137,6 +138,37 @@ pnpm install --frozen-lockfile
 pnpm check
 ```
 
+Validate the persistence toolchain against local MySQL:
+
+```bash
+pnpm db:schema:validate
+pnpm db:migrate:deploy
+pnpm test:integration:database
+```
+
+The database package owns Prisma generation and the single ordered migration
+history. The schema is intentionally model-free until the first business
+module owns real state, so there is no synthetic baseline migration. Generated
+Prisma code is local build output and is not committed.
+
+For local migration commands, Prisma reads the root password from the ignored
+secret file. Runtime integration uses the restricted `oms_app` principal.
+Shared deployment environments must inject `DATABASE_MIGRATION_URL` through
+their secret mechanism and use a separate DDL-capable migration principal.
+Applications never apply migrations during startup.
+
+Create a migration only after adding and reviewing a module-owned schema
+change:
+
+```bash
+pnpm db:migrate:create --name <migration_name>
+pnpm db:migrate:dev
+```
+
+`db:migrate:create` generates SQL without applying it. Review that SQL before
+running `db:migrate:dev` or committing it. `prisma db push` is deliberately not
+exposed because it bypasses the reviewed migration history.
+
 Start the API in watch mode:
 
 ```bash
@@ -163,6 +195,13 @@ Useful repository commands:
 | `pnpm test:coverage` | Generate local coverage output |
 | `pnpm format:check` | Verify formatting without modifying files |
 | `pnpm check` | Run every required quality gate in CI order |
+| `pnpm db:generate` | Generate the pinned Prisma client locally |
+| `pnpm db:schema:validate` | Validate the complete multi-file Prisma schema |
+| `pnpm db:migrate:create --name <name>` | Generate a reviewable migration without applying it |
+| `pnpm db:migrate:dev` | Apply local development migrations |
+| `pnpm db:migrate:deploy` | Apply committed migrations without creating new ones |
+| `pnpm db:migrate:status` | Compare committed migrations with the database |
+| `pnpm test:integration:database` | Verify Prisma and the database contract against real MySQL |
 | `pnpm infra:up` | Start local dependencies and wait for health checks |
 | `pnpm infra:down` | Stop local dependencies while preserving their data |
 | `pnpm infra:status` | Show local dependency status |

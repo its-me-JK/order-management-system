@@ -2,6 +2,8 @@ coverage/
 dist/
 **/dist/
 node_modules/
+packages/database/.integration-dist/
+packages/database/src/generated/prisma/
 docs/
 LICENSE
 README.md

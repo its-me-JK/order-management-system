@@ -5,7 +5,13 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['**/coverage/**', '**/dist/**', '**/node_modules/**'],
+    ignores: [
+      '**/coverage/**',
+      '**/dist/**',
+      '**/.integration-dist/**',
+      '**/node_modules/**',
+      '**/src/generated/prisma/**',
+    ],
   },
   {
     files: ['**/*.ts'],

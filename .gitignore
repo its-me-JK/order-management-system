@@ -48,6 +48,10 @@ web_modules/
 # TypeScript cache
 *.tsbuildinfo
 
+# Generated Prisma client
+/packages/database/.integration-dist/
+/packages/database/src/generated/prisma/
+
 # Optional npm cache directory
 .npm
 
