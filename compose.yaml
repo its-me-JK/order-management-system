@@ -1,0 +1,40 @@
+services:
+  mysql:
+    image: mysql:8.4.11@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-oms}
+      MYSQL_PASSWORD_FILE: /run/secrets/mysql_app_password
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
+      MYSQL_USER: ${MYSQL_USER:-oms_app}
+    ports:
+      - 127.0.0.1:${MYSQL_PORT:-3306}:3306
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./infrastructure/compose/mysql/oms.cnf:/etc/mysql/conf.d/oms.cnf:ro
+    secrets:
+      - source: mysql_app_password
+        target: mysql_app_password
+      - source: mysql_root_password
+        target: mysql_root_password
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          MYSQL_PWD="$$(cat /run/secrets/mysql_app_password)"
+          mysql --protocol=TCP --host=127.0.0.1
+          --user="$${MYSQL_USER}" --database="$${MYSQL_DATABASE}"
+          --execute='SELECT 1' >/dev/null
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    stop_grace_period: 30s
+
+secrets:
+  mysql_app_password:
+    file: ${MYSQL_APP_PASSWORD_FILE:-./.local/secrets/mysql-app-password}
+  mysql_root_password:
+    file: ${MYSQL_ROOT_PASSWORD_FILE:-./.local/secrets/mysql-root-password}
+
+volumes:
+  mysql_data:

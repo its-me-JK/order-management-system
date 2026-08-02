@@ -60,6 +60,7 @@ Significant decisions are recorded as Architecture Decision Records (ADRs):
 - [ADR-0004: Use a transactional outbox for integration events](docs/adr/0004-transactional-outbox.md)
 - [ADR-0005: Use a native pnpm workspace](docs/adr/0005-pnpm-workspace.md)
 - [ADR-0006: Centralize persistence infrastructure without surrendering module ownership](docs/adr/0006-persistence-boundaries.md)
+- [ADR-0007: Keep development and demonstration infrastructure at zero cost](docs/adr/0007-zero-cost-development.md)
 
 The [ADR index](docs/adr/README.md) explains the lifecycle and format of these
 records.
@@ -95,6 +96,39 @@ Prerequisites:
 
 - Node.js `24.18.1`, as pinned in `.node-version`.
 - pnpm `11.18.0`, as pinned in the root `packageManager` field.
+- Docker Engine and Docker Compose `2.20` or newer.
+
+This repository provisions no cloud resources. Local dependencies use
+open-source containers, and standard GitHub-hosted Actions runners are free for
+this public repository. The AWS topology remains a future design, not a running
+environment.
+
+Create local-only password files and start MySQL:
+
+```bash
+mkdir -p .local/secrets
+umask 077
+openssl rand -hex 32 > .local/secrets/mysql-app-password
+openssl rand -hex 32 > .local/secrets/mysql-root-password
+docker compose config --quiet
+pnpm infra:up
+pnpm infra:status
+```
+
+MySQL listens only on `127.0.0.1:3306`. If that port is occupied, copy
+`.env.example` to `.env` and change `MYSQL_PORT`. Local passwords and `.env` are
+ignored by Git.
+
+Stop MySQL without deleting its data:
+
+```bash
+pnpm infra:down
+```
+
+The `mysql_data` volume survives ordinary shutdowns. Changing the configured
+database name, user, or password does not reinitialize an existing volume.
+`docker compose down --volumes` permanently deletes local database data and is
+therefore intentionally not wrapped in a convenience script.
 
 Install dependencies and run the complete local quality gate:
 
@@ -129,6 +163,10 @@ Useful repository commands:
 | `pnpm test:coverage` | Generate local coverage output |
 | `pnpm format:check` | Verify formatting without modifying files |
 | `pnpm check` | Run every required quality gate in CI order |
+| `pnpm infra:up` | Start local dependencies and wait for health checks |
+| `pnpm infra:down` | Stop local dependencies while preserving their data |
+| `pnpm infra:status` | Show local dependency status |
+| `pnpm infra:logs` | Follow local dependency logs |
 
 ## License
 
