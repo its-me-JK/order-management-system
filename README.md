@@ -10,10 +10,10 @@ the additional distributed-systems cost.
 
 ## Project status
 
-**Architecture foundation.** The initial system boundaries and reliability
-decisions are documented. Domain-policy decisions that must be closed before
-their modules are implemented are tracked explicitly in the architecture
-overview. Application scaffolding has not started yet.
+**Engineering foundation.** The architecture decisions, pinned workspace
+toolchain, API composition root, worker composition root, automated tests, and
+CI quality gate are in place. No business modules or public feature endpoints
+have been implemented yet.
 
 ## Planned technology
 
@@ -74,7 +74,7 @@ records.
 - Inventory, payment, and fulfillment use explicit state transitions.
 - Observability, security, migrations, and failure recovery are part of a
   feature's definition of done.
-- The main branch remains releasable.
+- The `master` branch remains releasable.
 
 ## Delivery sequence
 
@@ -91,9 +91,44 @@ Detailed milestones and exit criteria are maintained in the
 
 ## Local development
 
-Local setup instructions will be added with the repository scaffolding. There
-is intentionally no placeholder application or unverified command sequence at
-this stage.
+Prerequisites:
+
+- Node.js `24.18.1`, as pinned in `.node-version`.
+- pnpm `11.18.0`, as pinned in the root `packageManager` field.
+
+Install dependencies and run the complete local quality gate:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm check
+```
+
+Start the API in watch mode:
+
+```bash
+pnpm dev:api
+```
+
+The API listens on port `3000` by default. Set `PORT` to a valid integer from
+`1` through `65535` to override it. There are intentionally no controllers in
+this scaffold, so an HTTP request returns the standard NestJS `404` response.
+
+The worker is buildable and its composition root is tested, but it has no run
+script yet. An empty worker has no legitimate long-lived workload; a RabbitMQ
+consumer, scheduler, or fake heartbeat will not be introduced merely to keep a
+process alive.
+
+Useful repository commands:
+
+| Command | Purpose |
+| --- | --- |
+| `pnpm build` | Build every workspace project |
+| `pnpm typecheck` | Run strict TypeScript checks |
+| `pnpm lint` | Run type-aware ESLint with zero warnings allowed |
+| `pnpm test` | Run the Jest test suite |
+| `pnpm test:coverage` | Generate local coverage output |
+| `pnpm format:check` | Verify formatting without modifying files |
+| `pnpm check` | Run every required quality gate in CI order |
 
 ## License
 

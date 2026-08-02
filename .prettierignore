@@ -1,0 +1,8 @@
+coverage/
+dist/
+**/dist/
+node_modules/
+docs/
+LICENSE
+README.md
+pnpm-lock.yaml

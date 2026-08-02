@@ -1,0 +1,16 @@
+packages:
+  - apps/*
+  - packages/*
+  - packages/modules/*
+autoInstallPeers: false
+allowBuilds:
+  unrs-resolver: true
+blockExoticSubdeps: true
+engineStrict: true
+minimumReleaseAge: 1440
+minimumReleaseAgeIgnoreMissingTime: false
+minimumReleaseAgeStrict: true
+saveExact: true
+sharedWorkspaceLockfile: true
+strictDepBuilds: true
+strictPeerDependencies: true
