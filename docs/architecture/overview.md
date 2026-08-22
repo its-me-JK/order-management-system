@@ -190,6 +190,27 @@ idempotent follow-up command. This separation avoids holding an HTTP or
 database transaction open during a provider call, while still allowing a
 future facade endpoint to compose both operations for client convenience.
 
+### Runtime composition and operational health
+
+Each API process owns one application-scoped `DatabaseConnection`. The
+composition root parses and resolves configuration once, then constructs the
+database facade through a singleton NestJS provider. Prisma remains private to
+`@oms/database`; controllers and health indicators depend only on that narrow
+facade. NestJS shutdown hooks close it after HTTP request draining.
+
+`GET /health/live` confirms only that the HTTP process is responsive.
+`GET /health/ready` performs a bounded MySQL probe because MySQL is required for
+authoritative application behavior. Redis is optional acceleration and
+RabbitMQ is decoupled from API commits by the transactional outbox, so neither
+belongs in API readiness. Their owning worker runtimes will receive separate
+readiness policies.
+
+Operational endpoints are excluded from the `/api` prefix and URI versioning,
+remain stable across business API versions, disable response caching, and
+return sanitized dependency status. See
+[Operational health](operational-health.md) for rationale and failure
+semantics.
+
 ## Redis policy
 
 Redis accelerates catalog, pricing, and advisory availability reads; rate

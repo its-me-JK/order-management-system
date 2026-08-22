@@ -3,7 +3,8 @@
   "compilerOptions": {
     "noEmit": false,
     "removeComments": true,
+    "rootDir": "src",
     "types": ["node"]
   },
-  "exclude": ["dist", "node_modules", "src/**/*.spec.ts"]
+  "exclude": ["dist", "node_modules", "src/**/*.spec.ts", "test"]
 }

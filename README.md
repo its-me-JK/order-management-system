@@ -10,14 +10,14 @@ the additional distributed-systems cost.
 
 ## Project status
 
-**Platform and persistence foundation.** The architecture decisions, pinned
-workspace toolchain, API and worker composition roots, validated API runtime
-and database configuration, local MySQL 8.4 environment, Prisma-private
-database lifecycle boundary, automated tests, and CI quality gates are in
-place. No business models, business modules, migrations, or public feature
-endpoints have been implemented yet.
+**Milestone 2 — platform and persistence foundation (in progress).** The API
+now has a versioned public HTTP surface, unversioned operational health
+endpoints, validated database configuration, a Prisma-private database
+boundary, bounded readiness probes, and application-owned database shutdown.
+No business models, business modules, migrations, or public feature endpoints
+have been implemented yet.
 
-**Overall project progress: 14%.** The fixed, deployment-inclusive scoring
+**Overall project progress: 16%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
 
 ## Planned technology
@@ -54,6 +54,8 @@ Integrations, and Audit.
 
 See the [architecture overview](docs/architecture/overview.md) for system
 boundaries, runtime topology, consistency rules, and delivery sequence.
+The [operational health contract](docs/architecture/operational-health.md)
+documents probe behavior, failure semantics, alternatives, and trade-offs.
 
 ## Architecture decisions
 
@@ -192,9 +194,29 @@ pnpm dev:api
 The API listens on port `3000` by default. Set `PORT` to a canonical integer
 from `1` through `65535` to override it. `NODE_ENV` accepts `development`,
 `test`, or `production` and defaults to `development`. Invalid runtime
-configuration stops bootstrap before the API binds a socket. There are
-intentionally no controllers in this scaffold, so an HTTP request returns the
-standard NestJS `404` response.
+configuration stops bootstrap before the API binds a socket.
+
+The API exposes operational endpoints independently of the versioned business
+API:
+
+| Endpoint | Meaning | Dependency behavior |
+| --- | --- | --- |
+| `GET /health/live` | The API process can handle HTTP requests | Does not probe MySQL or optional infrastructure |
+| `GET /health/ready` | The API can safely receive application traffic | Performs a bounded MySQL connectivity probe |
+
+Successful probes return HTTP `200`; failed or timed-out readiness probes
+return HTTP `503`. Responses disable caching and disclose only dependency
+status, never connection details or underlying errors. Business endpoints use
+`/api/v1`; health endpoints deliberately remain unversioned.
+
+```bash
+curl --fail http://localhost:3000/health/live
+curl --fail http://localhost:3000/health/ready
+```
+
+During database outages the process remains live while readiness returns
+`503`, allowing an orchestrator to remove it from traffic without creating a
+restart loop.
 
 The worker is buildable and its composition root is tested, but it has no run
 script yet. An empty worker has no legitimate long-lived workload; a RabbitMQ
@@ -205,12 +227,14 @@ Useful repository commands:
 
 | Command | Purpose |
 | --- | --- |
+| `pnpm audit:dependencies` | Fail on known high or critical production dependency vulnerabilities |
 | `pnpm build` | Build every workspace project |
 | `pnpm build:api` | Build the API and its workspace dependencies |
 | `pnpm typecheck` | Run strict TypeScript checks |
 | `pnpm lint` | Run type-aware ESLint with zero warnings allowed |
 | `pnpm test` | Run the Jest test suite |
 | `pnpm test:coverage` | Generate local coverage output |
+| `pnpm test:integration:api` | Verify API health and database-backed readiness against real MySQL |
 | `pnpm format:check` | Verify formatting without modifying files |
 | `pnpm check` | Run every required quality gate in CI order |
 | `pnpm db:generate` | Generate the pinned Prisma client locally |

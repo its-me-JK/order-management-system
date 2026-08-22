@@ -1,4 +1,28 @@
-import { Module } from '@nestjs/common';
+import { type DynamicModule, Module } from '@nestjs/common';
+import { TerminusModule } from '@nestjs/terminus';
+
+import {
+  DatabaseModule,
+  type DatabaseConnectionFactory,
+} from './platform/database/database.module';
+import { DatabaseHealthIndicator } from './platform/health/database-health.indicator';
+import { HealthController } from './platform/health/health.controller';
+
+export interface ApiModuleOptions {
+  readonly createDatabaseConnection: DatabaseConnectionFactory;
+}
 
 @Module({})
-export class ApiModule {}
+export class ApiModule {
+  public static register(options: ApiModuleOptions): DynamicModule {
+    return {
+      module: ApiModule,
+      imports: [
+        DatabaseModule.register(options.createDatabaseConnection),
+        TerminusModule.forRoot({ logger: false }),
+      ],
+      controllers: [HealthController],
+      providers: [DatabaseHealthIndicator],
+    };
+  }
+}

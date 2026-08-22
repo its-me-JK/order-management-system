@@ -38,6 +38,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Audit production dependencies
+        run: pnpm audit:dependencies
+
       - name: Run quality gates
         run: pnpm check
 
@@ -107,6 +110,9 @@ jobs:
 
       - name: Test Prisma against MySQL
         run: pnpm test:integration:database
+
+      - name: Test API health against MySQL
+        run: pnpm test:integration:api
 
       - name: Print MySQL logs on failure
         if: failure()
