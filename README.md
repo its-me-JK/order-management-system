@@ -34,14 +34,18 @@ transactional application service. Both aggregates remain deliberately
 unwired until the required administrative security and transactional
 foundations exist. Persistence now supports those lifecycle shapes through a
 guarded forward-only migration with deterministic legacy backfill and a real
-prior-schema upgrade test. The Identity/session architecture now fixes the
-future account and database boundaries, split opaque credentials, strict
-same-site browser policy, durable refresh rotation, and fail-closed Redis
-abuse controls; no Identity package, route, credential, or Redis runtime exists
-yet. Pricing, inventory, Redis caching, and integration events remain separate
-later slices.
+prior-schema upgrade test. The Identity/session architecture fixes the account
+and database boundaries, split opaque credentials, strict same-site browser
+policy, durable refresh rotation, and fail-closed Redis abuse controls. Its
+first framework-independent package slice now enforces canonical Account
+identity, lossless microsecond time, optimistic versions, immutable lifecycle
+transitions, strict rehydration, retention tombstones, and PII-free domain
+facts. The package deliberately exports no application contract and exposes no
+route yet; password authenticators, roles, sessions, persistence, crypto, and
+Redis remain gated later slices. Pricing, inventory, Redis caching, and
+integration events also remain separate later slices.
 
-**Overall project progress: 27%.** The fixed, deployment-inclusive scoring
+**Overall project progress: 28%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
 
 ## Planned technology

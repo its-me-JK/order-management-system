@@ -86,11 +86,12 @@ flowchart LR
     Principal --> Catalog[Catalog application command]
 ```
 
-The future business package is `@oms/identity` under
-`packages/modules/identity`. Its root exports application use cases, ports,
-typed outcomes, and the authenticated-principal contract only. Domain and
-application code import no NestJS, Prisma, Redis client, Node crypto, HTTP, or
-logging vendor.
+The business package is `@oms/identity` under `packages/modules/identity`.
+Its root exports application use cases, ports, typed outcomes, and the
+authenticated-principal contract only. Domain types remain package-internal;
+an empty root is preferable to exposing an aggregate before an application
+contract exists. Domain and application code import no NestJS, Prisma, Redis
+client, Node crypto, HTTP, or logging vendor.
 
 Infrastructure adapters use explicit subpaths such as
 `@oms/identity/infrastructure/prisma`. Prisma construction stays in the API
@@ -134,6 +135,40 @@ transaction. Roles may be retired but not restored. Role and permission
 changes become visible through the next authority read and do not mutate token
 records.
 
+The first Account slice defines and rehydrates exactly these
+persistence-facing fields:
+
+| Field | Domain rule |
+| --- | --- |
+| `id` | Canonical lowercase UUIDv7. |
+| `loginName` | Canonical 3-through-64-character ASCII login while the account is active or suspended; it may be `null` only after a separately versioned erasure of a deactivated account. |
+| `status` | `ACTIVE`, `SUSPENDED`, or terminal `DEACTIVATED`. |
+| `version` | Positive unsigned 32-bit optimistic version; creation is version 1 and every lifecycle transition advances it once. |
+| `createdAt`, `updatedAt` | MySQL-range UTC instants with exactly six fractional digits; time never regresses and creation initializes both to the same value. |
+| `suspendedAt` | Current-state marker. It equals `updatedAt` while suspended and is cleared by resume or deactivation; historical suspensions belong in security events. |
+| `deactivatedAt` | Terminal marker. It is `null` before deactivation, equals `updatedAt` on the terminal transition, and remains the original deactivation time after later erasure. |
+
+The currently reachable snapshots are deliberately narrower than the future
+table: Active is version 1 or an odd version from 3 onward, Suspended is an
+even version from 2 onward, and Deactivated may be any version from 2 onward.
+A deactivated account retaining its login is unchanged since the terminal
+transition, so `deactivatedAt` equals `updatedAt`. A retention tombstone has a
+null login, version 3 or later, and may have a later `updatedAt`; the version
+advance makes erasure visible to optimistic concurrency even though the
+business lifecycle remains terminal. Snapshot rehydration rejects missing or
+unknown fields, invalid chronology, and impossible lifecycle combinations.
+This slice exposes no erasure command; the retention policy and its security
+event remain a later contract.
+
+Account creation and lifecycle methods return a new immutable aggregate plus
+a frozen, login-free in-process domain fact. These facts are not
+`identity_security_events`, integration events, or permission to publish.
+The future application Unit of Work maps them to closed security-event rows
+and performs required session-family revocation in the same MySQL transaction.
+Optimistic version is checked before lifecycle state, mutation time is checked
+after lifecycle state, and version capacity is checked last; this fixes stable
+failure precedence without accepting stale commands or regressing time.
+
 An account has at most five authenticating session families, where
 authenticating means unrevoked and before absolute expiry; refresh idle expiry
 does not make a still-valid access credential disappear. Login holds the
@@ -165,6 +200,14 @@ application timestamps are UTC `DATETIME(6)`. Codes, states, login names,
 credential digests, and PHC values use byte-exact representations. Foreign
 keys use `RESTRICT`; deletion and retention are explicit workflows rather than
 cascades.
+
+Identity repositories preserve all six timestamp digits with reviewed
+parameterized SQL and lossless string projections such as
+`DATE_FORMAT(value, '%Y-%m-%dT%H:%i:%s.%fZ')`. Prisma's ordinary JavaScript
+`Date` materialization is not used for aggregate hydration, authoritative
+database time, deadline comparison, or credential issuance because it would
+truncate the final three microsecond digits. Real-MySQL tests must distinguish
+otherwise-equal values that differ only in those digits.
 
 | Table | Required shape and indexes |
 | --- | --- |
@@ -937,8 +980,9 @@ The implementation increment is incomplete until tests prove:
 ## Incremental delivery sequence
 
 1. Accept this contract and ADR-0017 without runtime code.
-2. Scaffold `@oms/identity` with pure domain values, aggregates, application
-   ports, outcomes, and tests; expose no route.
+2. Scaffold `@oms/identity`; deliver Account values and lifecycle first, then
+   PasswordAuthenticator, Role, SessionFamily, application ports, outcomes,
+   and tests in bounded commits; expose no route.
 3. Add the Identity Prisma fragment, forward migration, Unit of Work,
    repositories, authority read model, bounded cleanup use case, and
    real-MySQL tests.

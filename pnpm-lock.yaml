@@ -169,6 +169,8 @@ importers:
         specifier: 17.4.2
         version: 17.4.2
 
+  packages/modules/identity: {}
+
 packages:
 
   '@angular-devkit/core@19.2.24':
