@@ -30,11 +30,13 @@
     "infra:up": "docker compose up --detach --wait --wait-timeout 120",
     "lint": "eslint . --max-warnings=0",
     "start:api": "pnpm --filter @oms/api run start",
-    "test": "jest --runInBand",
-    "test:coverage": "jest --coverage --runInBand",
+    "test": "pnpm test:prepare && jest --runInBand",
+    "test:coverage": "pnpm test:prepare && jest --coverage --runInBand",
     "test:integration:api": "pnpm --filter @oms/api run test:integration",
+    "test:integration:catalog": "bash packages/modules/catalog/test/run-integration.sh",
     "test:integration:database": "pnpm --filter @oms/database run test:integration",
-    "test:watch": "jest --watch",
+    "test:prepare": "pnpm --filter @oms/configuration run build && pnpm --filter @oms/database run build",
+    "test:watch": "pnpm test:prepare && jest --watch",
     "typecheck": "pnpm --recursive --if-present run typecheck"
   },
   "devDependencies": {

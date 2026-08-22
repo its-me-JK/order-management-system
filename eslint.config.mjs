@@ -49,7 +49,7 @@ const prismaDynamicImportRestrictions = [
   },
   {
     message: prismaBoundaryMessage,
-    selector: 'ImportExpression[source.value=/\\/generated\\/prisma(?:\\/|$)/]',
+    selector: 'ImportExpression[source.value=/(?:^|\\/)generated\\/prisma(?:\\/|$)/]',
   },
   {
     message: prismaBoundaryMessage,
@@ -63,7 +63,7 @@ const prismaDynamicImportRestrictions = [
   {
     message: prismaBoundaryMessage,
     selector:
-      "CallExpression[callee.name='require'] > Literal.arguments[value=/\\/generated\\/prisma(?:\\/|$)/]",
+      "CallExpression[callee.name='require'] > Literal.arguments[value=/(?:^|\\/)generated\\/prisma(?:\\/|$)/]",
   },
   {
     message: databaseClientTokenBoundaryMessage,

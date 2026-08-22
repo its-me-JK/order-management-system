@@ -10,7 +10,7 @@ the additional distributed-systems cost.
 
 ## Project status
 
-**Milestone 2 — platform and persistence foundation (in progress).** The API
+**Milestone 3 — identity, catalog, pricing, and inventory (in progress).** The API
 now has a versioned public HTTP surface, unversioned operational health
 endpoints, validated database configuration, one runtime-owned Prisma client
 with an infrastructure-only access boundary, bounded readiness probes,
@@ -19,10 +19,13 @@ sanitized structured JSON logging, and a secret-safe RFC 9457 HTTP error
 boundary that includes parser failures. It now
 publishes a deterministic OpenAPI 3.0.3 contract and local read-only Swagger
 UI, and rejects malformed DTOs through one strict non-coercive validation
-policy. No business models, business modules, migrations, or public feature
-endpoints have been implemented yet.
+policy. The first Catalog persistence slice now owns separate Product and SKU
+records, lifecycle and integrity constraints, lossless seek-pagination
+contracts, UUIDv7 binary mapping, and an active-only Prisma read adapter. It
+deliberately has no public feature endpoint or write path yet; pricing,
+inventory, Redis caching, and integration events remain separate later slices.
 
-**Overall project progress: 20%.** The fixed, deployment-inclusive scoring
+**Overall project progress: 23%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
 
 ## Planned technology
@@ -86,6 +89,7 @@ Significant decisions are recorded as Architecture Decision Records (ADRs):
 - [ADR-0010: Standardize public HTTP errors with RFC 9457](docs/adr/0010-standardize-http-errors-with-rfc-9457.md)
 - [ADR-0011: Publish explicit OpenAPI and enforce strict transport validation](docs/adr/0011-publish-explicit-openapi-and-enforce-strict-transport-validation.md)
 - [ADR-0012: Expose Prisma only as a runtime-owned infrastructure capability](docs/adr/0012-expose-prisma-only-as-an-infrastructure-capability.md)
+- [ADR-0013: Model Catalog Products and SKUs separately](docs/adr/0013-model-catalog-products-and-skus-separately.md)
 
 The [ADR index](docs/adr/README.md) explains the lifecycle and format of these
 records.
@@ -169,12 +173,29 @@ Validate the persistence toolchain against local MySQL:
 pnpm db:schema:validate
 pnpm db:migrate:deploy
 pnpm test:integration:database
+pnpm test:integration:catalog
 ```
 
 The database package owns Prisma generation and the single ordered migration
-history. The schema is intentionally model-free until the first business
-module owns real state, so there is no synthetic baseline migration. Generated
-Prisma code is local build output and is not committed.
+history. Module-owned Prisma models compose into that schema; the first
+reviewed migration creates Catalog Product and SKU records and their database
+invariants. Generated Prisma code is local build output and is not committed.
+The Catalog integration command creates, migrates twice, and removes an exact
+local `oms_catalog_integration` database. It grants the application principal
+only DML access while the suite runs and refuses an externally supplied
+migration URL, so normal development and showcase data are never test
+fixtures.
+
+Catalog UUIDv7 values use natural byte order, so operational SQL must keep the
+MySQL swap flag disabled:
+
+```sql
+SELECT BIN_TO_UUID(id, 0) AS id FROM catalog_skus;
+SELECT * FROM catalog_skus WHERE id = UUID_TO_BIN('01890f3a-8bcd-7def-8abc-0123456789ab', 0);
+```
+
+Using a swap flag of `1` would apply the legacy UUIDv1 byte rearrangement and
+produce identifiers that do not match the application's UUIDv7 codec.
 
 For local migration commands, Prisma reads the root password from the ignored
 secret file. Runtime integration uses the restricted `oms_app` principal.
@@ -296,6 +317,7 @@ Useful repository commands:
 | `pnpm test` | Run the Jest test suite |
 | `pnpm test:coverage` | Generate local coverage output |
 | `pnpm test:integration:api` | Verify API health and database-backed readiness against real MySQL |
+| `pnpm test:integration:catalog` | Verify Catalog constraints, visibility, and lossless pagination in an isolated local MySQL database |
 | `pnpm format:check` | Verify formatting without modifying files |
 | `pnpm check` | Run every required quality gate in CI order |
 | `pnpm db:generate` | Generate the pinned Prisma client locally |

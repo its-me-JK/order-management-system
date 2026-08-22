@@ -108,8 +108,14 @@ jobs:
       - name: Apply committed migrations
         run: pnpm db:migrate:deploy
 
+      - name: Verify migration deployment is idempotent
+        run: pnpm db:migrate:deploy
+
       - name: Test Prisma against MySQL
         run: pnpm test:integration:database
+
+      - name: Test Catalog persistence against MySQL
+        run: pnpm test:integration:catalog
 
       - name: Test API health against MySQL
         run: pnpm test:integration:api

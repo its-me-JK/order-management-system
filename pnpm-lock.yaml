@@ -153,6 +153,19 @@ importers:
         specifier: 19.2.8
         version: 19.2.8(react@19.2.8)
 
+  packages/modules/catalog:
+    dependencies:
+      '@oms/database':
+        specifier: workspace:*
+        version: link:../../database
+    devDependencies:
+      '@oms/configuration':
+        specifier: workspace:*
+        version: link:../../configuration
+      dotenv:
+        specifier: 17.4.2
+        version: 17.4.2
+
 packages:
 
   '@angular-devkit/core@19.2.24':

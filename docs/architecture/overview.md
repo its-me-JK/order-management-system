@@ -206,9 +206,10 @@ future facade endpoint to compose both operations for client convenience.
 
 Each API process owns one application-scoped `DatabaseConnection`. The
 composition root parses and resolves configuration once, then constructs the
-database facade through a singleton NestJS provider. Prisma remains private to
-`@oms/database`; controllers and health indicators depend only on that narrow
-facade. NestJS shutdown hooks close it after HTTP request draining.
+database facade through a singleton NestJS provider. Prisma is available only
+through the infrastructure-restricted `@oms/database/prisma` capability;
+controllers and health indicators depend only on the narrow lifecycle facade.
+NestJS shutdown hooks close it after HTTP request draining.
 
 `GET /health/live` confirms only that the HTTP process is responsive.
 `GET /health/ready` performs a bounded MySQL probe because MySQL is required for

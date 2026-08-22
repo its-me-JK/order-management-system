@@ -30,6 +30,7 @@ A material change requires a new ADR that supersedes the old one.
 | [0010](0010-standardize-http-errors-with-rfc-9457.md) | Accepted | Standardize public HTTP errors with RFC 9457 |
 | [0011](0011-publish-explicit-openapi-and-enforce-strict-transport-validation.md) | Accepted | Publish explicit OpenAPI and enforce strict transport validation |
 | [0012](0012-expose-prisma-only-as-an-infrastructure-capability.md) | Accepted | Expose Prisma only as a runtime-owned infrastructure capability |
+| [0013](0013-model-catalog-products-and-skus-separately.md) | Accepted | Model Catalog Products and SKUs separately |
 
 ## Template
 

@@ -1,0 +1,36 @@
+{
+  "name": "@oms/catalog",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "license": "MIT",
+  "sideEffects": false,
+  "main": "dist/index.js",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./infrastructure/identifiers": {
+      "types": "./src/infrastructure/identifiers/index.ts",
+      "default": "./dist/infrastructure/identifiers/index.js"
+    },
+    "./infrastructure/prisma": {
+      "types": "./src/infrastructure/prisma/index.ts",
+      "default": "./dist/infrastructure/prisma/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json",
+    "test:integration": "pnpm --filter @oms/configuration run build && pnpm --filter @oms/database run build && tsc --project tsconfig.integration.json && node --test --test-concurrency=1 .integration-dist/test/infrastructure/catalog.integration-test.js",
+    "typecheck": "tsc --noEmit --project tsconfig.json"
+  },
+  "dependencies": {
+    "@oms/database": "workspace:*"
+  },
+  "devDependencies": {
+    "@oms/configuration": "workspace:*",
+    "dotenv": "17.4.2"
+  }
+}
