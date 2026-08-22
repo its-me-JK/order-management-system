@@ -10,8 +10,8 @@ import {
 import { config as loadEnvironment } from 'dotenv';
 
 import type { DatabaseConnectionOptions } from '../src/database.contract';
-import { createPrismaClient } from '../src/client/prisma-client.factory';
-import { createDatabase } from '../src';
+import { createDatabaseRuntime } from '../src';
+import { getPrismaClient } from '../src/prisma';
 
 function findRepositoryRoot(startDirectory: string): string {
   let currentDirectory = startDirectory;
@@ -59,17 +59,11 @@ interface DatabaseContractRow {
 
 void test('Prisma connects as the application principal and observes the database contract', async () => {
   const options = databaseOptions();
-  const database = createDatabase(options);
+  const runtime = createDatabaseRuntime(options);
+  const client = getPrismaClient(runtime);
 
   try {
-    await database.probe();
-  } finally {
-    await database.close();
-  }
-
-  const client = createPrismaClient(options);
-
-  try {
+    await runtime.connection.probe();
     await client.$connect();
 
     const rows = await client.$queryRaw<DatabaseContractRow[]>`
@@ -136,6 +130,6 @@ void test('Prisma connects as the application principal and observes the databas
       ].sort(),
     );
   } finally {
-    await client.$disconnect();
+    await runtime.close();
   }
 });

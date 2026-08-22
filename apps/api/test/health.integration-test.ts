@@ -10,9 +10,9 @@ import type { INestApplication } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import {
-  createDatabase,
-  type DatabaseConnection,
+  createDatabaseRuntime,
   type DatabaseConnectionOptions,
+  type DatabaseRuntime,
 } from '@oms/database';
 
 import { configureApiApplication, createApiExpressAdapter } from '../src/api.application';
@@ -55,10 +55,10 @@ interface RunningApi {
   readonly baseUrl: string;
 }
 
-async function startApi(database: DatabaseConnection): Promise<RunningApi> {
+async function startApi(runtime: DatabaseRuntime): Promise<RunningApi> {
   const application = await NestFactory.create<NestExpressApplication>(
     ApiModule.register({
-      createDatabaseConnection: (): DatabaseConnection => database,
+      createDatabaseRuntime: (): DatabaseRuntime => runtime,
       observability: {
         deploymentEnvironment: 'test',
         level: 'silent',
@@ -133,11 +133,11 @@ async function closeServer(server: Server, sockets: ReadonlySet<Socket>): Promis
 }
 
 void test('API readiness executes a real bounded query through the database facade', async () => {
-  const database = createDatabase(configuredDatabaseOptions());
+  const runtime = createDatabaseRuntime(configuredDatabaseOptions());
   let runningApi: RunningApi | undefined;
 
   try {
-    runningApi = await startApi(database);
+    runningApi = await startApi(runtime);
     const liveness = await requestHealth(runningApi.baseUrl, '/health/live');
     const readiness = await requestHealth(runningApi.baseUrl, '/health/ready');
 
@@ -157,13 +157,13 @@ void test('API readiness executes a real bounded query through the database faca
     });
   } finally {
     if (runningApi === undefined) {
-      await database.close();
+      await runtime.close();
     } else {
       await runningApi.application.close();
     }
   }
 
-  await assert.rejects(database.probe(), /Database connection is closed/u);
+  await assert.rejects(runtime.connection.probe(), /Database connection is closed/u);
 });
 
 void test('a stalled MySQL handshake becomes a sanitized bounded readiness failure', async () => {
@@ -175,7 +175,7 @@ void test('a stalled MySQL handshake becomes a sanitized bounded readiness failu
     });
   });
   const port = await listen(server);
-  const database = createDatabase({
+  const runtime = createDatabaseRuntime({
     ...configuredDatabaseOptions(),
     acquireTimeoutMilliseconds: 1_000,
     connectTimeoutMilliseconds: 500,
@@ -187,7 +187,7 @@ void test('a stalled MySQL handshake becomes a sanitized bounded readiness failu
   let runningApi: RunningApi | undefined;
 
   try {
-    runningApi = await startApi(database);
+    runningApi = await startApi(runtime);
     const startedAt = performance.now();
     const readiness = await requestHealth(runningApi.baseUrl, '/health/ready');
     const durationMilliseconds = performance.now() - startedAt;
@@ -207,7 +207,7 @@ void test('a stalled MySQL handshake becomes a sanitized bounded readiness failu
     await closeServer(server, sockets);
 
     if (runningApi === undefined) {
-      await database.close();
+      await runtime.close();
     } else {
       await runningApi.application.close();
     }

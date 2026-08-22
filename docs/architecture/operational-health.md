@@ -45,12 +45,16 @@ parses API and database configuration once, resolves secret files, and closes
 over the resulting typed database options in a NestJS provider factory.
 Configuration errors stop startup before the API binds a socket.
 
-Each API process owns one application-scoped `DatabaseConnection`. Prisma is
-private to `@oms/database`; the NestJS module, shutdown hook, and health
-indicator depend only on the narrow facade. Database probes are bounded and
-concurrent probes share the same in-flight driver operation. Nest closes the
-facade after the HTTP server has stopped accepting and draining requests, and
-the facade makes repeated closure safe.
+Each API process owns one application-scoped `DatabaseRuntime` and therefore
+one Prisma client and pool. The NestJS composition module derives both the
+infrastructure-only client provider and a narrow `DatabaseConnection` from
+that same runtime. The shutdown hook and health indicator depend only on the
+narrow facade; feature persistence adapters are the only consumers of the
+client provider. Database probes are bounded and concurrent probes share the
+same in-flight driver operation. Nest closes the runtime after the HTTP server
+has stopped accepting and draining requests, and repeated closure through
+either lifecycle view reaches the same disconnect operation. See
+[ADR-0012](../adr/0012-expose-prisma-only-as-an-infrastructure-capability.md).
 
 Startup intentionally does not require a successful database connection. A
 live but unready process can recover when MySQL returns without entering a

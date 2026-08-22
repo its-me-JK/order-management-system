@@ -19,6 +19,7 @@ import { Logger } from 'nestjs-pino';
 
 import { configureApiApplication, createApiExpressAdapter } from './api.application';
 import { ApiModule } from './api.module';
+import { createDatabaseRuntimeFixture } from './platform/database/database-runtime.fixture';
 
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const PRIVATE_INPUT = 'private-validation-input';
@@ -196,7 +197,7 @@ async function startApi(): Promise<RunningApi> {
   const moduleReference = await Test.createTestingModule({
     imports: [
       ApiModule.register({
-        createDatabaseConnection: databaseConnection,
+        createDatabaseRuntime: () => createDatabaseRuntimeFixture(databaseConnection()),
         observability: {
           deploymentEnvironment: 'test',
           level: 'info',

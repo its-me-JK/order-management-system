@@ -14,6 +14,7 @@ import type { DatabaseConnection } from '@oms/database';
 
 import { configureApiApplication, createApiExpressAdapter } from './api.application';
 import { ApiModule } from './api.module';
+import { createDatabaseRuntimeFixture } from './platform/database/database-runtime.fixture';
 
 const LIVE_RESPONSE = {
   status: 'ok',
@@ -96,7 +97,7 @@ async function startApi(
   let moduleBuilder: TestingModuleBuilder = Test.createTestingModule({
     imports: [
       ApiModule.register({
-        createDatabaseConnection: (): DatabaseConnection => database,
+        createDatabaseRuntime: () => createDatabaseRuntimeFixture(database),
         observability: {
           deploymentEnvironment: 'test',
           level: 'silent',

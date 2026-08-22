@@ -1,23 +1,21 @@
 import { Test } from '@nestjs/testing';
 
-import type { DatabaseConnection } from '@oms/database';
+import type { DatabaseRuntime } from '@oms/database';
 
 import { ApiModule } from './api.module';
+import { createDatabaseRuntimeFixture } from './platform/database/database-runtime.fixture';
 import { DATABASE_CONNECTION } from './platform/database/database.tokens';
 
 describe('ApiModule', (): void => {
-  it('owns one application-scoped database connection and closes it on shutdown', async (): Promise<void> => {
+  it('owns one application-scoped database runtime and closes it on shutdown', async (): Promise<void> => {
     const close = jest.fn((): Promise<void> => Promise.resolve());
     const probe = jest.fn((): Promise<void> => Promise.resolve());
-    const database: DatabaseConnection = {
-      close,
-      probe,
-    };
-    const createDatabaseConnection = jest.fn((): DatabaseConnection => database);
+    const runtime = createDatabaseRuntimeFixture({ close, probe });
+    const createDatabaseRuntime = jest.fn((): DatabaseRuntime => runtime);
     const moduleReference = await Test.createTestingModule({
       imports: [
         ApiModule.register({
-          createDatabaseConnection,
+          createDatabaseRuntime,
           observability: {
             deploymentEnvironment: 'test',
             level: 'silent',
@@ -27,9 +25,9 @@ describe('ApiModule', (): void => {
     }).compile();
 
     try {
-      expect(createDatabaseConnection).toHaveBeenCalledTimes(1);
-      expect(moduleReference.get(DATABASE_CONNECTION)).toBe(database);
-      expect(moduleReference.get(DATABASE_CONNECTION)).toBe(database);
+      expect(createDatabaseRuntime).toHaveBeenCalledTimes(1);
+      expect(moduleReference.get(DATABASE_CONNECTION)).toBe(runtime.connection);
+      expect(moduleReference.get(DATABASE_CONNECTION)).toBe(runtime.connection);
       expect(probe).not.toHaveBeenCalled();
     } finally {
       await moduleReference.close();

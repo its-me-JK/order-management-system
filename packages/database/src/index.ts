@@ -1,6 +1,7 @@
-export { createDatabase } from './database.factory';
+export { createDatabaseRuntime } from './database.factory';
 export type {
   DatabaseConnection,
   DatabaseConnectionOptions,
+  DatabaseRuntime,
   DatabaseTlsOptions,
 } from './database.contract';

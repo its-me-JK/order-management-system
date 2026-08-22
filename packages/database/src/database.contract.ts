@@ -25,3 +25,15 @@ export interface DatabaseConnection {
   close(): Promise<void>;
   probe(): Promise<void>;
 }
+
+/**
+ * Owns the process-wide database client and its lifecycle-facing connection.
+ *
+ * The concrete client is deliberately absent from this public contract. Only
+ * infrastructure code may recover it through the `@oms/database/prisma`
+ * entrypoint.
+ */
+export interface DatabaseRuntime {
+  readonly connection: DatabaseConnection;
+  close(): Promise<void>;
+}

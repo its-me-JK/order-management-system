@@ -12,10 +12,11 @@ the additional distributed-systems cost.
 
 **Milestone 2 — platform and persistence foundation (in progress).** The API
 now has a versioned public HTTP surface, unversioned operational health
-endpoints, validated database configuration, a Prisma-private database
-boundary, bounded readiness probes, application-owned database shutdown,
-server-owned request identities, sanitized structured JSON logging, and a
-secret-safe RFC 9457 HTTP error boundary that includes parser failures. It now
+endpoints, validated database configuration, one runtime-owned Prisma client
+with an infrastructure-only access boundary, bounded readiness probes,
+application-owned database shutdown, server-owned request identities,
+sanitized structured JSON logging, and a secret-safe RFC 9457 HTTP error
+boundary that includes parser failures. It now
 publishes a deterministic OpenAPI 3.0.3 contract and local read-only Swagger
 UI, and rejects malformed DTOs through one strict non-coercive validation
 policy. No business models, business modules, migrations, or public feature
@@ -84,6 +85,7 @@ Significant decisions are recorded as Architecture Decision Records (ADRs):
 - [ADR-0009: Validate runtime configuration at process boundaries](docs/adr/0009-validate-runtime-configuration-at-boundaries.md)
 - [ADR-0010: Standardize public HTTP errors with RFC 9457](docs/adr/0010-standardize-http-errors-with-rfc-9457.md)
 - [ADR-0011: Publish explicit OpenAPI and enforce strict transport validation](docs/adr/0011-publish-explicit-openapi-and-enforce-strict-transport-validation.md)
+- [ADR-0012: Expose Prisma only as a runtime-owned infrastructure capability](docs/adr/0012-expose-prisma-only-as-an-infrastructure-capability.md)
 
 The [ADR index](docs/adr/README.md) explains the lifecycle and format of these
 records.

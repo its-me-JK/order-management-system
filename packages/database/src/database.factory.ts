@@ -1,10 +1,7 @@
-import { createPrismaDatabaseDriver } from './client/prisma-database.driver';
-import { ManagedDatabaseConnection } from './database.connection';
-import type { DatabaseConnection, DatabaseConnectionOptions } from './database.contract';
+import { createPrismaClient } from './client/prisma-client.factory';
+import type { DatabaseConnectionOptions, DatabaseRuntime } from './database.contract';
+import { createPrismaDatabaseRuntime } from './prisma-database.runtime';
 
-export function createDatabase(options: DatabaseConnectionOptions): DatabaseConnection {
-  return new ManagedDatabaseConnection(
-    createPrismaDatabaseDriver(options),
-    options.probeTimeoutMilliseconds,
-  );
+export function createDatabaseRuntime(options: DatabaseConnectionOptions): DatabaseRuntime {
+  return createPrismaDatabaseRuntime(createPrismaClient(options), options.probeTimeoutMilliseconds);
 }

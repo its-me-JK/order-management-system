@@ -11,6 +11,10 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./prisma": {
+      "types": "./src/prisma.ts",
+      "default": "./dist/prisma.js"
     }
   },
   "scripts": {

@@ -17,6 +17,7 @@ import { Logger, PinoLogger } from 'nestjs-pino';
 
 import { configureApiApplication, createApiExpressAdapter } from './api.application';
 import { ApiModule } from './api.module';
+import { createDatabaseRuntimeFixture } from './platform/database/database-runtime.fixture';
 
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const INBOUND_REQUEST_ID = '550e8400-e29b-41d4-a716-446655440000';
@@ -196,7 +197,7 @@ async function startApi(
   let moduleBuilder: TestingModuleBuilder = Test.createTestingModule({
     imports: [
       ApiModule.register({
-        createDatabaseConnection: (): DatabaseConnection => database,
+        createDatabaseRuntime: () => createDatabaseRuntimeFixture(database),
         observability: {
           deploymentEnvironment: 'test',
           level: 'info',

@@ -7,6 +7,7 @@ import type { DatabaseConnection } from '@oms/database';
 import { configureApiApplication, createApiExpressAdapter } from './api.application';
 import { assertValidOperationIds } from './api.documentation';
 import { ApiModule } from './api.module';
+import { createDatabaseRuntimeFixture } from './platform/database/database-runtime.fixture';
 import { OPENAPI_HEADER_NAMES, OPENAPI_SCHEMA_NAMES } from './platform/openapi/openapi.schemas';
 
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -30,7 +31,7 @@ async function startApi(): Promise<RunningApi> {
   const moduleReference = await Test.createTestingModule({
     imports: [
       ApiModule.register({
-        createDatabaseConnection: (): DatabaseConnection => databaseConnection(probe),
+        createDatabaseRuntime: () => createDatabaseRuntimeFixture(databaseConnection(probe)),
         observability: {
           deploymentEnvironment: 'test',
           level: 'silent',

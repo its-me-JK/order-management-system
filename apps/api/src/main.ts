@@ -2,7 +2,7 @@ import 'reflect-metadata';
 
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
-import { createDatabase } from '@oms/database';
+import { createDatabaseRuntime } from '@oms/database';
 import { Logger } from 'nestjs-pino';
 
 import { configureApiApplication, createApiExpressAdapter } from './api.application';
@@ -25,7 +25,7 @@ async function bootstrap(): Promise<void> {
     const configuration = parseBootstrapConfiguration(process.env, runtimeBaseDirectory);
     application = await NestFactory.create<NestExpressApplication>(
       ApiModule.register({
-        createDatabaseConnection: () => createDatabase(configuration.database),
+        createDatabaseRuntime: () => createDatabaseRuntime(configuration.database),
         observability: {
           deploymentEnvironment: configuration.api.deploymentEnvironment,
           level: configuration.api.logging.level,

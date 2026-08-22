@@ -13,16 +13,16 @@ accepted outcomes, not lines of code, generated files, commits, or activity.
 
 | Workstream | Weight | Earned | Current evidence |
 | --- | ---: | ---: | --- |
-| Architecture and contracts | 6% | 4.5% | Architecture overview, eleven ADRs, operational health, request identity/logging, RFC 9457 errors, and explicit OpenAPI/transport-validation contracts; detailed business contracts remain |
-| Platform and persistence | 9% | 7.5% | Workspace, runtime shells, case-sensitive versioned routing, operational health, validated configuration, structured logging, bounded parsing, strict global DTO validation, deterministic OpenAPI, Prisma-private lifecycle facade, MySQL, migrations tooling, and integration tests |
+| Architecture and contracts | 6% | 4.5% | Architecture overview, twelve ADRs, operational health, request identity/logging, RFC 9457 errors, and explicit OpenAPI/transport-validation contracts; detailed business contracts remain |
+| Platform and persistence | 9% | 7.75% | Workspace, runtime shells, case-sensitive versioned routing, operational health, validated configuration, structured logging, bounded parsing, strict global DTO validation, deterministic OpenAPI, one runtime-owned Prisma client with separate lifecycle and infrastructure views, MySQL, migrations tooling, and integration tests |
 | Backend business capabilities | 35% | 0% | No business module or endpoint implemented |
 | Redis, RabbitMQ, and workers | 9% | 0% | Architecture only |
-| Testing, security, and resilience | 11% | 2.75% | Strict quality gates, secret-safe configuration and TLS tests, concurrency-isolated request context, adversarial response/log/DTO tests, closed documentation aliases and package assets, parser and after-commit failure tests, lifecycle tests, and real MySQL contract tests |
+| Testing, security, and resilience | 11% | 3% | Strict quality gates, secret-safe configuration and TLS tests, concurrency-isolated request context, adversarial response/log/DTO tests, closed documentation aliases and package assets, parser and after-commit failure tests, single-client lifecycle tests, enforced Prisma import boundaries, and real MySQL contract tests |
 | Frontend showcase | 12% | 0% | Not started |
 | Observability and operations | 5% | 1% | Sanitized liveness, bounded MySQL readiness, server-owned request identity, structured HTTP/Nest logs, redaction, and safe fatal bootstrap reporting exist; metrics and traces remain |
 | CI/CD and public deployment | 8% | 1.75% | CI validates API health against real MySQL; no release pipeline or live environment |
 | Documentation and demo polish | 5% | 2.75% | README, architecture contracts, ADR history, deterministic OpenAPI JSON, and a public read-only local Swagger UI exist; examples and demo guides remain |
-| **Total** | **100%** | **20.25%** | Displayed overall is rounded down |
+| **Total** | **100%** | **20.75%** | Displayed overall is rounded down |
 
 The weights are fixed unless the project scope is formally re-baselined. A
 workstream may use fractional earned points internally, but the displayed
