@@ -2,6 +2,8 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-22
+- **Partially superseded by:** [ADR-0015](0015-authenticate-and-authorize-administrative-apis.md)
+  for authenticated `401` handling once its delivery gates are implemented
 
 ## Context
 

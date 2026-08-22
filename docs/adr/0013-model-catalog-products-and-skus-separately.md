@@ -2,6 +2,8 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-22
+- **Lifecycle policy:** Partially superseded by
+  [ADR-0014](0014-support-staged-and-reversible-catalog-publication.md)
 
 ## Context
 

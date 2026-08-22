@@ -280,12 +280,18 @@ the affected module:
 | Payment authorization versus immediate capture | Determines when an order is confirmed and whether cancellation voids or refunds | Payments |
 | Reservation-expiry versus late-payment race | Requires conditional transitions, locking/version rules, and reconciliation behavior | Orders and Payments integration |
 | Tax inclusion, discount allocation, and rounding | Determines persisted totals and refund correctness | Pricing and Orders |
-| Idempotency lifecycle | Must define caller scope, request hashing, in-progress ownership, replay retention, and takeover after failure | First retryable command |
-| Authentication and PII policy | Must define trust boundaries, token rotation, encryption, audit, retention, and webhook replay protection | Identity |
 | Initial SLO and capacity assumptions | Drive indexes, pool sizes, quorum queue policy, load tests, retention, RPO, and RTO | Production-like deployment |
 
 Until these decisions are accepted, documentation may describe alternatives
 but code must not silently select one.
+
+The first local transactional-command idempotency lifecycle is accepted in
+[ADR-0016](../adr/0016-make-retryable-commands-durably-idempotent.md).
+Administrative authentication, credential handling, permission evaluation,
+and login-identifier privacy are accepted in
+[ADR-0015](../adr/0015-authenticate-and-authorize-administrative-apis.md).
+Customer registration, account recovery, and provider webhook identity remain
+separate decisions before their affected implementations.
 
 ## Security and observability
 

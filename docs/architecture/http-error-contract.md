@@ -71,6 +71,12 @@ because a correct response must provide `Allow`. Either status currently fails
 closed to the fixed `500` representation, even when arbitrary upstream code
 sets those headers.
 
+[ADR-0015](../adr/0015-authenticate-and-authorize-administrative-apis.md)
+accepts the future administrative Bearer challenge and typed `401` contract.
+The paragraph above remains the current runtime behavior until Identity, the
+expanded descriptor registry, exact OpenAPI, and all route-registration gates
+are implemented together.
+
 ## Generic descriptor registry
 
 `about:blank` states that a problem has no semantics beyond its HTTP status.

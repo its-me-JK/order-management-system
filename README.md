@@ -26,8 +26,10 @@ query use cases. Its anonymous list and detail endpoints publish an exact
 active-only representation, opaque cursor pagination, fixed Problem Details,
 and `no-store` responses. A real vertical integration suite exercises the
 production NestJS composition through Prisma and isolated MySQL. Catalog still
-has no write path; pricing, inventory, Redis caching, and integration events
-remain separate later slices.
+has no write path; its administrative lifecycle, authentication, idempotency,
+concurrency, audit, and transaction contracts are accepted but deliberately
+not exposed before their security foundations exist. Pricing, inventory,
+Redis caching, and integration events remain separate later slices.
 
 **Overall project progress: 25%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
@@ -79,6 +81,9 @@ strict DTO boundary rules.
 The [public Catalog read contract](docs/architecture/catalog-public-reads.md)
 defines application query boundaries, pagination, visibility, and the
 anonymous HTTP representation.
+The [Catalog administration contract](docs/architecture/catalog-administration.md)
+defines the gated write-side lifecycle, permissions, idempotency, optimistic
+concurrency, audit, and transaction semantics.
 
 ## Architecture decisions
 
@@ -97,6 +102,9 @@ Significant decisions are recorded as Architecture Decision Records (ADRs):
 - [ADR-0011: Publish explicit OpenAPI and enforce strict transport validation](docs/adr/0011-publish-explicit-openapi-and-enforce-strict-transport-validation.md)
 - [ADR-0012: Expose Prisma only as a runtime-owned infrastructure capability](docs/adr/0012-expose-prisma-only-as-an-infrastructure-capability.md)
 - [ADR-0013: Model Catalog Products and SKUs separately](docs/adr/0013-model-catalog-products-and-skus-separately.md)
+- [ADR-0014: Support staged and reversible Catalog publication](docs/adr/0014-support-staged-and-reversible-catalog-publication.md)
+- [ADR-0015: Authenticate and authorize administrative APIs](docs/adr/0015-authenticate-and-authorize-administrative-apis.md)
+- [ADR-0016: Make retryable commands durably idempotent](docs/adr/0016-make-retryable-commands-durably-idempotent.md)
 
 The [ADR index](docs/adr/README.md) explains the lifecycle and format of these
 records.

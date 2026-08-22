@@ -201,5 +201,6 @@ removes only its owned fixtures and database.
   integrity.
 - Add search and merchandising ranking as explicit contracts rather than
   silently changing creation-order pagination.
-- Add authenticated Catalog write and lifecycle contracts with idempotency and
-  audit ownership before exposing administrative operations.
+- Implement the accepted
+  [Catalog administration](catalog-administration.md) contract before exposing
+  authenticated write operations.
