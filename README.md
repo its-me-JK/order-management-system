@@ -16,16 +16,17 @@ endpoints, validated database configuration, one runtime-owned Prisma client
 with an infrastructure-only access boundary, bounded readiness probes,
 application-owned database shutdown, server-owned request identities,
 sanitized structured JSON logging, and a secret-safe RFC 9457 HTTP error
-boundary that includes parser failures. It now
-publishes a deterministic OpenAPI 3.0.3 contract and local read-only Swagger
-UI, and rejects malformed DTOs through one strict non-coercive validation
-policy. The first Catalog persistence slice now owns separate Product and SKU
-records, lifecycle and integrity constraints, lossless seek-pagination
-contracts, UUIDv7 binary mapping, and an active-only Prisma read adapter. It
-deliberately has no public feature endpoint or write path yet; pricing,
-inventory, Redis caching, and integration events remain separate later slices.
+boundary that includes parser failures. It publishes a deterministic OpenAPI
+3.0.3 contract and local read-only Swagger UI, and rejects malformed DTOs
+through one strict non-coercive validation policy. The first Catalog read
+slice now owns separate Product and SKU records, lifecycle and integrity
+constraints, lossless seek pagination, UUIDv7 binary mapping, an active-only
+Prisma adapter, bounded application inputs, and framework-independent public
+query use cases. It deliberately has no public feature endpoint or write path
+yet; pricing, inventory, Redis caching, and integration events remain separate
+later slices.
 
-**Overall project progress: 23%.** The fixed, deployment-inclusive scoring
+**Overall project progress: 24%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
 
 ## Planned technology
@@ -72,6 +73,9 @@ health exception.
 The [OpenAPI and transport validation contract](docs/architecture/openapi-and-transport-validation.md)
 defines contract ownership, public documentation posture, operation IDs, and
 strict DTO boundary rules.
+The [public Catalog read contract](docs/architecture/catalog-public-reads.md)
+defines application query boundaries, pagination, visibility, and the planned
+anonymous HTTP representation.
 
 ## Architecture decisions
 

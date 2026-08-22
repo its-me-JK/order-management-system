@@ -16,7 +16,12 @@ import {
 import { getPrismaClient, Prisma, type PrismaClient } from '@oms/database/prisma';
 import { config as loadEnvironment } from 'dotenv';
 
-import { CatalogReadUnavailableError, parseCatalogCursorTimestamp } from '../../src';
+import {
+  CatalogReadUnavailableError,
+  parseCatalogCursorTimestamp,
+  parseCatalogPageSize,
+  parseCatalogSkuId,
+} from '../../src';
 import { BinaryUuidCodec } from '../../src/infrastructure/identifiers';
 import { PrismaCatalogReadRepository } from '../../src/infrastructure/prisma';
 
@@ -29,24 +34,24 @@ const PRODUCT_IDS = {
 } as const;
 
 const SKU_IDS = {
-  activeUnderArchivedProduct: 'ffffffff-ff10-7000-8000-000000000004',
-  activeUnderDraftProduct: 'ffffffff-ff10-7000-8000-000000000003',
-  constraint: 'ffffffff-ff10-7000-8000-000000000005',
-  directRetired: 'ffffffff-ff10-7000-8000-000000000006',
-  draft: 'ffffffff-ff10-7000-8000-000000000001',
-  duplicate: 'ffffffff-ff10-7000-8000-000000000008',
-  invalid: 'ffffffff-ff10-7000-8000-000000000007',
-  missingProduct: 'ffffffff-ff10-7000-8000-000000000009',
-  page1: 'ffffffff-ffff-7fff-bfff-ffffffffffff',
-  page2: 'ffffffff-ffff-7fff-bfff-fffffffffffe',
-  page3: 'ffffffff-ffff-7fff-bfff-fffffffffffd',
-  page4: 'ffffffff-ffff-7fff-bfff-fffffffffffc',
-  page5: 'ffffffff-ffff-7fff-bfff-fffffffffffb',
-  page6: 'ffffffff-ffff-7fff-bfff-fffffffffffa',
-  retired: 'ffffffff-ff10-7000-8000-000000000002',
+  activeUnderArchivedProduct: parseCatalogSkuId('ffffffff-ff10-7000-8000-000000000004'),
+  activeUnderDraftProduct: parseCatalogSkuId('ffffffff-ff10-7000-8000-000000000003'),
+  constraint: parseCatalogSkuId('ffffffff-ff10-7000-8000-000000000005'),
+  directRetired: parseCatalogSkuId('ffffffff-ff10-7000-8000-000000000006'),
+  draft: parseCatalogSkuId('ffffffff-ff10-7000-8000-000000000001'),
+  duplicate: parseCatalogSkuId('ffffffff-ff10-7000-8000-000000000008'),
+  invalid: parseCatalogSkuId('ffffffff-ff10-7000-8000-000000000007'),
+  missingProduct: parseCatalogSkuId('ffffffff-ff10-7000-8000-000000000009'),
+  page1: parseCatalogSkuId('ffffffff-ffff-7fff-bfff-ffffffffffff'),
+  page2: parseCatalogSkuId('ffffffff-ffff-7fff-bfff-fffffffffffe'),
+  page3: parseCatalogSkuId('ffffffff-ffff-7fff-bfff-fffffffffffd'),
+  page4: parseCatalogSkuId('ffffffff-ffff-7fff-bfff-fffffffffffc'),
+  page5: parseCatalogSkuId('ffffffff-ffff-7fff-bfff-fffffffffffb'),
+  page6: parseCatalogSkuId('ffffffff-ffff-7fff-bfff-fffffffffffa'),
+  retired: parseCatalogSkuId('ffffffff-ff10-7000-8000-000000000002'),
 } as const;
 
-const MINIMUM_UUID_V7 = '00000000-0000-7000-8000-000000000000';
+const MINIMUM_UUID_V7 = parseCatalogSkuId('00000000-0000-7000-8000-000000000000');
 const CATALOG_INTEGRATION_CONFIRMATION_VARIABLE = 'CATALOG_INTEGRATION_CONFIRM_DATABASE';
 const CATALOG_INTEGRATION_DATABASE = 'oms_catalog_integration';
 const LOOPBACK_DATABASE_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
@@ -808,7 +813,10 @@ async function assertPublicReadAdapter(context: IntegrationContext): Promise<voi
     });
   }
 
-  const firstPage = await context.repository.listPublicSkus({ after: null, limit: 2 });
+  const firstPage = await context.repository.listPublicSkus({
+    after: null,
+    limit: parseCatalogPageSize(2),
+  });
   assert.deepEqual(
     firstPage.items.map(({ id }) => id),
     [SKU_IDS.page1, SKU_IDS.page2],
@@ -820,7 +828,10 @@ async function assertPublicReadAdapter(context: IntegrationContext): Promise<voi
     id: SKU_IDS.page2,
   });
 
-  const secondPage = await context.repository.listPublicSkus({ after: firstCursor, limit: 2 });
+  const secondPage = await context.repository.listPublicSkus({
+    after: firstCursor,
+    limit: parseCatalogPageSize(2),
+  });
   assert.deepEqual(
     secondPage.items.map(({ id }) => id),
     [SKU_IDS.page3, SKU_IDS.page4],
@@ -832,7 +843,10 @@ async function assertPublicReadAdapter(context: IntegrationContext): Promise<voi
     id: SKU_IDS.page4,
   });
 
-  const thirdPage = await context.repository.listPublicSkus({ after: secondCursor, limit: 2 });
+  const thirdPage = await context.repository.listPublicSkus({
+    after: secondCursor,
+    limit: parseCatalogPageSize(2),
+  });
   assert.deepEqual(
     thirdPage.items.map(({ id }) => id),
     [SKU_IDS.page5, SKU_IDS.page6],
@@ -852,7 +866,7 @@ async function assertPublicReadAdapter(context: IntegrationContext): Promise<voi
       createdAt: parseCatalogCursorTimestamp(PAGE_ROWS[5].cursorCreatedAt),
       id: SKU_IDS.page6,
     },
-    limit: 100,
+    limit: parseCatalogPageSize(100),
   });
   const taskIds = new Set<string>(PAGE_ROWS.map(({ id }) => id));
   const hiddenIds = new Set<string>([
@@ -875,7 +889,7 @@ async function assertPublicReadAdapter(context: IntegrationContext): Promise<voi
       createdAt: parseCatalogCursorTimestamp('1000-01-01T00:00:00.000000Z'),
       id: MINIMUM_UUID_V7,
     },
-    limit: 100,
+    limit: parseCatalogPageSize(100),
   });
   assert.deepEqual(beyondEnd, { items: [], pageInfo: { nextCursor: null } });
 
@@ -920,7 +934,7 @@ async function assertRealOutagesAreUnavailable(context: IntegrationContext): Pro
       },
     );
     await assert.rejects(
-      repository.listPublicSkus({ after: null, limit: 1 }),
+      repository.listPublicSkus({ after: null, limit: parseCatalogPageSize(1) }),
       (error: unknown): boolean => {
         assert.ok(error instanceof CatalogReadUnavailableError);
         assert.equal(error.message, 'Catalog reads are temporarily unavailable');

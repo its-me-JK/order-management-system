@@ -1,3 +1,5 @@
+import { parseCatalogSkuId, type CatalogSkuId } from './catalog-sku-id';
+
 const CATALOG_CURSOR_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/u;
 
 declare const catalogCursorTimestampBrand: unique symbol;
@@ -6,6 +8,18 @@ declare const catalogCursorTimestampBrand: unique symbol;
 export type CatalogCursorTimestamp = string & {
   readonly [catalogCursorTimestampBrand]: true;
 };
+
+/** The exclusive seek position for descending `(created_at, id)` order. */
+export type CatalogSkuPageCursor = Readonly<{
+  createdAt: CatalogCursorTimestamp;
+  id: CatalogSkuId;
+}>;
+
+/** A decoded, but not yet application-validated, Catalog cursor. */
+export type CatalogSkuPageCursorInput = Readonly<{
+  createdAt: string;
+  id: string;
+}>;
 
 export class InvalidCatalogCursorTimestampError extends Error {
   public constructor() {
@@ -37,7 +51,7 @@ function daysInMonth(year: number, month: number): number {
  * the final three microsecond digits and can make a seek cursor ambiguous.
  */
 export function parseCatalogCursorTimestamp(value: string): CatalogCursorTimestamp {
-  if (!CATALOG_CURSOR_TIMESTAMP_PATTERN.test(value)) {
+  if (typeof value !== 'string' || !CATALOG_CURSOR_TIMESTAMP_PATTERN.test(value)) {
     throw new InvalidCatalogCursorTimestampError();
   }
 
@@ -57,4 +71,12 @@ export function parseCatalogCursorTimestamp(value: string): CatalogCursorTimesta
   }
 
   return value as CatalogCursorTimestamp;
+}
+
+/** Validates both components of an already-decoded Catalog seek cursor. */
+export function parseCatalogSkuPageCursor(value: CatalogSkuPageCursorInput): CatalogSkuPageCursor {
+  return {
+    createdAt: parseCatalogCursorTimestamp(value.createdAt),
+    id: parseCatalogSkuId(value.id),
+  };
 }

@@ -1,8 +1,10 @@
-import type { CatalogCursorTimestamp } from './catalog-cursor';
+import type { CatalogSkuPageCursor } from './catalog-cursor';
+import type { CatalogPageSize } from './catalog-page-size';
+import type { CatalogSkuId } from './catalog-sku-id';
 import type { PublicSku } from './public-sku';
 
 export type GetPublicSkuByIdQuery = Readonly<{
-  skuId: string;
+  skuId: CatalogSkuId;
 }>;
 
 export type GetPublicSkuByIdResult =
@@ -14,15 +16,9 @@ export type GetPublicSkuByIdResult =
       kind: 'not-found';
     }>;
 
-/** The exclusive seek position for descending `(created_at, id)` order. */
-export type CatalogSkuPageCursor = Readonly<{
-  createdAt: CatalogCursorTimestamp;
-  id: string;
-}>;
-
 export type ListPublicSkusQuery = Readonly<{
   after: CatalogSkuPageCursor | null;
-  limit: number;
+  limit: CatalogPageSize;
 }>;
 
 export type PublicSkuPageInfo =

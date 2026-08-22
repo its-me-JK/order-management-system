@@ -5,6 +5,9 @@ import {
   CatalogReadUnavailableError,
   InvalidCatalogCursorTimestampError,
   parseCatalogCursorTimestamp,
+  parseCatalogPageSize,
+  parseCatalogSkuId,
+  type CatalogSkuId,
 } from '../../src';
 import { BinaryUuidCodec, InvalidUuidV7Error } from '../../src/infrastructure/identifiers';
 import {
@@ -12,9 +15,9 @@ import {
   PrismaCatalogReadRepository,
 } from '../../src/infrastructure/prisma/prisma-catalog-read.repository';
 
-const SKU_ONE_ID = '01890f3a-8bcd-7def-8abc-0123456789ab';
-const SKU_TWO_ID = '01890f3a-8bcd-7def-8abc-0123456789ac';
-const SKU_THREE_ID = '01890f3a-8bcd-7def-8abc-0123456789ad';
+const SKU_ONE_ID = parseCatalogSkuId('01890f3a-8bcd-7def-8abc-0123456789ab');
+const SKU_TWO_ID = parseCatalogSkuId('01890f3a-8bcd-7def-8abc-0123456789ac');
+const SKU_THREE_ID = parseCatalogSkuId('01890f3a-8bcd-7def-8abc-0123456789ad');
 const PRODUCT_ID = '01890f3a-8bcd-7def-9abc-0123456789ab';
 const CREATED_AT_ONE = '2026-08-22T14:57:24.123456Z';
 const CREATED_AT_TWO = '2026-08-22T14:57:24.123455Z';
@@ -196,9 +199,9 @@ describe('PrismaCatalogReadRepository.getPublicSkuById', (): void => {
     const fixture = clientFixture();
     const repository = new PrismaCatalogReadRepository(fixture.client);
 
-    await expect(repository.getPublicSkuById({ skuId: 'not-a-uuid' })).rejects.toBeInstanceOf(
-      InvalidUuidV7Error,
-    );
+    await expect(
+      repository.getPublicSkuById({ skuId: 'not-a-uuid' as CatalogSkuId }),
+    ).rejects.toBeInstanceOf(InvalidUuidV7Error);
     expect(fixture.findUnique).not.toHaveBeenCalled();
     expect(fixture.queryRaw).not.toHaveBeenCalled();
   });
@@ -300,7 +303,9 @@ describe('PrismaCatalogReadRepository.listPublicSkus', (): void => {
     const fixture = clientFixture();
     const repository = new PrismaCatalogReadRepository(fixture.client);
 
-    await expect(repository.listPublicSkus({ after: null, limit: 2 })).resolves.toEqual({
+    await expect(
+      repository.listPublicSkus({ after: null, limit: parseCatalogPageSize(2) }),
+    ).resolves.toEqual({
       items: [],
       pageInfo: { nextCursor: null },
     });
@@ -321,7 +326,9 @@ describe('PrismaCatalogReadRepository.listPublicSkus', (): void => {
     fixture.queryRaw.mockResolvedValue([listRow(SKU_ONE_ID, CREATED_AT_ONE)]);
     const repository = new PrismaCatalogReadRepository(fixture.client);
 
-    await expect(repository.listPublicSkus({ after: null, limit: 2 })).resolves.toEqual({
+    await expect(
+      repository.listPublicSkus({ after: null, limit: parseCatalogPageSize(2) }),
+    ).resolves.toEqual({
       items: [
         {
           code: 'MILK-AB',
@@ -346,7 +353,10 @@ describe('PrismaCatalogReadRepository.listPublicSkus', (): void => {
     ]);
     const repository = new PrismaCatalogReadRepository(fixture.client);
 
-    const page = await repository.listPublicSkus({ after: null, limit: 2 });
+    const page = await repository.listPublicSkus({
+      after: null,
+      limit: parseCatalogPageSize(2),
+    });
 
     expect(page.items.map(({ id }): string => id)).toEqual([SKU_ONE_ID, SKU_TWO_ID]);
     expect(page.pageInfo).toEqual({
@@ -367,7 +377,7 @@ describe('PrismaCatalogReadRepository.listPublicSkus', (): void => {
         createdAt: parseCatalogCursorTimestamp(CREATED_AT_ONE),
         id: SKU_ONE_ID,
       },
-      limit: 2,
+      limit: parseCatalogPageSize(2),
     });
 
     const invocation = invocationAt(fixture.queryRaw);
@@ -396,7 +406,7 @@ describe('PrismaCatalogReadRepository.listPublicSkus', (): void => {
     await expect(
       repository.listPublicSkus({
         after: { createdAt: invalidTimestamp, id: SKU_ONE_ID },
-        limit: 2,
+        limit: parseCatalogPageSize(2),
       }),
     ).rejects.toBeInstanceOf(InvalidCatalogCursorTimestampError);
     expect(fixture.queryRaw).not.toHaveBeenCalled();
@@ -411,9 +421,9 @@ describe('PrismaCatalogReadRepository.listPublicSkus', (): void => {
       repository.listPublicSkus({
         after: {
           createdAt: parseCatalogCursorTimestamp(CREATED_AT_ONE),
-          id: 'not-a-uuid',
+          id: 'not-a-uuid' as CatalogSkuId,
         },
-        limit: 2,
+        limit: parseCatalogPageSize(2),
       }),
     ).rejects.toBeInstanceOf(InvalidUuidV7Error);
     expect(fixture.queryRaw).not.toHaveBeenCalled();
@@ -430,7 +440,10 @@ describe('PrismaCatalogReadRepository.listPublicSkus', (): void => {
       .mockResolvedValueOnce([listRow(SKU_TWO_ID, CREATED_AT_TWO)]);
     const repository = new PrismaCatalogReadRepository(fixture.client);
 
-    const firstPage = await repository.listPublicSkus({ after: null, limit: 1 });
+    const firstPage = await repository.listPublicSkus({
+      after: null,
+      limit: parseCatalogPageSize(1),
+    });
     const firstCursor = firstPage.pageInfo.nextCursor;
 
     expect(firstCursor).toEqual({ createdAt: CREATED_AT_ONE, id: SKU_ONE_ID });
@@ -440,7 +453,10 @@ describe('PrismaCatalogReadRepository.listPublicSkus', (): void => {
       throw new Error('Expected a next cursor');
     }
 
-    const secondPage = await repository.listPublicSkus({ after: firstCursor, limit: 1 });
+    const secondPage = await repository.listPublicSkus({
+      after: firstCursor,
+      limit: parseCatalogPageSize(1),
+    });
     const secondInvocation = invocationAt(fixture.queryRaw, 1);
 
     expect(secondPage.items.map(({ id }): string => id)).toEqual([SKU_TWO_ID]);
@@ -476,7 +492,9 @@ describe('PrismaCatalogReadRepository.listPublicSkus', (): void => {
     fixture.queryRaw.mockResolvedValue(result);
     const repository = new PrismaCatalogReadRepository(fixture.client);
 
-    await expect(repository.listPublicSkus({ after: null, limit: 2 })).rejects.toMatchObject({
+    await expect(
+      repository.listPublicSkus({ after: null, limit: parseCatalogPageSize(2) }),
+    ).rejects.toMatchObject({
       message: 'Catalog read failed',
       name: 'CatalogReadPersistenceError',
     });
@@ -490,9 +508,9 @@ describe('PrismaCatalogReadRepository.listPublicSkus', (): void => {
     ]);
     const repository = new PrismaCatalogReadRepository(fixture.client);
 
-    await expect(repository.listPublicSkus({ after: null, limit: 1 })).rejects.toBeInstanceOf(
-      CatalogReadPersistenceError,
-    );
+    await expect(
+      repository.listPublicSkus({ after: null, limit: parseCatalogPageSize(1) }),
+    ).rejects.toBeInstanceOf(CatalogReadPersistenceError);
   });
 
   it('translates a recognized raw-query timeout to read-unavailable', async (): Promise<void> => {
@@ -501,9 +519,9 @@ describe('PrismaCatalogReadRepository.listPublicSkus', (): void => {
     fixture.queryRaw.mockRejectedValue(cause);
     const repository = new PrismaCatalogReadRepository(fixture.client);
 
-    await expect(repository.listPublicSkus({ after: null, limit: 2 })).rejects.toEqual(
-      new CatalogReadUnavailableError(cause),
-    );
+    await expect(
+      repository.listPublicSkus({ after: null, limit: parseCatalogPageSize(2) }),
+    ).rejects.toEqual(new CatalogReadUnavailableError(cause));
   });
 
   it('translates a P2010-wrapped MySQL socket timeout to read-unavailable', async (): Promise<void> => {
@@ -512,9 +530,9 @@ describe('PrismaCatalogReadRepository.listPublicSkus', (): void => {
     fixture.queryRaw.mockRejectedValue(cause);
     const repository = new PrismaCatalogReadRepository(fixture.client);
 
-    await expect(repository.listPublicSkus({ after: null, limit: 2 })).rejects.toEqual(
-      new CatalogReadUnavailableError(cause),
-    );
+    await expect(
+      repository.listPublicSkus({ after: null, limit: parseCatalogPageSize(2) }),
+    ).rejects.toEqual(new CatalogReadUnavailableError(cause));
   });
 
   it('does not classify a structured P2010 SQL syntax failure as unavailable', async (): Promise<void> => {
@@ -527,9 +545,9 @@ describe('PrismaCatalogReadRepository.listPublicSkus', (): void => {
     fixture.queryRaw.mockRejectedValue(cause);
     const repository = new PrismaCatalogReadRepository(fixture.client);
 
-    await expect(repository.listPublicSkus({ after: null, limit: 2 })).rejects.toEqual(
-      new CatalogReadPersistenceError(cause),
-    );
+    await expect(
+      repository.listPublicSkus({ after: null, limit: parseCatalogPageSize(2) }),
+    ).rejects.toEqual(new CatalogReadPersistenceError(cause));
   });
 
   it('wraps an unrecognized raw-query failure without leaking it', async (): Promise<void> => {
@@ -538,8 +556,8 @@ describe('PrismaCatalogReadRepository.listPublicSkus', (): void => {
     fixture.queryRaw.mockRejectedValue(cause);
     const repository = new PrismaCatalogReadRepository(fixture.client);
 
-    await expect(repository.listPublicSkus({ after: null, limit: 2 })).rejects.toEqual(
-      new CatalogReadPersistenceError(cause),
-    );
+    await expect(
+      repository.listPublicSkus({ after: null, limit: parseCatalogPageSize(2) }),
+    ).rejects.toEqual(new CatalogReadPersistenceError(cause));
   });
 });

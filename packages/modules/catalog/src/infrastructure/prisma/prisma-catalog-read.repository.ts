@@ -11,6 +11,7 @@ import type {
   PublicSkuPage,
 } from '../../application/catalog-read.repository';
 import type { PublicSku } from '../../application/public-sku';
+import { parseCatalogSkuId, type CatalogSkuId } from '../../application/catalog-sku-id';
 import { BinaryUuidCodec } from '../identifiers';
 
 const ACTIVE_STATUS = 'ACTIVE';
@@ -26,6 +27,7 @@ type UnknownRecord = Readonly<Record<string, unknown>>;
 
 type MappedListRow = Readonly<{
   createdAt: ReturnType<typeof parseCatalogCursorTimestamp>;
+  cursorId: CatalogSkuId;
   sku: PublicSku;
 }>;
 
@@ -80,11 +82,14 @@ function mapListRow(value: unknown, uuidCodec: BinaryUuidCodec): MappedListRow {
     throw new TypeError('Catalog persistence returned an invalid list row');
   }
 
+  const skuId = uuidCodec.fromBytes(requiredBytes(value, 'sku_id'));
+
   return {
     createdAt: parseCatalogCursorTimestamp(requiredString(value, 'cursor_created_at')),
+    cursorId: parseCatalogSkuId(skuId),
     sku: {
       code: requiredString(value, 'sku_code'),
-      id: uuidCodec.fromBytes(requiredBytes(value, 'sku_id')),
+      id: skuId,
       name: requiredString(value, 'sku_name'),
       product: {
         id: uuidCodec.fromBytes(requiredBytes(value, 'product_id')),
@@ -228,7 +233,7 @@ export class PrismaCatalogReadRepository implements CatalogReadRepository {
             ? {
                 nextCursor: {
                   createdAt: finalVisibleRow.createdAt,
-                  id: finalVisibleRow.sku.id,
+                  id: finalVisibleRow.cursorId,
                 },
               }
             : { nextCursor: null },

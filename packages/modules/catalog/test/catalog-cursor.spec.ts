@@ -1,4 +1,11 @@
-import { InvalidCatalogCursorTimestampError, parseCatalogCursorTimestamp } from '../src';
+import {
+  InvalidCatalogCursorTimestampError,
+  InvalidCatalogSkuIdError,
+  parseCatalogCursorTimestamp,
+  parseCatalogSkuPageCursor,
+} from '../src';
+
+const SKU_ID = '01890f3a-8bcd-7def-8abc-0123456789ab';
 
 describe('parseCatalogCursorTimestamp', (): void => {
   it.each([
@@ -39,5 +46,34 @@ describe('parseCatalogCursorTimestamp', (): void => {
     expect(() => parseCatalogCursorTimestamp(timestamp)).toThrow(
       InvalidCatalogCursorTimestampError,
     );
+  });
+});
+
+describe('parseCatalogSkuPageCursor', (): void => {
+  it('validates and retains both decoded seek components', (): void => {
+    const input = {
+      createdAt: '2026-08-22T12:34:56.123456Z',
+      id: SKU_ID,
+    };
+
+    expect(parseCatalogSkuPageCursor(input)).toEqual(input);
+  });
+
+  it('rejects an invalid timestamp before returning a repository cursor', (): void => {
+    expect(() =>
+      parseCatalogSkuPageCursor({
+        createdAt: '2026-08-22T12:34:56.123Z',
+        id: SKU_ID,
+      }),
+    ).toThrow(InvalidCatalogCursorTimestampError);
+  });
+
+  it('rejects an invalid SKU id before returning a repository cursor', (): void => {
+    expect(() =>
+      parseCatalogSkuPageCursor({
+        createdAt: '2026-08-22T12:34:56.123456Z',
+        id: 'not-a-uuid',
+      }),
+    ).toThrow(InvalidCatalogSkuIdError);
   });
 });
