@@ -20,7 +20,11 @@ import type { DatabaseConnection } from '@oms/database';
 import type { Response as ExpressResponse } from 'express';
 import { Logger } from 'nestjs-pino';
 
-import { API_REQUEST_BODY_LIMIT_BYTES, configureApiApplication } from './api.application';
+import {
+  API_REQUEST_BODY_LIMIT_BYTES,
+  configureApiApplication,
+  createApiExpressAdapter,
+} from './api.application';
 import { ApiModule } from './api.module';
 
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -181,10 +185,13 @@ async function startApi(): Promise<RunningApi> {
     ],
     controllers: [ProblemProbeController],
   }).compile();
-  const application = moduleReference.createNestApplication<NestExpressApplication>({
-    bodyParser: false,
-    bufferLogs: true,
-  });
+  const application = moduleReference.createNestApplication<NestExpressApplication>(
+    createApiExpressAdapter(),
+    {
+      bodyParser: false,
+      bufferLogs: true,
+    },
+  );
 
   application.useLogger(application.get(Logger));
   configureApiApplication(application);

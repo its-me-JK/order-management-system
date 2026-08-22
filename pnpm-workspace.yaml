@@ -5,6 +5,7 @@ packages:
 autoInstallPeers: false
 allowBuilds:
   '@prisma/engines@7.9.1': true
+  '@scarf/scarf': false
   'prisma@7.9.1': true
   unrs-resolver: true
 blockExoticSubdeps: true

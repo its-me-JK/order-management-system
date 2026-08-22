@@ -5,7 +5,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { createDatabase } from '@oms/database';
 import { Logger } from 'nestjs-pino';
 
-import { configureApiApplication } from './api.application';
+import { configureApiApplication, createApiExpressAdapter } from './api.application';
 import { ApiModule } from './api.module';
 import { reportBootstrapFailure } from './bootstrap.failure';
 import {
@@ -31,6 +31,7 @@ async function bootstrap(): Promise<void> {
           level: configuration.api.logging.level,
         },
       }),
+      createApiExpressAdapter(),
       { abortOnError: false, bodyParser: false, bufferLogs: true },
     );
 

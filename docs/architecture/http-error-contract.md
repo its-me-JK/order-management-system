@@ -95,6 +95,21 @@ The initial immutable registry is:
 Unsupported, non-integer, 2xx, 3xx, or caller-spoofed statuses become the fixed
 `500` descriptor.
 
+## OpenAPI and validation
+
+The OpenAPI `ProblemDetails` component has exactly the seven baseline members
+as required properties and rejects additional members. Status-specific
+components narrow fixed `status`, `title`, and `detail` values instead of
+claiming that every registry status is possible from every operation. Future
+operations reference these shared components while declaring only failures
+they can actually produce.
+
+Strict DTO failures use the fixed `400` descriptor. The response and logs do
+not contain rejected values, field names, constraint names, or the validator's
+internal error tree. Controlled structured violations remain a future contract
+decision; raw class-validator output will never be exposed. See
+[OpenAPI and transport validation](openapi-and-transport-validation.md).
+
 ## Failure taxonomy and mapping
 
 ### Transport and framework failures
@@ -235,9 +250,10 @@ avoid collecting secrets in the first place.
 ## Future improvements
 
 - Publish stable application-specific problem types on GitHub Pages.
-- Add structured, controlled validation violations with DTO validation.
-- Document every problem response in OpenAPI with one shared schema and
-  explicit `application/problem+json` content.
+- Add structured, controlled validation violations only when a client needs
+  them and the disclosure policy is defined.
+- Enforce response completeness for every future business operation using the
+  shared OpenAPI components and explicit `application/problem+json` content.
 - Add authentication challenge, rate-limit, retry, idempotency-conflict, and
   optimistic-concurrency policies with their required headers.
 - Add route-aware `405`, localization, and content negotiation only when clients

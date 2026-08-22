@@ -15,11 +15,13 @@ now has a versioned public HTTP surface, unversioned operational health
 endpoints, validated database configuration, a Prisma-private database
 boundary, bounded readiness probes, application-owned database shutdown,
 server-owned request identities, sanitized structured JSON logging, and a
-secret-safe RFC 9457 HTTP error boundary that includes parser failures.
-No business models, business modules, migrations, or public feature endpoints
-have been implemented yet.
+secret-safe RFC 9457 HTTP error boundary that includes parser failures. It now
+publishes a deterministic OpenAPI 3.0.3 contract and local read-only Swagger
+UI, and rejects malformed DTOs through one strict non-coercive validation
+policy. No business models, business modules, migrations, or public feature
+endpoints have been implemented yet.
 
-**Overall project progress: 18%.** The fixed, deployment-inclusive scoring
+**Overall project progress: 20%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
 
 ## Planned technology
@@ -63,6 +65,9 @@ defines header trust, log fields, redaction, and propagation boundaries.
 The [HTTP error contract](docs/architecture/http-error-contract.md) defines RFC
 9457 responses, safe exception mapping, parser limits, and the operational
 health exception.
+The [OpenAPI and transport validation contract](docs/architecture/openapi-and-transport-validation.md)
+defines contract ownership, public documentation posture, operation IDs, and
+strict DTO boundary rules.
 
 ## Architecture decisions
 
@@ -78,6 +83,7 @@ Significant decisions are recorded as Architecture Decision Records (ADRs):
 - [ADR-0008: Operate a zero-cost public showcase environment](docs/adr/0008-zero-cost-public-showcase.md)
 - [ADR-0009: Validate runtime configuration at process boundaries](docs/adr/0009-validate-runtime-configuration-at-boundaries.md)
 - [ADR-0010: Standardize public HTTP errors with RFC 9457](docs/adr/0010-standardize-http-errors-with-rfc-9457.md)
+- [ADR-0011: Publish explicit OpenAPI and enforce strict transport validation](docs/adr/0011-publish-explicit-openapi-and-enforce-strict-transport-validation.md)
 
 The [ADR index](docs/adr/README.md) explains the lifecycle and format of these
 records.
@@ -221,9 +227,23 @@ return HTTP `503`. Responses disable caching and disclose only dependency
 status, never connection details or underlying errors. Business endpoints use
 `/api/v1`; health endpoints deliberately remain unversioned.
 
+The same API process exposes its environment-neutral contract without a paid
+documentation service:
+
+| Endpoint | Meaning | Runtime behavior |
+| --- | --- | --- |
+| `GET /docs` | Read-only Swagger UI | Uses required local assets only; browser submission and remote validation are disabled |
+| `GET /docs/openapi.json` | OpenAPI 3.0.3 JSON | Generated once at startup; does not probe MySQL or publish deployment hosts |
+
+Documentation paths are unversioned and case-sensitive. Every representation
+uses `Cache-Control: no-store` and the normal server-owned request identity.
+Framework-default JSON/YAML aliases, package metadata, source maps, and OAuth
+UI helpers are not public.
+
 ```bash
 curl --fail http://localhost:3000/health/live
 curl --fail http://localhost:3000/health/ready
+curl --fail http://localhost:3000/docs/openapi.json
 ```
 
 During database outages the process remains live while readiness returns
@@ -249,6 +269,13 @@ disabled until a real endpoint requires it, and compressed request bodies are
 rejected with `415`. The
 [HTTP error contract](docs/architecture/http-error-contract.md) is the source of
 truth for supported statuses and disclosure rules.
+
+Feature request bodies must use concrete decorated DTO classes. Unknown
+ordinary fields, missing required values, invalid nested shapes, and wrong
+primitive types receive the same fixed RFC 9457 `400` response without field
+names, rejected values, or constraint messages. The global boundary does not
+implicitly convert client values; business invariants remain the responsibility
+of application use cases and domain models.
 
 The worker is buildable and its composition root is tested, but it has no run
 script yet. An empty worker has no legitimate long-lived workload; a RabbitMQ

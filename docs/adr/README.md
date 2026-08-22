@@ -28,6 +28,7 @@ A material change requires a new ADR that supersedes the old one.
 | [0008](0008-zero-cost-public-showcase.md) | Accepted | Operate a zero-cost public showcase environment |
 | [0009](0009-validate-runtime-configuration-at-boundaries.md) | Accepted | Validate runtime configuration at process boundaries |
 | [0010](0010-standardize-http-errors-with-rfc-9457.md) | Accepted | Standardize public HTTP errors with RFC 9457 |
+| [0011](0011-publish-explicit-openapi-and-enforce-strict-transport-validation.md) | Accepted | Publish explicit OpenAPI and enforce strict transport validation |
 
 ## Template
 

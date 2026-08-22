@@ -15,7 +15,7 @@ import { Test, type TestingModuleBuilder } from '@nestjs/testing';
 import type { DatabaseConnection } from '@oms/database';
 import { Logger, PinoLogger } from 'nestjs-pino';
 
-import { configureApiApplication } from './api.application';
+import { configureApiApplication, createApiExpressAdapter } from './api.application';
 import { ApiModule } from './api.module';
 
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -214,10 +214,13 @@ async function startApi(
   }
 
   const moduleReference = await moduleBuilder.compile();
-  const application = moduleReference.createNestApplication<NestExpressApplication>({
-    bodyParser: false,
-    bufferLogs: true,
-  });
+  const application = moduleReference.createNestApplication<NestExpressApplication>(
+    createApiExpressAdapter(),
+    {
+      bodyParser: false,
+      bufferLogs: true,
+    },
+  );
   const preexistingRequestId = options.preexistingRequestId;
 
   if (preexistingRequestId !== undefined) {

@@ -1,7 +1,9 @@
 import { RequestMethod, VersioningType } from '@nestjs/common';
 
-import type { NestExpressApplication } from '@nestjs/platform-express';
+import { ExpressAdapter, type NestExpressApplication } from '@nestjs/platform-express';
+import express from 'express';
 
+import { configureApiDocumentation } from './api.documentation';
 import {
   API_HTTP_LOGGING_MIDDLEWARE,
   type ApiHttpLoggingMiddleware,
@@ -12,6 +14,14 @@ const OPERATIONAL_HEALTH_ROUTES: Readonly<{ path: string; method: RequestMethod 
   { path: 'health/ready', method: RequestMethod.GET },
 ];
 export const API_REQUEST_BODY_LIMIT_BYTES = 100 * 1_024;
+
+export function createApiExpressAdapter(): ExpressAdapter {
+  const expressApplication = express();
+
+  expressApplication.set('case sensitive routing', true);
+
+  return new ExpressAdapter(expressApplication);
+}
 
 export function configureApiApplication(application: NestExpressApplication): void {
   application.use(application.get<ApiHttpLoggingMiddleware>(API_HTTP_LOGGING_MIDDLEWARE));
@@ -29,4 +39,5 @@ export function configureApiApplication(application: NestExpressApplication): vo
     defaultVersion: '1',
     prefix: 'v',
   });
+  configureApiDocumentation(application);
 }

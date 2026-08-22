@@ -30,6 +30,14 @@ inconsistent component state, then reconstructs a canonical constant response.
 A malformed health exception fails closed to the global RFC 9457 `500`
 representation instead of serializing untrusted health data.
 
+The OpenAPI document publishes these exact canonical `200`, `503`, and safe
+Problem Details `500` representations, including the accepted readiness
+shutdown alternatives and response headers. Terminus's generic Swagger
+metadata is deliberately disabled because its arbitrary component maps permit
+shapes that the runtime adapter rejects. The Terminus runtime decorator still
+owns health execution metadata and the no-cache header. See
+[OpenAPI and transport validation](openapi-and-transport-validation.md).
+
 ## Database lifecycle
 
 The composition root loads local development environment values when present,

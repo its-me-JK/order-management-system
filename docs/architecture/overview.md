@@ -166,11 +166,18 @@ order state into every possible combination.
 
 Public HTTP endpoints use versioned REST paths under `/api/v1`. Liveness,
 readiness, and metrics endpoints are operational endpoints and are not API
-versioned.
+versioned. Paths are case-sensitive; trailing-slash tolerance is retained.
+
+The public transport contract is generated as OpenAPI 3.0.3 from explicit
+application-owned metadata. Every operation declares a stable operation ID,
+exact responses, and shared error and identity components. The read-only
+documentation surface and startup checks are specified in
+[OpenAPI and transport validation](openapi-and-transport-validation.md).
 
 Contracts use:
 
-- Runtime validation at the transport boundary.
+- Strict runtime DTO validation that rejects ordinary unknown fields and wrong
+  primitive types without global implicit conversion.
 - Cursor pagination for collections.
 - Decimal strings and currency codes for money.
 - An `Idempotency-Key` header for retryable commands with financial or stock
@@ -182,6 +189,11 @@ Contracts use:
 
 Clients never provide trusted totals, prices, order state, payment state, or
 warehouse allocation.
+
+DTO validation owns bounded transport shape only. Authorization, cross-field
+policy, authoritative-state checks, and aggregate invariants remain in the
+application and domain layers. Every future controller operation must publish
+its stable operation ID and every response it can produce.
 
 Order creation and payment initiation remain separate commands unless the
 payment lifecycle ADR decides otherwise. Creating an order returns a durable

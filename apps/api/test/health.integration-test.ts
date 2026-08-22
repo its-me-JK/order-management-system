@@ -15,7 +15,7 @@ import {
   type DatabaseConnectionOptions,
 } from '@oms/database';
 
-import { configureApiApplication } from '../src/api.application';
+import { configureApiApplication, createApiExpressAdapter } from '../src/api.application';
 import { ApiModule } from '../src/api.module';
 import { parseBootstrapConfiguration } from '../src/bootstrap.configuration';
 
@@ -64,6 +64,7 @@ async function startApi(database: DatabaseConnection): Promise<RunningApi> {
         level: 'silent',
       },
     }),
+    createApiExpressAdapter(),
     { bodyParser: false, logger: false },
   );
 

@@ -12,7 +12,7 @@ import { Test, type TestingModuleBuilder } from '@nestjs/testing';
 
 import type { DatabaseConnection } from '@oms/database';
 
-import { configureApiApplication } from './api.application';
+import { configureApiApplication, createApiExpressAdapter } from './api.application';
 import { ApiModule } from './api.module';
 
 const LIVE_RESPONSE = {
@@ -111,10 +111,13 @@ async function startApi(
   }
 
   const moduleReference = await moduleBuilder.compile();
-  const application = moduleReference.createNestApplication<NestExpressApplication>({
-    bodyParser: false,
-    logger: false,
-  });
+  const application = moduleReference.createNestApplication<NestExpressApplication>(
+    createApiExpressAdapter(),
+    {
+      bodyParser: false,
+      logger: false,
+    },
+  );
 
   configureApiApplication(application);
 
@@ -297,7 +300,10 @@ describe('API operational health', (): void => {
         ['/api/v1/routing-probe', 200],
       ] as const;
       const absentAliases = [
+        '/HEALTH/LIVE',
+        '/API/v1/routing-probe',
         '/api/health/live',
+        '/api/V1/routing-probe',
         '/api/v1/health/live',
         '/v1/health/live',
         '/routing-probe',
