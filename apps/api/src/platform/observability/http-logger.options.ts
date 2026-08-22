@@ -406,7 +406,7 @@ function pinoOptions(options: ApiObservabilityOptions): PinoHttpOptions {
         return 'silent';
       }
 
-      if (healthRoute === '/health/ready' && response.statusCode === 503) {
+      if (healthRoute !== undefined && response.statusCode === 503) {
         return 'warn';
       }
 

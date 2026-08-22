@@ -2,9 +2,16 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Writable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { Controller, Get, HttpCode, type INestApplication } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  HttpCode,
+  ServiceUnavailableException,
+  type INestApplication,
+} from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
-import { Test } from '@nestjs/testing';
+import { HealthCheckService } from '@nestjs/terminus';
+import { Test, type TestingModuleBuilder } from '@nestjs/testing';
 import type { DatabaseConnection } from '@oms/database';
 import { Logger, PinoLogger } from 'nestjs-pino';
 
@@ -164,6 +171,15 @@ interface RunningApi {
   readonly logs: InMemoryLogStream;
 }
 
+interface HealthCheckServiceOverride {
+  readonly check: (healthIndicators: readonly unknown[]) => Promise<never>;
+}
+
+interface StartApiOptions {
+  readonly healthCheckService?: HealthCheckServiceOverride;
+  readonly preexistingRequestId?: string;
+}
+
 function databaseConnection(probe: () => Promise<void>): DatabaseConnection {
   return {
     close: jest.fn((): Promise<void> => Promise.resolve()),
@@ -173,11 +189,11 @@ function databaseConnection(probe: () => Promise<void>): DatabaseConnection {
 
 async function startApi(
   probe: () => Promise<void>,
-  options: Readonly<{ preexistingRequestId?: string }> = {},
+  options: StartApiOptions = {},
 ): Promise<RunningApi> {
   const logs = new InMemoryLogStream();
   const database = databaseConnection(probe);
-  const moduleReference = await Test.createTestingModule({
+  let moduleBuilder: TestingModuleBuilder = Test.createTestingModule({
     imports: [
       ApiModule.register({
         createDatabaseConnection: (): DatabaseConnection => database,
@@ -189,8 +205,17 @@ async function startApi(
       }),
     ],
     controllers: [ObservabilityProbeController],
-  }).compile();
+  });
+
+  if (options.healthCheckService !== undefined) {
+    moduleBuilder = moduleBuilder
+      .overrideProvider(HealthCheckService)
+      .useValue(options.healthCheckService);
+  }
+
+  const moduleReference = await moduleBuilder.compile();
   const application = moduleReference.createNestApplication<NestExpressApplication>({
+    bodyParser: false,
     bufferLogs: true,
   });
   const preexistingRequestId = options.preexistingRequestId;
@@ -416,6 +441,50 @@ describe('API HTTP observability contract', (): void => {
       expect(runningApi.logs.serialized()).not.toContain(DATABASE_SECRET);
       expect(runningApi.logs.serialized()).not.toContain('readiness-password');
       expect(runningApi.logs.serialized()).not.toContain('private-db.example');
+    } finally {
+      await runningApi.application.close();
+    }
+  });
+
+  it('logs planned liveness and readiness shutdown as warnings', async (): Promise<void> => {
+    const healthCheckService: HealthCheckServiceOverride = {
+      check: (healthIndicators): Promise<never> =>
+        Promise.reject(
+          new ServiceUnavailableException(
+            healthIndicators.length === 0
+              ? { status: 'shutting_down', info: {}, error: {}, details: {} }
+              : {
+                  status: 'shutting_down',
+                  info: { database: { status: 'up' } },
+                  error: {},
+                  details: { database: { status: 'up' } },
+                },
+          ),
+        ),
+    };
+    const runningApi = await startApi((): Promise<void> => Promise.resolve(), {
+      healthCheckService,
+    });
+
+    try {
+      const liveResponse = await fetch(`${runningApi.baseUrl}/health/live`);
+      const readyResponse = await fetch(`${runningApi.baseUrl}/health/ready`);
+      await allowResponseLoggingToComplete();
+      const records = runningApi.logs.records();
+
+      expect(liveResponse.status).toBe(503);
+      expect(readyResponse.status).toBe(503);
+      expect(records).toHaveLength(2);
+      expect(records[0]).toMatchObject({
+        event: 'http.request.completed',
+        http: { route: '/health/live', statusCode: 503 },
+        level: 'warn',
+      });
+      expect(records[1]).toMatchObject({
+        event: 'http.request.completed',
+        http: { route: '/health/ready', statusCode: 503 },
+        level: 'warn',
+      });
     } finally {
       await runningApi.application.close();
     }

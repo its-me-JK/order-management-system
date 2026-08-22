@@ -14,7 +14,7 @@ service.
 
 ## Request identity contract
 
-Every request admitted by the NestJS middleware receives two response headers:
+Every request admitted by the Express application receives two response headers:
 
 | Header | Ownership | Meaning |
 | --- | --- | --- |
@@ -33,8 +33,8 @@ new request ID and the business request continues.
 
 Both identifiers are untrusted diagnostic labels. They do not grant access,
 identify an actor or tenant, implement idempotency, select trace sampling, or
-become database keys. Malformed HTTP rejected by Node.js before middleware is
-outside this response-header guarantee.
+become database keys. Malformed HTTP rejected by Node.js before the application
+is outside this response-header guarantee.
 
 For future outbound HTTP calls, a client adapter will propagate the correlation
 ID and generate a new hop-local request ID. RabbitMQ messages will carry
@@ -69,6 +69,15 @@ query strings, path parameter values, request or response bodies, arbitrary
 headers, cookies, authorization values, and client IP addresses are not. A 404
 may use NestJS's registered low-cardinality catch-all template; it never uses
 the requested path.
+
+Pino HTTP and request identity are installed before the application-owned JSON
+body parser. Malformed, oversized, or unsupported encoded bodies therefore
+receive the same safe identity and completion record as other application-level
+rejections. Parser failures occur before route matching and use `unmatched`;
+their bodies and parser messages are never logged. URL-encoded parsing is
+disabled until a concrete endpoint requires it. A client that disconnects
+during parsing receives no response, but the aborted record retains its safe
+request identity.
 
 The adapter recursively redacts sensitive structured keys case-insensitively,
 including compound password, token, secret, API-key, private-key, card, and
@@ -110,15 +119,15 @@ under concurrent awaited work.
 | --- | --- |
 | Normal response, including expected 4xx | `info` |
 | Rate limited (`429`) or aborted request | `warn` |
-| Failed readiness (`503`) | `warn` |
+| Operational-health `503` (failed readiness or planned shutdown) | `warn` |
 | Other 5xx | `error` |
 | Successful liveness or readiness | No access record |
 
 Successful health polls still receive identity headers. Suppressing their
-access records avoids high-volume noise. A failed readiness poll remains
-visible until dependency metrics and rate-limited state-transition events are
-implemented. Terminus's own logger remains disabled so dependency exceptions
-cannot create a second, unsanitized record.
+access records avoids high-volume noise. Failed readiness and planned shutdown
+remain visible as warnings until dependency metrics and rate-limited
+state-transition events are implemented. Terminus's own logger remains disabled
+so dependency exceptions cannot create a second, unsanitized record.
 
 `LOG_LEVEL` is validated at startup. It defaults to `debug` in development,
 `silent` in test, and `info` in production. A production Node.js runtime must
@@ -202,7 +211,7 @@ from that emergency record.
 
 - Add the application-owned typed logger and extend the existing vendor-import
   boundary before business feature logging begins.
-- Add RFC 9457 Problem Details with safe error codes and both response IDs.
+- Add metrics for parser rejection categories without logging request content.
 - Add OpenTelemetry trace/span identifiers and validated W3C propagation.
 - Add worker and RabbitMQ message context with explicit correlation and
   causation envelopes.

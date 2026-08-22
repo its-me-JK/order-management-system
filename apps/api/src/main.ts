@@ -31,7 +31,7 @@ async function bootstrap(): Promise<void> {
           level: configuration.api.logging.level,
         },
       }),
-      { abortOnError: false, bufferLogs: true },
+      { abortOnError: false, bodyParser: false, bufferLogs: true },
     );
 
     application.useLogger(application.get(Logger));

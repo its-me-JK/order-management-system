@@ -13,6 +13,14 @@ export interface RequestIdentity {
   readonly correlationId: string;
 }
 
+export function setRequestIdentityResponseHeaders(
+  response: ServerResponse,
+  identity: RequestIdentity,
+): void {
+  response.setHeader(REQUEST_ID_HEADER, identity.requestId);
+  response.setHeader(CORRELATION_ID_HEADER, identity.correlationId);
+}
+
 const requestIdentities = new WeakMap<IncomingMessage, RequestIdentity>();
 
 function correlationHeaderValues(rawHeaders: readonly string[]): readonly string[] {
@@ -65,8 +73,7 @@ export function ensureRequestIdentity(
 
   requestIdentities.set(request, identity);
   request.id = identity.requestId;
-  response.setHeader(REQUEST_ID_HEADER, identity.requestId);
-  response.setHeader(CORRELATION_ID_HEADER, identity.correlationId);
+  setRequestIdentityResponseHeaders(response, identity);
 
   return identity;
 }

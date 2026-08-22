@@ -1,6 +1,14 @@
-import { Controller, Get, type INestApplication } from '@nestjs/common';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+
+import {
+  Controller,
+  Get,
+  ServiceUnavailableException,
+  type INestApplication,
+} from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
-import { Test } from '@nestjs/testing';
+import { HealthCheckService } from '@nestjs/terminus';
+import { Test, type TestingModuleBuilder } from '@nestjs/testing';
 
 import type { DatabaseConnection } from '@oms/database';
 
@@ -37,6 +45,8 @@ const UNAVAILABLE_RESPONSE = {
 } as const;
 
 const EXPECTED_CACHE_CONTROL = 'no-cache, no-store, must-revalidate';
+const OVERWRITTEN_REQUEST_ID = 'health-overwritten-request-id';
+const OVERWRITTEN_CORRELATION_ID = 'health-overwritten-correlation-id';
 
 @Controller('routing-probe')
 class RoutingProbeController {
@@ -62,6 +72,10 @@ interface FakeDatabase {
   readonly probe: jest.MockedFunction<() => Promise<void>>;
 }
 
+interface HealthCheckServiceOverride {
+  readonly check: (healthIndicators: readonly unknown[]) => Promise<never>;
+}
+
 function createFakeDatabase(probeImplementation: () => Promise<void>): FakeDatabase {
   const probe = jest.fn(probeImplementation);
 
@@ -74,8 +88,12 @@ function createFakeDatabase(probeImplementation: () => Promise<void>): FakeDatab
   };
 }
 
-async function startApi(database: DatabaseConnection): Promise<RunningApi> {
-  const moduleReference = await Test.createTestingModule({
+async function startApi(
+  database: DatabaseConnection,
+  healthCheckService?: HealthCheckServiceOverride,
+  overwriteIdentityHeaders = false,
+): Promise<RunningApi> {
+  let moduleBuilder: TestingModuleBuilder = Test.createTestingModule({
     imports: [
       ApiModule.register({
         createDatabaseConnection: (): DatabaseConnection => database,
@@ -86,12 +104,30 @@ async function startApi(database: DatabaseConnection): Promise<RunningApi> {
       }),
     ],
     controllers: [RoutingProbeController],
-  }).compile();
+  });
+
+  if (healthCheckService !== undefined) {
+    moduleBuilder = moduleBuilder.overrideProvider(HealthCheckService).useValue(healthCheckService);
+  }
+
+  const moduleReference = await moduleBuilder.compile();
   const application = moduleReference.createNestApplication<NestExpressApplication>({
+    bodyParser: false,
     logger: false,
   });
 
   configureApiApplication(application);
+
+  if (overwriteIdentityHeaders) {
+    application.use(
+      (_request: IncomingMessage, response: ServerResponse, next: () => void): void => {
+        response.setHeader('X-Request-Id', OVERWRITTEN_REQUEST_ID);
+        response.setHeader('X-Correlation-Id', OVERWRITTEN_CORRELATION_ID);
+        next();
+      },
+    );
+  }
+
   await application.listen(0, '127.0.0.1');
 
   return {
@@ -157,11 +193,95 @@ describe('API operational health', (): void => {
 
       expect(result.response.status).toBe(503);
       expect(result.response.headers.get('cache-control')).toBe(EXPECTED_CACHE_CONTROL);
+      expect(result.response.headers.get('content-type')).toBe('application/json; charset=utf-8');
+      expect(result.response.headers.get('x-request-id')).not.toBeNull();
+      expect(result.response.headers.get('x-correlation-id')).not.toBeNull();
       expect(result.body).toEqual(UNAVAILABLE_RESPONSE);
       expect(result.rawBody).not.toContain(sensitiveDetails);
       expect(result.rawBody).not.toContain('do-not-leak');
       expect(result.rawBody).not.toContain('private-db.example');
       expect(result.rawBody).not.toContain('stack');
+    } finally {
+      await runningApi.application.close();
+    }
+  });
+
+  it('fails a malformed Terminus exception closed to Problem Details', async (): Promise<void> => {
+    const secret = 'private-malformed-health-payload';
+    const database = createFakeDatabase((): Promise<void> => Promise.resolve());
+    const healthCheckService: HealthCheckServiceOverride = {
+      check: (): Promise<never> =>
+        Promise.reject(
+          new ServiceUnavailableException({
+            ...UNAVAILABLE_RESPONSE,
+            secret,
+          }),
+        ),
+    };
+    const runningApi = await startApi(database.connection, healthCheckService, true);
+
+    try {
+      const result = await getJson(runningApi.baseUrl, '/health/ready');
+
+      expect(result.response.status).toBe(500);
+      expect(result.response.headers.get('cache-control')).toBe('no-store');
+      expect(result.response.headers.get('content-type')).toBe(
+        'application/problem+json; charset=utf-8',
+      );
+      expect(result.response.headers.get('x-request-id')).not.toBe(OVERWRITTEN_REQUEST_ID);
+      expect(result.response.headers.get('x-correlation-id')).not.toBe(OVERWRITTEN_CORRELATION_ID);
+      expect(result.body).toMatchObject({
+        type: 'about:blank',
+        title: 'Internal Server Error',
+        status: 500,
+        detail: 'The service could not complete the request.',
+      });
+      expect(result.rawBody).not.toContain(secret);
+      expect(result.rawBody).not.toContain(OVERWRITTEN_REQUEST_ID);
+      expect(result.rawBody).not.toContain(OVERWRITTEN_CORRELATION_ID);
+    } finally {
+      await runningApi.application.close();
+    }
+  });
+
+  it('preserves canonical operational 503 responses during graceful shutdown', async (): Promise<void> => {
+    const database = createFakeDatabase((): Promise<void> => Promise.resolve());
+    const liveShutdown = {
+      status: 'shutting_down',
+      info: {},
+      error: {},
+      details: {},
+    } as const;
+    const readyShutdown = {
+      status: 'shutting_down',
+      info: { database: { status: 'up' } },
+      error: {},
+      details: { database: { status: 'up' } },
+    } as const;
+    const healthCheckService: HealthCheckServiceOverride = {
+      check: (healthIndicators): Promise<never> =>
+        Promise.reject(
+          new ServiceUnavailableException(
+            healthIndicators.length === 0 ? liveShutdown : readyShutdown,
+          ),
+        ),
+    };
+    const runningApi = await startApi(database.connection, healthCheckService);
+
+    try {
+      for (const [path, expected] of [
+        ['/health/live', liveShutdown],
+        ['/health/ready', readyShutdown],
+      ] as const) {
+        const result = await getJson(runningApi.baseUrl, path);
+
+        expect(result.response.status).toBe(503);
+        expect(result.response.headers.get('cache-control')).toBe(EXPECTED_CACHE_CONTROL);
+        expect(result.response.headers.get('content-type')).toBe('application/json; charset=utf-8');
+        expect(result.response.headers.get('x-request-id')).not.toBeNull();
+        expect(result.response.headers.get('x-correlation-id')).not.toBeNull();
+        expect(result.body).toEqual(expected);
+      }
     } finally {
       await runningApi.application.close();
     }

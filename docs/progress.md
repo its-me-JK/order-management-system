@@ -1,6 +1,6 @@
 # Project progress
 
-- **Overall completion:** 17%
+- **Overall completion:** 18%
 - **Current milestone:** Platform and persistence foundation
 - **Public demo:** Not deployable yet
 - **Last reviewed:** 2026-08-22
@@ -13,16 +13,16 @@ accepted outcomes, not lines of code, generated files, commits, or activity.
 
 | Workstream | Weight | Earned | Current evidence |
 | --- | ---: | ---: | --- |
-| Architecture and contracts | 6% | 3.75% | Architecture overview, nine ADRs, and operational health plus request-identity/logging contracts; detailed business contracts remain |
-| Platform and persistence | 9% | 6.5% | Workspace, runtime shells, versioned API routing, operational health, validated configuration, structured API logging, bounded Prisma-private lifecycle facade, MySQL, migrations tooling, and integration tests |
+| Architecture and contracts | 6% | 4.25% | Architecture overview, ten ADRs, operational health, request identity/logging, and RFC 9457 HTTP error contracts; detailed business contracts remain |
+| Platform and persistence | 9% | 6.75% | Workspace, runtime shells, versioned API routing, operational health, validated configuration, structured API logging, bounded request parsing, global HTTP error boundary, Prisma-private lifecycle facade, MySQL, migrations tooling, and integration tests |
 | Backend business capabilities | 35% | 0% | No business module or endpoint implemented |
 | Redis, RabbitMQ, and workers | 9% | 0% | Architecture only |
-| Testing, security, and resilience | 11% | 2.25% | Strict quality gates, secret-safe configuration and TLS tests, concurrency-isolated request context, adversarial log-leak tests, lifecycle and sanitized HTTP failure tests, and real MySQL contract tests |
+| Testing, security, and resilience | 11% | 2.5% | Strict quality gates, secret-safe configuration and TLS tests, concurrency-isolated request context, adversarial response/log leak tests, parser and after-commit failure tests, lifecycle tests, and real MySQL contract tests |
 | Frontend showcase | 12% | 0% | Not started |
 | Observability and operations | 5% | 1% | Sanitized liveness, bounded MySQL readiness, server-owned request identity, structured HTTP/Nest logs, redaction, and safe fatal bootstrap reporting exist; metrics and traces remain |
 | CI/CD and public deployment | 8% | 1.75% | CI validates API health against real MySQL; no release pipeline or live environment |
-| Documentation and demo polish | 5% | 2.5% | README, architecture, operational-health, and request-logging documentation plus ADR history exist; OpenAPI and demo guides remain |
-| **Total** | **100%** | **17.75%** | Displayed overall is rounded down |
+| Documentation and demo polish | 5% | 2.5% | README, architecture, operational-health, request-logging, and HTTP-error documentation plus ADR history exist; OpenAPI and demo guides remain |
+| **Total** | **100%** | **18.75%** | Displayed overall is rounded down |
 
 The weights are fixed unless the project scope is formally re-baselined. A
 workstream may use fractional earned points internally, but the displayed
@@ -41,5 +41,5 @@ overall percentage is rounded down so progress is never overstated.
 
 ## Current status line
 
-> Overall: 17% · Backend business capabilities: 0/35 · Frontend: 0/12 ·
+> Overall: 18% · Backend business capabilities: 0/35 · Frontend: 0/12 ·
 > Deployment: 1.75/8 · Public demo: not deployable

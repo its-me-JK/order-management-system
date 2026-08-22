@@ -64,7 +64,7 @@ async function startApi(database: DatabaseConnection): Promise<RunningApi> {
         level: 'silent',
       },
     }),
-    { logger: false },
+    { bodyParser: false, logger: false },
   );
 
   configureApiApplication(application);

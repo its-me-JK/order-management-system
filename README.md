@@ -14,11 +14,12 @@ the additional distributed-systems cost.
 now has a versioned public HTTP surface, unversioned operational health
 endpoints, validated database configuration, a Prisma-private database
 boundary, bounded readiness probes, application-owned database shutdown,
-server-owned request identities, and sanitized structured JSON logging.
+server-owned request identities, sanitized structured JSON logging, and a
+secret-safe RFC 9457 HTTP error boundary that includes parser failures.
 No business models, business modules, migrations, or public feature endpoints
 have been implemented yet.
 
-**Overall project progress: 17%.** The fixed, deployment-inclusive scoring
+**Overall project progress: 18%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
 
 ## Planned technology
@@ -59,6 +60,9 @@ The [operational health contract](docs/architecture/operational-health.md)
 documents probe behavior, failure semantics, alternatives, and trade-offs.
 The [request identity and structured logging contract](docs/architecture/request-identity-and-logging.md)
 defines header trust, log fields, redaction, and propagation boundaries.
+The [HTTP error contract](docs/architecture/http-error-contract.md) defines RFC
+9457 responses, safe exception mapping, parser limits, and the operational
+health exception.
 
 ## Architecture decisions
 
@@ -73,6 +77,7 @@ Significant decisions are recorded as Architecture Decision Records (ADRs):
 - [ADR-0007: Keep development and demonstration infrastructure at zero cost (superseded)](docs/adr/0007-zero-cost-development.md)
 - [ADR-0008: Operate a zero-cost public showcase environment](docs/adr/0008-zero-cost-public-showcase.md)
 - [ADR-0009: Validate runtime configuration at process boundaries](docs/adr/0009-validate-runtime-configuration-at-boundaries.md)
+- [ADR-0010: Standardize public HTTP errors with RFC 9457](docs/adr/0010-standardize-http-errors-with-rfc-9457.md)
 
 The [ADR index](docs/adr/README.md) explains the lifecycle and format of these
 records.
@@ -236,6 +241,14 @@ cookies, IP addresses, or raw exceptions. Successful health polls are silent;
 failed readiness is a sanitized warning. See the
 [logging contract](docs/architecture/request-identity-and-logging.md) before
 adding diagnostic events.
+
+Public API failures use RFC 9457 Problem Details with fixed messages, opaque
+occurrence IDs, matching request/correlation headers, and `Cache-Control:
+no-store`. JSON request bodies are limited to 100 KiB; URL-encoded parsing is
+disabled until a real endpoint requires it, and compressed request bodies are
+rejected with `415`. The
+[HTTP error contract](docs/architecture/http-error-contract.md) is the source of
+truth for supported statuses and disclosure rules.
 
 The worker is buildable and its composition root is tested, but it has no run
 script yet. An empty worker has no legitimate long-lived workload; a RabbitMQ

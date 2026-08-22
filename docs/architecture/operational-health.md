@@ -21,6 +21,15 @@ Successful polls do not emit access logs. Failed readiness emits one sanitized
 warning without the dependency exception. See
 [Request identity and structured logging](request-identity-and-logging.md).
 
+Expected failed readiness and graceful-shutdown responses remain outside the
+public Problem Details contract. Their method-scoped adapter accepts only the
+known exact Terminus shapes: database `down` for failed readiness, empty
+component maps for liveness shutdown, and database exactly `up` or `down` for
+readiness shutdown. It rejects accessors, proxies, extra fields, and
+inconsistent component state, then reconstructs a canonical constant response.
+A malformed health exception fails closed to the global RFC 9457 `500`
+representation instead of serializing untrusted health data.
+
 ## Database lifecycle
 
 The composition root loads local development environment values when present,
@@ -40,9 +49,10 @@ live but unready process can recover when MySQL returns without entering a
 restart loop, provided the deployment target respects readiness.
 
 Terminus marks an already admitted health request as `shutting_down` if it
-completes after shutdown begins. New connections are not guaranteed a response
-once Nest starts closing the HTTP server; a future deployment-drain policy will
-define and test that interval explicitly.
+completes after shutdown begins. Known liveness and readiness shutdown shapes
+remain sanitized operational `503` responses. New connections are not
+guaranteed a response once Nest starts closing the HTTP server; a future
+deployment-drain policy will define and test that interval explicitly.
 
 ## Why this design
 
