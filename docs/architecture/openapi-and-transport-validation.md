@@ -108,6 +108,16 @@ Public read-only documentation improves review and portfolio usability, but it
 does increase HTTP surface. Future Content Security Policy and security-header
 work must test the UI explicitly instead of weakening policy globally.
 
+The future Identity surface adds one HTTP Bearer security scheme and one
+refresh-cookie scheme exactly as specified in the
+[Identity and session contract](identity-and-session.md). Protected business
+operations declare Bearer security and a distinct lexicographically sorted
+`x-oms-required-permissions` string array; every listed permission is required.
+The extension is descriptive contract metadata and local permissions are not
+mislabeled as OAuth scopes. Login, refresh, and logout document the cookie,
+CSRF header, and exact Set-Cookie effects but do not make Swagger UI
+interactive or permit it to persist a credential.
+
 ## Zero-cost and supply-chain posture
 
 Swagger UI and the JSON document are served by the existing API process from

@@ -79,11 +79,14 @@ deployment-drain policy will define and test that interval explicitly.
 - A bounded, single-flight probe prevents a slow dependency and frequent
   polling from exhausting the connection pool.
 
-Redis is an optional acceleration layer. RabbitMQ publication is decoupled from
-API transactions by the outbox. Their outages must be observable, but neither
-currently makes synchronous API traffic unsafe; they therefore do not belong
-in API readiness. Worker runtimes will have separate readiness policies for
-the dependencies required by their workloads.
+Redis is optional for safe cache paths but is a mandatory fail-closed abuse
+decision for future login and refresh issuance. Its outage makes those two
+operations return their fixed `503`; it does not make anonymous reads, existing
+Bearer sessions, logout after an authoritative decision, or the rest of the API
+unsafe. RabbitMQ publication remains decoupled from API transactions by the
+outbox. Their outages must be observable through capability-specific signals,
+but neither belongs in global API readiness. Worker runtimes will have separate
+readiness policies for the dependencies required by their workloads.
 
 ## Alternatives considered
 
@@ -94,9 +97,10 @@ the dependencies required by their workloads.
 - **Terminus's Prisma-specific indicator:** rejected because it would expose
   the persistence implementation beyond the database boundary and duplicate
   timeout behavior.
-- **Redis and RabbitMQ in API readiness:** rejected under the accepted cache and
-  outbox failure policies. This decision must change if future synchronous
-  requests require either dependency.
+- **Redis and RabbitMQ in global API readiness:** rejected under the accepted
+  route-scoped fail-closed, cache, and outbox policies. Revisit if most routed
+  traffic requires either dependency or the deployment can express
+  capability-specific traffic routing.
 - **Connect to MySQL before binding HTTP:** rejected because recoverable
   database outages would cause startup crash loops instead of a stable unready
   state.
@@ -118,8 +122,9 @@ the dependencies required by their workloads.
 1. **Why separate liveness and readiness?** Liveness decides whether to restart
    a process; readiness decides whether to route traffic to it.
 2. **Why is MySQL included but Redis and RabbitMQ are excluded?** MySQL is
-   required for authoritative synchronous decisions. Redis is optional and
-   RabbitMQ outages are absorbed by the transactional outbox.
+   required for authoritative synchronous decisions across the API. Redis is
+   mandatory only for credential issuance, which fails closed independently,
+   and RabbitMQ outages are absorbed by the transactional outbox.
 3. **Why not inject Prisma into the health indicator?** Depending on the
    application-owned facade preserves dependency inversion and prevents
    framework diagnostics from defining the persistence boundary.

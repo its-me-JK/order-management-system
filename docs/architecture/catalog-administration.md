@@ -16,8 +16,8 @@ No administrative route may be registered until the following capabilities
 are implemented and integration-tested:
 
 - authoritative Identity session resolution and explicit permission checks;
-- an accepted Identity HTTP contract for login, refresh, logout, credential
-  transport, CSRF/CORS, and abuse controls;
+- the accepted [Identity and session contract](identity-and-session.md) for
+  login, refresh, logout, credential transport, CSRF/CORS, and abuse controls;
 - fixed Bearer `401` and authorization `403` behavior;
 - published zero-cost HTTPS documentation for every application-specific
   Problem Details type and exact OpenAPI mappings for those failures;
@@ -297,6 +297,7 @@ failures retain these existing `about:blank` descriptors:
 | Key | Status | Title | Fixed detail |
 | --- | ---: | --- | --- |
 | `bad-request` | `400` | Bad Request | The request is invalid. |
+| `forbidden` | `403` | Forbidden | You are not allowed to perform this operation. |
 | `content-too-large` | `413` | Content Too Large | The request content exceeds the allowed size. |
 | `unsupported-media-type` | `415` | Unsupported Media Type | The request media type is not supported. |
 | `not-found` | `404` | Not Found | The requested resource was not found. |
@@ -322,13 +323,13 @@ The exact operation failure matrix is:
 
 | Operation IDs | Possible descriptor keys |
 | --- | --- |
-| `catalogAdminGetProduct`, `catalogAdminGetSku` | `bad-request`, `authentication-required`, `permission-denied`, `not-found`, `internal-error`, `service-unavailable` |
-| `catalogAdminCreateProduct` | `bad-request`, `content-too-large`, `unsupported-media-type`, `authentication-required`, `permission-denied`, `idempotency-conflict`, `idempotency-in-progress`, `internal-error`, `service-unavailable` |
-| `catalogAdminRenameProduct` | `bad-request`, `content-too-large`, `unsupported-media-type`, `authentication-required`, `permission-denied`, `not-found`, `catalog-lifecycle-conflict`, `idempotency-conflict`, `idempotency-in-progress`, `precondition-failed`, `precondition-required`, `internal-error`, `service-unavailable` |
-| `catalogAdminActivateProduct`, `catalogAdminSuspendProduct`, `catalogAdminResumeProduct`, `catalogAdminArchiveProduct` | `bad-request`, `content-too-large`, `unsupported-media-type`, `authentication-required`, `permission-denied`, `not-found`, `catalog-lifecycle-conflict`, `idempotency-conflict`, `idempotency-in-progress`, `precondition-failed`, `precondition-required`, `internal-error`, `service-unavailable` |
-| `catalogAdminCreateSku` | `bad-request`, `content-too-large`, `unsupported-media-type`, `authentication-required`, `permission-denied`, `not-found`, `sku-code-conflict`, `catalog-lifecycle-conflict`, `idempotency-conflict`, `idempotency-in-progress`, `internal-error`, `service-unavailable` |
-| `catalogAdminRenameSku` | `bad-request`, `content-too-large`, `unsupported-media-type`, `authentication-required`, `permission-denied`, `not-found`, `catalog-lifecycle-conflict`, `idempotency-conflict`, `idempotency-in-progress`, `precondition-failed`, `precondition-required`, `internal-error`, `service-unavailable` |
-| `catalogAdminActivateSku`, `catalogAdminSuspendSku`, `catalogAdminResumeSku`, `catalogAdminRetireSku` | `bad-request`, `content-too-large`, `unsupported-media-type`, `authentication-required`, `permission-denied`, `not-found`, `catalog-lifecycle-conflict`, `idempotency-conflict`, `idempotency-in-progress`, `precondition-failed`, `precondition-required`, `internal-error`, `service-unavailable` |
+| `catalogAdminGetProduct`, `catalogAdminGetSku` | `bad-request`, `forbidden`, `content-too-large`, `unsupported-media-type`, `authentication-required`, `permission-denied`, `not-found`, `internal-error`, `service-unavailable` |
+| `catalogAdminCreateProduct` | `bad-request`, `forbidden`, `content-too-large`, `unsupported-media-type`, `authentication-required`, `permission-denied`, `idempotency-conflict`, `idempotency-in-progress`, `internal-error`, `service-unavailable` |
+| `catalogAdminRenameProduct` | `bad-request`, `forbidden`, `content-too-large`, `unsupported-media-type`, `authentication-required`, `permission-denied`, `not-found`, `catalog-lifecycle-conflict`, `idempotency-conflict`, `idempotency-in-progress`, `precondition-failed`, `precondition-required`, `internal-error`, `service-unavailable` |
+| `catalogAdminActivateProduct`, `catalogAdminSuspendProduct`, `catalogAdminResumeProduct`, `catalogAdminArchiveProduct` | `bad-request`, `forbidden`, `content-too-large`, `unsupported-media-type`, `authentication-required`, `permission-denied`, `not-found`, `catalog-lifecycle-conflict`, `idempotency-conflict`, `idempotency-in-progress`, `precondition-failed`, `precondition-required`, `internal-error`, `service-unavailable` |
+| `catalogAdminCreateSku` | `bad-request`, `forbidden`, `content-too-large`, `unsupported-media-type`, `authentication-required`, `permission-denied`, `not-found`, `sku-code-conflict`, `catalog-lifecycle-conflict`, `idempotency-conflict`, `idempotency-in-progress`, `internal-error`, `service-unavailable` |
+| `catalogAdminRenameSku` | `bad-request`, `forbidden`, `content-too-large`, `unsupported-media-type`, `authentication-required`, `permission-denied`, `not-found`, `catalog-lifecycle-conflict`, `idempotency-conflict`, `idempotency-in-progress`, `precondition-failed`, `precondition-required`, `internal-error`, `service-unavailable` |
+| `catalogAdminActivateSku`, `catalogAdminSuspendSku`, `catalogAdminResumeSku`, `catalogAdminRetireSku` | `bad-request`, `forbidden`, `content-too-large`, `unsupported-media-type`, `authentication-required`, `permission-denied`, `not-found`, `catalog-lifecycle-conflict`, `idempotency-conflict`, `idempotency-in-progress`, `precondition-failed`, `precondition-required`, `internal-error`, `service-unavailable` |
 
 The global exception mapper and OpenAPI components must add these descriptors
 as one reviewed change. Only `authentication-required` may preserve the exact
@@ -337,6 +338,13 @@ carry an authentication challenge. Each operation documents only its row from
 the matrix rather than the union of all failures. Catalog has no route-level
 `429` contract in v1; rate limiting initially protects Identity login and
 refresh only.
+
+Generic `forbidden` is reserved for the shared Origin/Fetch Metadata boundary;
+authorization uses only typed `permission-denied`. Because both are status
+`403`, each administrative operation's single OpenAPI `403` response uses a
+closed `oneOf` of those two exact Problem Details schemas. The bodyless GET
+operations still declare `413` and `415`: the shared bounded body/encoding
+guard runs before routing semantics and rejects hostile content consistently.
 
 No response includes target identifiers, submitted values, current hidden
 status or version, account or session existence, permission names, constraint

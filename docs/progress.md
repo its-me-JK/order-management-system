@@ -13,7 +13,7 @@ accepted outcomes, not lines of code, generated files, commits, or activity.
 
 | Workstream | Weight | Earned | Current evidence |
 | --- | ---: | ---: | --- |
-| Architecture and contracts | 6% | 5.15% | Architecture overview, sixteen ADRs, platform contracts, delivered Catalog public reads, and accepted Catalog administration contracts covering reversible lifecycle, authorization, durable idempotency, concurrency, audit, and transaction semantics; most business contracts remain |
+| Architecture and contracts | 6% | 5.35% | Architecture overview, seventeen ADRs, platform contracts, delivered Catalog public reads, accepted Catalog administration contracts, and an exact Identity/session contract covering account boundaries, opaque credential transport, authoritative permissions, refresh replay, browser security, and fail-closed abuse control; most business contracts remain |
 | Platform and persistence | 9% | 8.75% | Workspace, runtime shells, versioned routing, health, validated configuration, structured logging, strict transport boundaries, deterministic OpenAPI, one runtime-owned Prisma client, MySQL, an ordered forward-only migration history, guarded Catalog lifecycle expansion/backfill/contraction, and integration infrastructure |
 | Backend business capabilities | 35% | 3.75% | Catalog Product/SKU persistence, UUIDv7 binary mapping, active-only reads, exact seek pagination, bounded public-read use cases, exact anonymous endpoints, and separate immutable Product and SKU aggregates with explicit reversible lifecycles, validated rehydration, versions, timestamps, immutable SKU ownership/code, and internal events exist; no Catalog write use case exists |
 | Redis, RabbitMQ, and workers | 9% | 0% | Architecture only |
@@ -22,7 +22,7 @@ accepted outcomes, not lines of code, generated files, commits, or activity.
 | Observability and operations | 5% | 1% | Sanitized liveness, bounded MySQL readiness, server-owned request identity, structured HTTP/Nest logs, redaction, and safe fatal bootstrap reporting exist; metrics and traces remain |
 | CI/CD and public deployment | 8% | 1.75% | CI replays migrations idempotently and validates database, Catalog, and API contracts against real MySQL; no release pipeline or live environment |
 | Documentation and demo polish | 5% | 2.75% | README, architecture contracts, ADR history, deterministic OpenAPI JSON, and a public read-only local Swagger UI exist; examples and demo guides remain |
-| **Total** | **100%** | **27.65%** | Displayed overall is rounded down |
+| **Total** | **100%** | **27.85%** | Displayed overall is rounded down |
 
 The weights are fixed unless the project scope is formally re-baselined. A
 workstream may use fractional earned points internally, but the displayed
@@ -50,7 +50,10 @@ there is still no release pipeline, provider resource, live URL, synthetic
 showcase data, distributed abuse control, or database-side query deadline.
 The Catalog persistence contract now represents the aggregate lifecycle and
 has a real prior-release upgrade proof, but no administrative route, write use
-case, Identity security capability, audit/idempotency storage, or coordinating
-Unit of Work is counted as complete. Product eligibility and deterministic
-Product-first locking for SKU create, activate, and resume remain future
-application-layer work.
+case, implemented Identity package, Redis runtime, authentication route,
+audit/idempotency storage, or coordinating Unit of Work is counted as complete.
+The accepted Identity/session architecture earns contract points only; its
+MySQL schema, crypto, offline provisioning, trusted ingress, CORS/CSRF, Redis
+abuse controls, fixed failures, and HTTP composition remain delivery gates.
+Product eligibility and deterministic Product-first locking for SKU create,
+activate, and resume remain future application-layer work.

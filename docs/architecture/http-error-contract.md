@@ -73,6 +73,10 @@ sets those headers.
 
 [ADR-0015](../adr/0015-authenticate-and-authorize-administrative-apis.md)
 accepts the future administrative Bearer challenge and typed `401` contract.
+[ADR-0017](../adr/0017-use-split-browser-session-credentials.md) and the
+[Identity and session contract](identity-and-session.md) scope that challenge
+to Bearer-protected resources; rejected login and refresh exchanges use their
+fixed typed `400` responses without a challenge.
 The paragraph above remains the current runtime behavior until Identity, the
 expanded descriptor registry, exact OpenAPI, and all route-registration gates
 are implemented together.

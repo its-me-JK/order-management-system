@@ -34,8 +34,11 @@ transactional application service. Both aggregates remain deliberately
 unwired until the required administrative security and transactional
 foundations exist. Persistence now supports those lifecycle shapes through a
 guarded forward-only migration with deterministic legacy backfill and a real
-prior-schema upgrade test.
-Pricing, inventory, Redis caching, and integration events remain separate
+prior-schema upgrade test. The Identity/session architecture now fixes the
+future account and database boundaries, split opaque credentials, strict
+same-site browser policy, durable refresh rotation, and fail-closed Redis
+abuse controls; no Identity package, route, credential, or Redis runtime exists
+yet. Pricing, inventory, Redis caching, and integration events remain separate
 later slices.
 
 **Overall project progress: 27%.** The fixed, deployment-inclusive scoring
@@ -65,9 +68,11 @@ modular codebase:
 - **Worker:** outbox publishing, message consumption, scheduled reservation
   expiry, retries, and notification delivery.
 
-MySQL is the source of truth. Redis is an optional acceleration layer.
-RabbitMQ carries durable integration events using at-least-once delivery, and
-consumers are idempotent.
+MySQL is the source of truth. Redis is optional acceleration for safe read
+paths but is a mandatory fail-closed abuse-decision dependency for future login
+and refresh issuance; it never becomes session authority. RabbitMQ carries
+durable integration events using at-least-once delivery, and consumers are
+idempotent.
 
 The initial business modules are Identity and Access, Customers, Catalog,
 Pricing, Inventory, Orders, Payments, Fulfillment, Notifications,
@@ -85,6 +90,10 @@ health exception.
 The [OpenAPI and transport validation contract](docs/architecture/openapi-and-transport-validation.md)
 defines contract ownership, public documentation posture, operation IDs, and
 strict DTO boundary rules.
+The [Identity and session contract](docs/architecture/identity-and-session.md)
+defines account and session boundaries, opaque credential transport, database
+authority, Redis abuse controls, CSRF/CORS policy, and the gated authentication
+HTTP surface.
 The [public Catalog read contract](docs/architecture/catalog-public-reads.md)
 defines application query boundaries, pagination, visibility, and the
 anonymous HTTP representation.
@@ -112,6 +121,7 @@ Significant decisions are recorded as Architecture Decision Records (ADRs):
 - [ADR-0014: Support staged and reversible Catalog publication](docs/adr/0014-support-staged-and-reversible-catalog-publication.md)
 - [ADR-0015: Authenticate and authorize administrative APIs](docs/adr/0015-authenticate-and-authorize-administrative-apis.md)
 - [ADR-0016: Make retryable commands durably idempotent](docs/adr/0016-make-retryable-commands-durably-idempotent.md)
+- [ADR-0017: Use split browser session credentials](docs/adr/0017-use-split-browser-session-credentials.md)
 
 The [ADR index](docs/adr/README.md) explains the lifecycle and format of these
 records.

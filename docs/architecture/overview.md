@@ -213,10 +213,11 @@ NestJS shutdown hooks close it after HTTP request draining.
 
 `GET /health/live` confirms only that the HTTP process is responsive.
 `GET /health/ready` performs a bounded MySQL probe because MySQL is required for
-authoritative application behavior. Redis is optional acceleration and
-RabbitMQ is decoupled from API commits by the transactional outbox, so neither
-belongs in API readiness. Their owning worker runtimes will receive separate
-readiness policies.
+authoritative application behavior. Redis is mandatory only for fail-closed
+credential issuance and optional for safe caching; RabbitMQ is decoupled from
+API commits by the transactional outbox. Neither belongs in global API
+readiness, and their capability-specific failures remain observable. Their
+owning worker runtimes will receive separate readiness policies.
 
 Operational endpoints are excluded from the `/api` prefix and URI versioning,
 remain stable across business API versions, disable response caching, and
@@ -234,19 +235,21 @@ the trust, redaction, and propagation contracts.
 
 ## Redis policy
 
-Redis accelerates catalog, pricing, and advisory availability reads; rate
-limiting; short-lived authentication metadata; and fast-path replay or
-idempotency checks. Durable MySQL records back any check whose loss could alter
-a business outcome.
+Redis accelerates catalog, pricing, advisory availability reads, and fast-path
+replay or idempotency checks. Separately, future login and refresh require its
+atomic abuse decision and fail closed when no decision is possible. Durable
+MySQL records back any check whose loss could alter a business outcome and
+remain authoritative for sessions.
 
 The application remains correct when Redis is unavailable. Redis is not used
 as the authoritative inventory store, a durable workflow engine, or the sole
 idempotency record. Correctness-critical distributed locks are not part of the
 order-placement path.
 
-Redis unavailability degrades cache hit rate and rate-limiting strategy but,
-by itself, does not make the API unready. The exact fail-open or fail-closed
-policy is selected per security-sensitive feature rather than globally.
+Redis unavailability degrades cache hit rate and makes login/refresh return the
+fixed `503`, but by itself does not make the complete API unready. The exact
+fail-open or fail-closed policy is selected per security-sensitive feature
+rather than globally.
 
 ## Messaging policy
 
@@ -290,6 +293,10 @@ The first local transactional-command idempotency lifecycle is accepted in
 Administrative authentication, credential handling, permission evaluation,
 and login-identifier privacy are accepted in
 [ADR-0015](../adr/0015-authenticate-and-authorize-administrative-apis.md).
+The exact account/session boundary, opaque credential transport, browser
+policy, MySQL authority, and Redis failure semantics are specified in the
+[Identity and session contract](identity-and-session.md) and
+[ADR-0017](../adr/0017-use-split-browser-session-credentials.md).
 Customer registration, account recovery, and provider webhook identity remain
 separate decisions before their affected implementations.
 
@@ -297,6 +304,9 @@ separate decisions before their affected implementations.
 
 The implemented HTTP identity and logging baseline is specified in
 [Request identity and structured logging](request-identity-and-logging.md).
+The not-yet-implemented administrator authentication boundary is specified in
+[Identity and session](identity-and-session.md); its routes remain gated until
+the complete security and dependency contract is tested together.
 
 - Authentication and authorization are separate concerns.
 - Administrative actions use explicit permissions and audit records.

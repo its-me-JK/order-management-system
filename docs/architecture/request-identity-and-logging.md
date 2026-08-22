@@ -218,6 +218,7 @@ from that emergency record.
 - Add metrics, SLOs, rate-limited dependency state transitions, and alerts.
 - Add trusted-ingress proxy configuration before using forwarded client data.
 - Expose identity headers through a deliberate CORS policy when the browser
-  frontend is introduced.
+  frontend is introduced. The future trust and origin gates are fixed in the
+  [Identity and session contract](identity-and-session.md).
 - Load-test asynchronous standard-output buffering and define explicit logger
   flushing during shutdown.
