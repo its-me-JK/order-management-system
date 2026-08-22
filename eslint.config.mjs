@@ -3,6 +3,8 @@ import prettier from 'eslint-config-prettier';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
+import cleanArchitecture from './scripts/eslint/clean-architecture.plugin.mjs';
+
 const prismaBoundaryMessage =
   'Prisma is an infrastructure detail. Import it only from a database composition root or a business module infrastructure adapter; other layers must depend on application-owned ports.';
 const databaseClientTokenBoundaryMessage =
@@ -140,6 +142,9 @@ export default tseslint.config(
       },
       sourceType: 'commonjs',
     },
+    plugins: {
+      'oms-architecture': cleanArchitecture,
+    },
     rules: {
       '@typescript-eslint/consistent-type-imports': [
         'error',
@@ -188,6 +193,24 @@ export default tseslint.config(
     rules: {
       'no-restricted-imports': ['error', businessLoggingRestrictions],
       'no-console': 'error',
+    },
+  },
+  {
+    files: ['packages/modules/**/domain/**/*.ts'],
+    rules: {
+      'oms-architecture/enforce-layer-imports': ['error', { layer: 'domain' }],
+    },
+  },
+  {
+    files: ['packages/modules/**/application/**/*.ts'],
+    rules: {
+      'oms-architecture/enforce-layer-imports': ['error', { layer: 'application' }],
+    },
+  },
+  {
+    files: ['apps/api/src/features/**/*.ts'],
+    rules: {
+      'oms-architecture/enforce-layer-imports': ['error', { layer: 'api-feature' }],
     },
   },
   prettier,
