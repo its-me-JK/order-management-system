@@ -79,6 +79,10 @@ async function startApi(database: DatabaseConnection): Promise<RunningApi> {
     imports: [
       ApiModule.register({
         createDatabaseConnection: (): DatabaseConnection => database,
+        observability: {
+          deploymentEnvironment: 'test',
+          level: 'silent',
+        },
       }),
     ],
     controllers: [RoutingProbeController],

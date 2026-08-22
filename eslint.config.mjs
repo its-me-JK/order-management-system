@@ -52,5 +52,31 @@ export default tseslint.config(
       '@typescript-eslint/no-extraneous-class': 'off',
     },
   },
+  {
+    files: ['packages/modules/**/*.ts', 'apps/api/src/features/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              importNames: ['ConsoleLogger', 'Logger'],
+              message:
+                'Business features must use the application-owned logging port with stable events.',
+              name: '@nestjs/common',
+            },
+          ],
+          patterns: [
+            {
+              group: ['nestjs-pino', 'nestjs-pino/*', 'pino', 'pino/*', 'pino-http', 'pino-http/*'],
+              message:
+                'Business features must depend on the application-owned logging port, not a logging vendor.',
+            },
+          ],
+        },
+      ],
+      'no-console': 'error',
+    },
+  },
   prettier,
 );

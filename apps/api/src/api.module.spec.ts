@@ -15,7 +15,15 @@ describe('ApiModule', (): void => {
     };
     const createDatabaseConnection = jest.fn((): DatabaseConnection => database);
     const moduleReference = await Test.createTestingModule({
-      imports: [ApiModule.register({ createDatabaseConnection })],
+      imports: [
+        ApiModule.register({
+          createDatabaseConnection,
+          observability: {
+            deploymentEnvironment: 'test',
+            level: 'silent',
+          },
+        }),
+      ],
     }).compile();
 
     try {

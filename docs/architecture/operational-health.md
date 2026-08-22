@@ -16,6 +16,11 @@ Both endpoints send `Cache-Control: no-cache, no-store, must-revalidate`.
 Liveness proves that the process can answer HTTP. Readiness determines whether
 the process can safely receive application traffic.
 
+Both endpoints receive server-owned request and correlation response headers.
+Successful polls do not emit access logs. Failed readiness emits one sanitized
+warning without the dependency exception. See
+[Request identity and structured logging](request-identity-and-logging.md).
+
 ## Database lifecycle
 
 The composition root loads local development environment values when present,

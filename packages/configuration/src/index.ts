@@ -2,6 +2,8 @@ export {
   InvalidConfigurationError,
   parseApiRuntimeConfiguration,
   type ApiRuntimeConfiguration,
+  type DeploymentEnvironment,
+  type LogLevel,
   type RuntimeEnvironment,
 } from './api-runtime.configuration';
 export {

@@ -59,6 +59,10 @@ async function startApi(database: DatabaseConnection): Promise<RunningApi> {
   const application = await NestFactory.create<NestExpressApplication>(
     ApiModule.register({
       createDatabaseConnection: (): DatabaseConnection => database,
+      observability: {
+        deploymentEnvironment: 'test',
+        level: 'silent',
+      },
     }),
     { logger: false },
   );

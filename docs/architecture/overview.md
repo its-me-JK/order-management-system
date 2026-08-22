@@ -211,6 +211,14 @@ return sanitized dependency status. See
 [Operational health](operational-health.md) for rationale and failure
 semantics.
 
+Request identity and diagnostic logs are owned by the API observability
+adapter. The API generates every request ID, accepts only one canonical UUIDv4
+or UUIDv7 correlation ID, and emits allow-listed JSON records to standard
+output. Ambient log context never controls business behavior or crosses a
+message boundary. See
+[Request identity and structured logging](request-identity-and-logging.md) for
+the trust, redaction, and propagation contracts.
+
 ## Redis policy
 
 Redis accelerates catalog, pricing, and advisory availability reads; rate
@@ -267,6 +275,9 @@ Until these decisions are accepted, documentation may describe alternatives
 but code must not silently select one.
 
 ## Security and observability
+
+The implemented HTTP identity and logging baseline is specified in
+[Request identity and structured logging](request-identity-and-logging.md).
 
 - Authentication and authorization are separate concerns.
 - Administrative actions use explicit permissions and audit records.

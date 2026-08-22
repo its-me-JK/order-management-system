@@ -13,11 +13,12 @@ the additional distributed-systems cost.
 **Milestone 2 — platform and persistence foundation (in progress).** The API
 now has a versioned public HTTP surface, unversioned operational health
 endpoints, validated database configuration, a Prisma-private database
-boundary, bounded readiness probes, and application-owned database shutdown.
+boundary, bounded readiness probes, application-owned database shutdown,
+server-owned request identities, and sanitized structured JSON logging.
 No business models, business modules, migrations, or public feature endpoints
 have been implemented yet.
 
-**Overall project progress: 16%.** The fixed, deployment-inclusive scoring
+**Overall project progress: 17%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
 
 ## Planned technology
@@ -56,6 +57,8 @@ See the [architecture overview](docs/architecture/overview.md) for system
 boundaries, runtime topology, consistency rules, and delivery sequence.
 The [operational health contract](docs/architecture/operational-health.md)
 documents probe behavior, failure semantics, alternatives, and trade-offs.
+The [request identity and structured logging contract](docs/architecture/request-identity-and-logging.md)
+defines header trust, log fields, redaction, and propagation boundaries.
 
 ## Architecture decisions
 
@@ -193,8 +196,12 @@ pnpm dev:api
 
 The API listens on port `3000` by default. Set `PORT` to a canonical integer
 from `1` through `65535` to override it. `NODE_ENV` accepts `development`,
-`test`, or `production` and defaults to `development`. Invalid runtime
-configuration stops bootstrap before the API binds a socket.
+`test`, or `production` and defaults to `development`. `LOG_LEVEL` accepts
+`fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`; its default is
+runtime-aware. A production runtime must explicitly label
+`DEPLOYMENT_ENVIRONMENT` as `local`, `test`, `showcase`, `staging`, or
+`production`. Invalid runtime configuration stops bootstrap before the API
+binds a socket and produces only a sanitized structured fatal record.
 
 The API exposes operational endpoints independently of the versioned business
 API:
@@ -217,6 +224,18 @@ curl --fail http://localhost:3000/health/ready
 During database outages the process remains live while readiness returns
 `503`, allowing an orchestrator to remove it from traffic without creating a
 restart loop.
+
+Every admitted API and health response includes a fresh server-owned
+`X-Request-Id` and a validated `X-Correlation-Id`. Clients may supply one
+canonical UUIDv4 or UUIDv7 correlation ID; invalid values safely fall back to
+the request ID. Inbound request IDs are always ignored.
+
+The API writes newline-delimited JSON logs to standard output. Access logs use
+route templates and never include raw URLs, queries, bodies, credentials,
+cookies, IP addresses, or raw exceptions. Successful health polls are silent;
+failed readiness is a sanitized warning. See the
+[logging contract](docs/architecture/request-identity-and-logging.md) before
+adding diagnostic events.
 
 The worker is buildable and its composition root is tested, but it has no run
 script yet. An empty worker has no legitimate long-lived workload; a RabbitMQ

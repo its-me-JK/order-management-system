@@ -3,9 +3,11 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { createDatabase } from '@oms/database';
+import { Logger } from 'nestjs-pino';
 
 import { configureApiApplication } from './api.application';
 import { ApiModule } from './api.module';
+import { reportBootstrapFailure } from './bootstrap.failure';
 import {
   findRuntimeBaseDirectory,
   loadLocalEnvironment,
@@ -13,21 +15,41 @@ import {
 } from './bootstrap.configuration';
 
 async function bootstrap(): Promise<void> {
-  const runtimeBaseDirectory = findRuntimeBaseDirectory(process.cwd());
+  let application: NestExpressApplication | undefined;
 
-  loadLocalEnvironment(runtimeBaseDirectory);
+  try {
+    const runtimeBaseDirectory = findRuntimeBaseDirectory(process.cwd());
 
-  const configuration = parseBootstrapConfiguration(process.env, runtimeBaseDirectory);
-  const application = await NestFactory.create<NestExpressApplication>(
-    ApiModule.register({
-      createDatabaseConnection: () => createDatabase(configuration.database),
-    }),
-  );
+    loadLocalEnvironment(runtimeBaseDirectory);
 
-  configureApiApplication(application);
-  application.enableShutdownHooks(['SIGINT', 'SIGTERM']);
+    const configuration = parseBootstrapConfiguration(process.env, runtimeBaseDirectory);
+    application = await NestFactory.create<NestExpressApplication>(
+      ApiModule.register({
+        createDatabaseConnection: () => createDatabase(configuration.database),
+        observability: {
+          deploymentEnvironment: configuration.api.deploymentEnvironment,
+          level: configuration.api.logging.level,
+        },
+      }),
+      { abortOnError: false, bufferLogs: true },
+    );
 
-  await application.listen(configuration.api.http.port, '0.0.0.0');
+    application.useLogger(application.get(Logger));
+    configureApiApplication(application);
+    application.enableShutdownHooks(['SIGINT', 'SIGTERM']);
+
+    await application.listen(configuration.api.http.port, '0.0.0.0');
+  } catch (error: unknown) {
+    if (application !== undefined) {
+      try {
+        await application.close();
+      } catch {
+        // The original bootstrap failure remains authoritative and is reported below.
+      }
+    }
+
+    throw error;
+  }
 }
 
-void bootstrap();
+void bootstrap().catch(reportBootstrapFailure);

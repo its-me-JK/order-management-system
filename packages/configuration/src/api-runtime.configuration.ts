@@ -2,6 +2,9 @@ import { z } from 'zod';
 
 const DEFAULT_HTTP_PORT = 3000;
 
+const logLevelSchema = z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']);
+const deploymentEnvironmentSchema = z.enum(['local', 'test', 'showcase', 'staging', 'production']);
+
 const apiRuntimeEnvironmentSchema = z.object({
   NODE_ENV: z
     .enum(['development', 'test', 'production'])
@@ -14,14 +17,22 @@ const apiRuntimeEnvironmentSchema = z.object({
     .pipe(z.number().int().max(65_535))
     .optional()
     .transform((value) => value ?? DEFAULT_HTTP_PORT),
+  DEPLOYMENT_ENVIRONMENT: deploymentEnvironmentSchema.optional(),
+  LOG_LEVEL: logLevelSchema.optional(),
 });
 
 export type RuntimeEnvironment = 'development' | 'test' | 'production';
+export type DeploymentEnvironment = z.infer<typeof deploymentEnvironmentSchema>;
+export type LogLevel = z.infer<typeof logLevelSchema>;
 
 export interface ApiRuntimeConfiguration {
   readonly environment: RuntimeEnvironment;
+  readonly deploymentEnvironment: DeploymentEnvironment;
   readonly http: Readonly<{
     port: number;
+  }>;
+  readonly logging: Readonly<{
+    level: LogLevel;
   }>;
 }
 
@@ -45,10 +56,28 @@ export function parseApiRuntimeConfiguration(
     throw new InvalidConfigurationError(variableNames);
   }
 
+  if (result.data.NODE_ENV === 'production' && result.data.DEPLOYMENT_ENVIRONMENT === undefined) {
+    throw new InvalidConfigurationError(['DEPLOYMENT_ENVIRONMENT']);
+  }
+
+  const deploymentEnvironment =
+    result.data.DEPLOYMENT_ENVIRONMENT ?? (result.data.NODE_ENV === 'test' ? 'test' : 'local');
+  const logLevel =
+    result.data.LOG_LEVEL ??
+    (result.data.NODE_ENV === 'production'
+      ? 'info'
+      : result.data.NODE_ENV === 'test'
+        ? 'silent'
+        : 'debug');
+
   return Object.freeze({
     environment: result.data.NODE_ENV,
+    deploymentEnvironment,
     http: Object.freeze({
       port: result.data.PORT,
+    }),
+    logging: Object.freeze({
+      level: logLevel,
     }),
   });
 }
