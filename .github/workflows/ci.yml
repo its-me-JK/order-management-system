@@ -114,7 +114,7 @@ jobs:
       - name: Test Prisma against MySQL
         run: pnpm test:integration:database
 
-      - name: Test Catalog persistence against MySQL
+      - name: Test Catalog vertical read slice against MySQL
         run: pnpm test:integration:catalog
 
       - name: Test API health against MySQL

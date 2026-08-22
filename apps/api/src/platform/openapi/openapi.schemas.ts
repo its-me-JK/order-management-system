@@ -4,10 +4,13 @@ import { OPERATIONAL_HEALTH_CACHE_CONTROL } from '../health/operational-health-r
 import { PROBLEM_DETAILS_CACHE_CONTROL } from '../http-errors/problem-details.contract';
 import {
   internalServerErrorDescriptor,
+  type ProblemDescriptor,
+  problemDescriptorForStatus,
   SUPPORTED_PROBLEM_STATUSES,
 } from '../http-errors/problem-descriptors';
 
 export const OPENAPI_SCHEMA_NAMES = Object.freeze({
+  badRequestProblem: 'BadRequestProblem',
   healthDatabaseDownComponents: 'OperationalHealthDatabaseDownComponents',
   healthDatabaseUpComponents: 'OperationalHealthDatabaseUpComponents',
   healthEmptyComponents: 'OperationalHealthEmptyComponents',
@@ -19,12 +22,15 @@ export const OPENAPI_SCHEMA_NAMES = Object.freeze({
   readinessShuttingDownAvailable: 'OperationalHealthReadinessShuttingDownAvailable',
   readinessShuttingDownUnavailable: 'OperationalHealthReadinessShuttingDownUnavailable',
   readinessUnavailable: 'OperationalHealthReadinessUnavailable',
+  notFoundProblem: 'NotFoundProblem',
+  serviceUnavailableProblem: 'ServiceUnavailableProblem',
 });
 
 export const OPENAPI_HEADER_NAMES = Object.freeze({
   correlationId: 'CorrelationId',
   operationalHealthCacheControl: 'OperationalHealthCacheControl',
   problemCacheControl: 'ProblemCacheControl',
+  publicReadCacheControl: 'PublicReadCacheControl',
   requestId: 'RequestId',
 });
 
@@ -34,6 +40,7 @@ type OpenApiHeaderName = (typeof OPENAPI_HEADER_NAMES)[keyof typeof OPENAPI_HEAD
 const UUID_V4_PATTERN = '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$';
 const UUID_V4_OR_V7_PATTERN =
   '^[0-9a-f]{8}-[0-9a-f]{4}-[47][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$';
+const PUBLIC_READ_CACHE_CONTROL = 'no-store';
 
 export function openApiSchemaReference(name: OpenApiSchemaName): ReferenceObject {
   return { $ref: `#/components/schemas/${name}` };
@@ -84,6 +91,32 @@ function healthEnvelopeSchema(
   };
 }
 
+function requiredProblemDescriptor(status: number): ProblemDescriptor {
+  const descriptor = problemDescriptorForStatus(status);
+
+  if (descriptor === undefined) {
+    throw new Error(`Missing supported Problem Details status ${String(status)}`);
+  }
+
+  return descriptor;
+}
+
+function statusProblemSchema(descriptor: ProblemDescriptor): SchemaObject {
+  return {
+    allOf: [
+      openApiSchemaReference(OPENAPI_SCHEMA_NAMES.problemDetails),
+      {
+        type: 'object',
+        properties: {
+          title: { type: 'string', enum: [descriptor.title] },
+          status: { type: 'integer', enum: [descriptor.status] },
+          detail: { type: 'string', enum: [descriptor.detail] },
+        },
+      },
+    ],
+  };
+}
+
 const emptyComponents = openApiSchemaReference(OPENAPI_SCHEMA_NAMES.healthEmptyComponents);
 const databaseUpComponents = openApiSchemaReference(
   OPENAPI_SCHEMA_NAMES.healthDatabaseUpComponents,
@@ -92,6 +125,9 @@ const databaseDownComponents = openApiSchemaReference(
   OPENAPI_SCHEMA_NAMES.healthDatabaseDownComponents,
 );
 const internalServerError = internalServerErrorDescriptor();
+const badRequest = requiredProblemDescriptor(400);
+const notFound = requiredProblemDescriptor(404);
+const serviceUnavailable = requiredProblemDescriptor(503);
 
 export const OPENAPI_SCHEMAS: Readonly<Record<string, SchemaObject>> = Object.freeze({
   [OPENAPI_SCHEMA_NAMES.problemDetails]: {
@@ -112,19 +148,10 @@ export const OPENAPI_SCHEMAS: Readonly<Record<string, SchemaObject>> = Object.fr
     },
     required: ['type', 'title', 'status', 'detail', 'instance', 'requestId', 'correlationId'],
   },
-  [OPENAPI_SCHEMA_NAMES.internalServerErrorProblem]: {
-    allOf: [
-      openApiSchemaReference(OPENAPI_SCHEMA_NAMES.problemDetails),
-      {
-        type: 'object',
-        properties: {
-          title: { type: 'string', enum: [internalServerError.title] },
-          status: { type: 'integer', enum: [internalServerError.status] },
-          detail: { type: 'string', enum: [internalServerError.detail] },
-        },
-      },
-    ],
-  },
+  [OPENAPI_SCHEMA_NAMES.badRequestProblem]: statusProblemSchema(badRequest),
+  [OPENAPI_SCHEMA_NAMES.internalServerErrorProblem]: statusProblemSchema(internalServerError),
+  [OPENAPI_SCHEMA_NAMES.notFoundProblem]: statusProblemSchema(notFound),
+  [OPENAPI_SCHEMA_NAMES.serviceUnavailableProblem]: statusProblemSchema(serviceUnavailable),
   [OPENAPI_SCHEMA_NAMES.healthEmptyComponents]: {
     type: 'object',
     additionalProperties: false,
@@ -190,5 +217,10 @@ export const OPENAPI_HEADERS: Readonly<Record<string, HeaderObject>> = Object.fr
     description: 'Occurrence-specific Problem Details responses are never cached.',
     required: true,
     schema: { type: 'string', enum: [PROBLEM_DETAILS_CACHE_CONTROL] },
+  },
+  [OPENAPI_HEADER_NAMES.publicReadCacheControl]: {
+    description: 'Public Catalog reads are not cached until a freshness policy exists.',
+    required: true,
+    schema: { type: 'string', enum: [PUBLIC_READ_CACHE_CONTROL] },
   },
 });

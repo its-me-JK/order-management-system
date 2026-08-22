@@ -1,17 +1,32 @@
 import type { INestApplication } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
-import type { OpenAPIObject, ReferenceObject, ResponseObject, SchemaObject } from '@nestjs/swagger';
+import type {
+  OpenAPIObject,
+  ParameterObject,
+  ReferenceObject,
+  ResponseObject,
+  SchemaObject,
+} from '@nestjs/swagger';
 import { Test } from '@nestjs/testing';
 import type { DatabaseConnection } from '@oms/database';
 
 import { configureApiApplication, createApiExpressAdapter } from './api.application';
 import { assertValidOperationIds } from './api.documentation';
 import { ApiModule } from './api.module';
+import {
+  CATALOG_PUBLIC_SKU_CURSOR_PATTERN,
+  CATALOG_PUBLIC_SKU_ID_PATTERN,
+  CATALOG_PUBLIC_SKU_LIMIT_PATTERN,
+  CATALOG_PUBLIC_SKU_OPENAPI_SCHEMA_NAMES,
+} from './features/catalog/delivery/http/catalog-public-sku.openapi.schemas';
+import { MAX_CATALOG_PUBLIC_SKU_CURSOR_LENGTH } from './features/catalog/delivery/http/catalog-public-sku-cursor.codec';
 import { createDatabaseRuntimeFixture } from './platform/database/database-runtime.fixture';
 import { OPENAPI_HEADER_NAMES, OPENAPI_SCHEMA_NAMES } from './platform/openapi/openapi.schemas';
 
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const EXPECTED_PATHS = ['/health/live', '/health/ready'] as const;
+const HEALTH_PATHS = ['/health/live', '/health/ready'] as const;
+const CATALOG_PATHS = ['/api/v1/catalog/skus', '/api/v1/catalog/skus/{skuId}'] as const;
+const EXPECTED_PATHS = [...HEALTH_PATHS, ...CATALOG_PATHS] as const;
 
 interface RunningApi {
   readonly application: INestApplication;
@@ -84,6 +99,17 @@ function concreteResponse(
   }
 
   return response;
+}
+
+function concreteParameter(
+  parameter: ReferenceObject | ParameterObject | undefined,
+  name: string,
+): ParameterObject {
+  if (parameter === undefined || '$ref' in parameter) {
+    throw new Error(`Expected ${name} to be a concrete OpenAPI parameter`);
+  }
+
+  return parameter;
 }
 
 function documentWithOperationIds(
@@ -358,7 +384,7 @@ describe('API OpenAPI contract', (): void => {
       expect(document.components?.headers?.[headerName]).toMatchObject({ required: true });
     }
 
-    for (const path of EXPECTED_PATHS) {
+    for (const path of HEALTH_PATHS) {
       for (const status of ['200', '503', '500'] as const) {
         const responseObject = concreteResponse(
           document.paths[path]?.get?.responses[status],
@@ -380,6 +406,210 @@ describe('API OpenAPI contract', (): void => {
         });
       }
     }
+  });
+
+  it('publishes the exact anonymous Catalog read contract', async (): Promise<void> => {
+    const response = await fetch(`${runningApi.baseUrl}/docs/openapi.json`);
+    const document = (await response.json()) as OpenAPIObject;
+    const listOperation = document.paths['/api/v1/catalog/skus']?.get;
+    const getOperation = document.paths['/api/v1/catalog/skus/{skuId}']?.get;
+
+    expect(listOperation).toBeDefined();
+    expect(getOperation).toBeDefined();
+    expect(listOperation).toMatchObject({
+      operationId: 'catalogListPublicSkus',
+      security: [],
+      tags: ['Catalog'],
+    });
+    expect(getOperation).toMatchObject({
+      operationId: 'catalogGetPublicSku',
+      security: [],
+      tags: ['Catalog'],
+    });
+    expect(document.tags).toContainEqual(expect.objectContaining({ name: 'Catalog' }));
+
+    const listParameters = Object.fromEntries(
+      (listOperation?.parameters ?? []).map((parameter) => {
+        const concrete = concreteParameter(parameter, 'Catalog list parameter');
+
+        return [concrete.name, concrete];
+      }),
+    );
+    const skuIdParameter = concreteParameter(
+      getOperation?.parameters?.[0],
+      'Catalog SKU identifier',
+    );
+
+    expect(Object.keys(listParameters).sort()).toEqual(['cursor', 'limit']);
+    expect(listParameters['limit']).toMatchObject({
+      in: 'query',
+      name: 'limit',
+      required: false,
+      schema: {
+        type: 'string',
+        default: '20',
+        minLength: 1,
+        maxLength: 3,
+        pattern: CATALOG_PUBLIC_SKU_LIMIT_PATTERN,
+      },
+    });
+    expect(listParameters['cursor']).toMatchObject({
+      in: 'query',
+      name: 'cursor',
+      required: false,
+      schema: {
+        type: 'string',
+        minLength: 1,
+        maxLength: MAX_CATALOG_PUBLIC_SKU_CURSOR_LENGTH,
+        pattern: CATALOG_PUBLIC_SKU_CURSOR_PATTERN,
+      },
+    });
+    expect(skuIdParameter).toMatchObject({
+      in: 'path',
+      name: 'skuId',
+      required: true,
+      schema: {
+        type: 'string',
+        format: 'uuid',
+        pattern: CATALOG_PUBLIC_SKU_ID_PATTERN,
+      },
+    });
+
+    expect(Object.keys(listOperation?.responses ?? {}).sort()).toEqual([
+      '200',
+      '400',
+      '500',
+      '503',
+    ]);
+    expect(Object.keys(getOperation?.responses ?? {}).sort()).toEqual([
+      '200',
+      '400',
+      '404',
+      '500',
+      '503',
+    ]);
+
+    for (const [operation, successSchemaName] of [
+      [listOperation, CATALOG_PUBLIC_SKU_OPENAPI_SCHEMA_NAMES.collectionResponse],
+      [getOperation, CATALOG_PUBLIC_SKU_OPENAPI_SCHEMA_NAMES.resourceResponse],
+    ] as const) {
+      const success = concreteResponse(operation?.responses['200'], 'Catalog success');
+
+      expect(success.content).toEqual({
+        'application/json': {
+          schema: { $ref: `#/components/schemas/${successSchemaName}` },
+        },
+      });
+      expect(success.headers).toEqual({
+        'Cache-Control': {
+          $ref: `#/components/headers/${OPENAPI_HEADER_NAMES.publicReadCacheControl}`,
+        },
+        'X-Request-Id': {
+          $ref: `#/components/headers/${OPENAPI_HEADER_NAMES.requestId}`,
+        },
+        'X-Correlation-Id': {
+          $ref: `#/components/headers/${OPENAPI_HEADER_NAMES.correlationId}`,
+        },
+      });
+
+      for (const [status, problemSchemaName] of [
+        ['400', OPENAPI_SCHEMA_NAMES.badRequestProblem],
+        ['500', OPENAPI_SCHEMA_NAMES.internalServerErrorProblem],
+        ['503', OPENAPI_SCHEMA_NAMES.serviceUnavailableProblem],
+      ] as const) {
+        const failure = concreteResponse(operation?.responses[status], `Catalog ${status}`);
+
+        expect(failure.content).toEqual({
+          'application/problem+json': {
+            schema: { $ref: `#/components/schemas/${problemSchemaName}` },
+          },
+        });
+        expect(failure.headers).toEqual({
+          'Cache-Control': {
+            $ref: `#/components/headers/${OPENAPI_HEADER_NAMES.problemCacheControl}`,
+          },
+          'X-Request-Id': {
+            $ref: `#/components/headers/${OPENAPI_HEADER_NAMES.requestId}`,
+          },
+          'X-Correlation-Id': {
+            $ref: `#/components/headers/${OPENAPI_HEADER_NAMES.correlationId}`,
+          },
+        });
+      }
+    }
+
+    const notFoundResponse = concreteResponse(getOperation?.responses['404'], 'Catalog 404');
+
+    expect(notFoundResponse.content).toEqual({
+      'application/problem+json': {
+        schema: { $ref: `#/components/schemas/${OPENAPI_SCHEMA_NAMES.notFoundProblem}` },
+      },
+    });
+    expect(notFoundResponse.headers).toEqual({
+      'Cache-Control': {
+        $ref: `#/components/headers/${OPENAPI_HEADER_NAMES.problemCacheControl}`,
+      },
+      'X-Request-Id': {
+        $ref: `#/components/headers/${OPENAPI_HEADER_NAMES.requestId}`,
+      },
+      'X-Correlation-Id': {
+        $ref: `#/components/headers/${OPENAPI_HEADER_NAMES.correlationId}`,
+      },
+    });
+
+    const schemas = document.components?.schemas;
+    const expectedRequiredMembers = {
+      [CATALOG_PUBLIC_SKU_OPENAPI_SCHEMA_NAMES.product]: ['id', 'name'],
+      [CATALOG_PUBLIC_SKU_OPENAPI_SCHEMA_NAMES.resource]: ['id', 'code', 'name', 'product'],
+      [CATALOG_PUBLIC_SKU_OPENAPI_SCHEMA_NAMES.resourceResponse]: ['data'],
+      [CATALOG_PUBLIC_SKU_OPENAPI_SCHEMA_NAMES.pageInfo]: ['nextCursor'],
+      [CATALOG_PUBLIC_SKU_OPENAPI_SCHEMA_NAMES.collectionResponse]: ['data', 'pageInfo'],
+    } as const;
+
+    for (const [schemaName, required] of Object.entries(expectedRequiredMembers)) {
+      const schema = concreteSchema(schemas?.[schemaName], schemaName);
+
+      expect(schema.additionalProperties).toBe(false);
+      expect(schema.required).toEqual(required);
+      expect(Object.keys(schema.properties ?? {})).toEqual(required);
+    }
+
+    const pageInfo = concreteSchema(
+      schemas?.[CATALOG_PUBLIC_SKU_OPENAPI_SCHEMA_NAMES.pageInfo],
+      CATALOG_PUBLIC_SKU_OPENAPI_SCHEMA_NAMES.pageInfo,
+    );
+    expect(pageInfo.properties?.['nextCursor']).toEqual({
+      type: 'string',
+      nullable: true,
+      minLength: 1,
+      maxLength: MAX_CATALOG_PUBLIC_SKU_CURSOR_LENGTH,
+      pattern: CATALOG_PUBLIC_SKU_CURSOR_PATTERN,
+    });
+
+    const catalogSchemas = JSON.stringify(
+      Object.fromEntries(
+        Object.values(CATALOG_PUBLIC_SKU_OPENAPI_SCHEMA_NAMES).map((name) => [
+          name,
+          schemas?.[name],
+        ]),
+      ),
+    );
+
+    for (const forbiddenMember of [
+      'activatedAt',
+      'archivedAt',
+      'createdAt',
+      'inventory',
+      'price',
+      'retiredAt',
+      'status',
+      'total',
+      'updatedAt',
+      'version',
+    ]) {
+      expect(catalogSchemas).not.toContain(`"${forbiddenMember}"`);
+    }
+    expect(runningApi.probe).not.toHaveBeenCalled();
   });
 
   it('serves a local read-only Swagger UI with request identity', async (): Promise<void> => {

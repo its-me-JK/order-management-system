@@ -3,7 +3,7 @@
 ## Scope
 
 This contract defines the framework-independent Catalog query use cases and the
-future HTTP delivery boundary for public SKU reads. It does not define Catalog
+HTTP delivery boundary for public SKU reads. It does not define Catalog
 writes, search, merchandising rank, pricing, inventory availability, Redis
 caching, RabbitMQ events, or administrative access.
 
@@ -29,9 +29,9 @@ The use cases are plain TypeScript classes. They depend only on the
 application-owned `CatalogReadRepository` and contain no NestJS, Prisma, HTTP,
 configuration, logging-vendor, Redis, or RabbitMQ imports.
 
-## Planned HTTP contract
+## HTTP contract
 
-The API delivery adapter will publish:
+The API delivery adapter publishes:
 
 | Operation | Path | Success |
 | --- | --- | --- |
@@ -85,6 +85,9 @@ internal payload binds the token to the public-SKU list and retains the exact
 six-digit UTC timestamp and UUIDv7 tie-breaker. Decoding requires exact shape,
 version, types, scope, canonical re-encoding, timestamp, and identifier
 validation. Every decode failure has the same safe invalid-cursor outcome.
+Malformed client cursors become a fixed `400` response. Failures while encoding
+an application-owned next position remain server failures and become the fixed
+`500` response; they are never mislabeled as invalid client input.
 
 The cursor is opaque but not secret. It is deliberately unsigned: changing a
 position cannot widen access beyond the same indexed, active-only public query,
@@ -102,9 +105,9 @@ refresh from the first page when they need the newest view.
 
 Both the SKU and its Product must be `ACTIVE`. A missing SKU, non-public SKU,
 or SKU under a non-public Product has the same `not-found` application outcome
-and future fixed `404` Problem Details response.
+and fixed `404` Problem Details response.
 
-The HTTP adapter will map only these outcomes:
+The HTTP adapter maps only these outcomes:
 
 | Condition | HTTP status |
 | --- | ---: |
@@ -126,11 +129,11 @@ gates; an in-process limiter and `Promise.race` are not production substitutes.
 
 ## Composition and enforcement
 
-The API composition root will construct the Prisma repository from the one
+The API composition root constructs the Prisma repository from the one
 runtime-owned database client, inject it into the Catalog use cases, and expose
 delivery adapters. Controllers depend on application use cases, never on
-Prisma or repository implementations. The database module will not become
-global and will not be registered a second time.
+Prisma or repository implementations. The database module is neither global
+nor registered a second time.
 
 Repository lint rules enforce dependency direction: domain cannot import
 application or infrastructure, application cannot import infrastructure or
@@ -181,10 +184,15 @@ back door to another module's implementation.
    use case do not?
 5. Why is `Promise.race` insufficient as a database query timeout?
 
+The vertical integration suite creates an exact isolated local database,
+applies the committed migration twice, starts the production API composition,
+and verifies the public contract through real HTTP and Prisma calls. It covers
+active reads, indistinguishable hidden and missing resources, opaque two-page
+traversal, and deterministic UUID ordering for equal timestamps. The suite
+removes only its owned fixtures and database.
+
 ## Future improvements
 
-- Add the strict HTTP cursor adapter, controller, exact OpenAPI schemas, and a
-  real NestJS-to-MySQL contract test.
 - Add a genuine MySQL-side statement deadline before public deployment.
 - Add edge or distributed abuse controls when a public host exists.
 - Add ETags or short shared-cache TTLs only with a defined staleness budget and
@@ -193,3 +201,5 @@ back door to another module's implementation.
   integrity.
 - Add search and merchandising ranking as explicit contracts rather than
   silently changing creation-order pagination.
+- Add authenticated Catalog write and lifecycle contracts with idempotency and
+  audit ownership before exposing administrative operations.

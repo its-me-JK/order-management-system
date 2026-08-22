@@ -22,11 +22,14 @@ through one strict non-coercive validation policy. The first Catalog read
 slice now owns separate Product and SKU records, lifecycle and integrity
 constraints, lossless seek pagination, UUIDv7 binary mapping, an active-only
 Prisma adapter, bounded application inputs, and framework-independent public
-query use cases. It deliberately has no public feature endpoint or write path
-yet; pricing, inventory, Redis caching, and integration events remain separate
-later slices.
+query use cases. Its anonymous list and detail endpoints publish an exact
+active-only representation, opaque cursor pagination, fixed Problem Details,
+and `no-store` responses. A real vertical integration suite exercises the
+production NestJS composition through Prisma and isolated MySQL. Catalog still
+has no write path; pricing, inventory, Redis caching, and integration events
+remain separate later slices.
 
-**Overall project progress: 24%.** The fixed, deployment-inclusive scoring
+**Overall project progress: 25%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
 
 ## Planned technology
@@ -74,7 +77,7 @@ The [OpenAPI and transport validation contract](docs/architecture/openapi-and-tr
 defines contract ownership, public documentation posture, operation IDs, and
 strict DTO boundary rules.
 The [public Catalog read contract](docs/architecture/catalog-public-reads.md)
-defines application query boundaries, pagination, visibility, and the planned
+defines application query boundaries, pagination, visibility, and the
 anonymous HTTP representation.
 
 ## Architecture decisions
@@ -185,10 +188,11 @@ history. Module-owned Prisma models compose into that schema; the first
 reviewed migration creates Catalog Product and SKU records and their database
 invariants. Generated Prisma code is local build output and is not committed.
 The Catalog integration command creates, migrates twice, and removes an exact
-local `oms_catalog_integration` database. It grants the application principal
-only DML access while the suite runs and refuses an externally supplied
-migration URL, so normal development and showcase data are never test
-fixtures.
+local `oms_catalog_integration` database. It verifies both the repository
+contract and the production HTTP composition against real MySQL. It grants the
+application principal only DML access while the suite runs and refuses an
+externally supplied migration URL, so normal development and showcase data are
+never test fixtures.
 
 Catalog UUIDv7 values use natural byte order, so operational SQL must keep the
 MySQL swap flag disabled:
@@ -254,6 +258,18 @@ return HTTP `503`. Responses disable caching and disclose only dependency
 status, never connection details or underlying errors. Business endpoints use
 `/api/v1`; health endpoints deliberately remain unversioned.
 
+The first versioned business endpoints expose anonymous, active-only Catalog
+reads:
+
+| Endpoint | Meaning | Contract |
+| --- | --- | --- |
+| `GET /api/v1/catalog/skus` | List public SKUs | Optional canonical `limit` and opaque `cursor`; maximum page size 100 |
+| `GET /api/v1/catalog/skus/{skuId}` | Get one public SKU | Lowercase UUIDv7; missing and non-public resources are indistinguishable |
+
+Catalog responses use `Cache-Control: no-store` and never expose lifecycle,
+persistence, price, inventory, or orderability fields. The list uses
+forward-only keyset pagination; clients must treat `nextCursor` as opaque.
+
 The same API process exposes its environment-neutral contract without a paid
 documentation service:
 
@@ -270,6 +286,7 @@ UI helpers are not public.
 ```bash
 curl --fail http://localhost:3000/health/live
 curl --fail http://localhost:3000/health/ready
+curl --fail 'http://localhost:3000/api/v1/catalog/skus?limit=20'
 curl --fail http://localhost:3000/docs/openapi.json
 ```
 
@@ -321,7 +338,7 @@ Useful repository commands:
 | `pnpm test` | Run the Jest test suite |
 | `pnpm test:coverage` | Generate local coverage output |
 | `pnpm test:integration:api` | Verify API health and database-backed readiness against real MySQL |
-| `pnpm test:integration:catalog` | Verify Catalog constraints, visibility, and lossless pagination in an isolated local MySQL database |
+| `pnpm test:integration:catalog` | Verify Catalog persistence and the production HTTP composition in an isolated local MySQL database |
 | `pnpm format:check` | Verify formatting without modifying files |
 | `pnpm check` | Run every required quality gate in CI order |
 | `pnpm db:generate` | Generate the pinned Prisma client locally |

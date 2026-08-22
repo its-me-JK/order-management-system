@@ -1,6 +1,6 @@
 # Project progress
 
-- **Overall completion:** 24%
+- **Overall completion:** 25%
 - **Current milestone:** Identity, catalog, pricing, and inventory
 - **Public demo:** Not deployable yet
 - **Last reviewed:** 2026-08-22
@@ -13,16 +13,16 @@ accepted outcomes, not lines of code, generated files, commits, or activity.
 
 | Workstream | Weight | Earned | Current evidence |
 | --- | ---: | ---: | --- |
-| Architecture and contracts | 6% | 4.9% | Architecture overview, thirteen ADRs, platform contracts, and explicit Catalog persistence and public-read contracts covering ownership, lifecycle, visibility, identifiers, query boundaries, and pagination; most business contracts remain |
+| Architecture and contracts | 6% | 5% | Architecture overview, thirteen ADRs, platform contracts, and delivered Catalog persistence and public-read contracts covering ownership, lifecycle, visibility, identifiers, query boundaries, transport, and pagination; most business contracts remain |
 | Platform and persistence | 9% | 8.25% | Workspace, runtime shells, versioned routing, health, validated configuration, structured logging, strict transport boundaries, deterministic OpenAPI, one runtime-owned Prisma client, MySQL, an ordered module-owned migration, and integration infrastructure |
-| Backend business capabilities | 35% | 1.75% | Catalog Product/SKU persistence, UUIDv7 binary mapping, active-only reads, exact seek pagination, bounded application inputs, and framework-independent get/list use cases exist; no Catalog write path or endpoint exists |
+| Backend business capabilities | 35% | 2.75% | Catalog Product/SKU persistence, UUIDv7 binary mapping, active-only reads, exact seek pagination, bounded application inputs, framework-independent get/list use cases, and exact anonymous list/detail endpoints exist; no Catalog write path exists |
 | Redis, RabbitMQ, and workers | 9% | 0% | Architecture only |
-| Testing, security, and resilience | 11% | 3.75% | Strict quality gates, secret-safe configuration and TLS tests, adversarial HTTP tests, executable Clean Architecture boundaries, defensive Catalog application and adapter tests, isolated real-MySQL migration and constraint tests, microsecond pagination, and live adapter-outage classification |
+| Testing, security, and resilience | 11% | 4.25% | Strict quality gates, secret-safe configuration and TLS tests, adversarial HTTP, cursor, and OpenAPI tests, executable Clean Architecture boundaries, isolated real-MySQL migration and constraint tests, and a real NestJS-to-Prisma-to-MySQL Catalog contract suite |
 | Frontend showcase | 12% | 0% | Not started |
 | Observability and operations | 5% | 1% | Sanitized liveness, bounded MySQL readiness, server-owned request identity, structured HTTP/Nest logs, redaction, and safe fatal bootstrap reporting exist; metrics and traces remain |
 | CI/CD and public deployment | 8% | 1.75% | CI replays migrations idempotently and validates database, Catalog, and API contracts against real MySQL; no release pipeline or live environment |
 | Documentation and demo polish | 5% | 2.75% | README, architecture contracts, ADR history, deterministic OpenAPI JSON, and a public read-only local Swagger UI exist; examples and demo guides remain |
-| **Total** | **100%** | **24.15%** | Displayed overall is rounded down |
+| **Total** | **100%** | **25.75%** | Displayed overall is rounded down |
 
 The weights are fixed unless the project scope is formally re-baselined. A
 workstream may use fractional earned points internally, but the displayed
@@ -41,9 +41,10 @@ overall percentage is rounded down so progress is never overstated.
 
 ## Current status line
 
-> Overall: 24% · Backend business capabilities: 1.75/35 · Frontend: 0/12 ·
+> Overall: 25% · Backend business capabilities: 2.75/35 · Frontend: 0/12 ·
 > Deployment: 1.75/8 · Public demo: not deployable
 
 The current increment earns no deployment points. Catalog reads are not an
-externally usable vertical slice: there is still no feature endpoint, release
-pipeline, provider resource, live URL, or synthetic showcase data.
+externally usable showcase: the endpoint is production-composed locally, but
+there is still no release pipeline, provider resource, live URL, synthetic
+showcase data, distributed abuse control, or database-side query deadline.

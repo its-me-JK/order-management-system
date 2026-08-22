@@ -114,3 +114,4 @@ export DATABASE_TLS_MODE='disabled'
 pnpm db:migrate:deploy
 pnpm db:migrate:deploy
 pnpm --filter @oms/catalog run test:integration
+pnpm --filter @oms/api run test:integration:catalog
