@@ -62,6 +62,7 @@ type ProductWrite = Readonly<{
   id: string;
   name: string;
   status: string;
+  statusChangedAt: string;
   updatedAt: string;
   version: number;
 }>;
@@ -75,6 +76,7 @@ type SkuWrite = Readonly<{
   productId: string;
   retiredAt: string | null;
   status: string;
+  statusChangedAt: string;
   updatedAt: string;
   version: number;
 }>;
@@ -95,7 +97,8 @@ async function insertProduct(
 ): Promise<void> {
   await client.$executeRaw`
     INSERT INTO catalog_products (
-      id, name, status, version, created_at, updated_at, activated_at, archived_at
+      id, name, status, version, created_at, updated_at,
+      status_changed_at, activated_at, archived_at
     ) VALUES (
       ${codec.toBytes(row.id)},
       ${row.name},
@@ -103,6 +106,7 @@ async function insertProduct(
       ${row.version},
       CAST(${row.createdAt} AS DATETIME(6)),
       CAST(${row.updatedAt} AS DATETIME(6)),
+      CAST(${row.statusChangedAt} AS DATETIME(6)),
       CAST(${row.activatedAt} AS DATETIME(6)),
       CAST(${row.archivedAt} AS DATETIME(6))
     )
@@ -117,7 +121,7 @@ async function insertSku(
   await client.$executeRaw`
     INSERT INTO catalog_skus (
       id, product_id, code, name, status, version,
-      created_at, updated_at, activated_at, retired_at
+      created_at, updated_at, status_changed_at, activated_at, retired_at
     ) VALUES (
       ${codec.toBytes(row.id)},
       ${codec.toBytes(row.productId)},
@@ -127,6 +131,7 @@ async function insertSku(
       ${row.version},
       CAST(${row.createdAt} AS DATETIME(6)),
       CAST(${row.updatedAt} AS DATETIME(6)),
+      CAST(${row.statusChangedAt} AS DATETIME(6)),
       CAST(${row.activatedAt} AS DATETIME(6)),
       CAST(${row.retiredAt} AS DATETIME(6))
     )
@@ -170,8 +175,9 @@ export async function seedCatalogHttpIntegrationFixture(runtime: DatabaseRuntime
     id: fixture.activeProduct.id,
     name: fixture.activeProduct.name,
     status: 'ACTIVE',
+    statusChangedAt: PRODUCT_ACTIVATED_AT,
     updatedAt: PRODUCT_UPDATED_AT,
-    version: 1,
+    version: 3,
   });
   await insertProduct(client, codec, {
     activatedAt: null,
@@ -180,6 +186,7 @@ export async function seedCatalogHttpIntegrationFixture(runtime: DatabaseRuntime
     id: fixture.draftProduct.id,
     name: fixture.draftProduct.name,
     status: 'DRAFT',
+    statusChangedAt: PRODUCT_CREATED_AT,
     updatedAt: PRODUCT_CREATED_AT,
     version: 1,
   });
@@ -194,8 +201,9 @@ export async function seedCatalogHttpIntegrationFixture(runtime: DatabaseRuntime
       productId: fixture.activeProduct.id,
       retiredAt: null,
       status: 'ACTIVE',
+      statusChangedAt: sku.createdAt,
       updatedAt: PRODUCT_UPDATED_AT,
-      version: 1,
+      version: 3,
     });
   }
 
@@ -208,6 +216,7 @@ export async function seedCatalogHttpIntegrationFixture(runtime: DatabaseRuntime
     productId: fixture.activeProduct.id,
     retiredAt: null,
     status: 'DRAFT',
+    statusChangedAt: '9999-12-31 23:59:59.999990',
     updatedAt: '9999-12-31 23:59:59.999990',
     version: 1,
   });
@@ -220,8 +229,9 @@ export async function seedCatalogHttpIntegrationFixture(runtime: DatabaseRuntime
     productId: fixture.activeProduct.id,
     retiredAt: '9999-12-31 23:59:59.999991',
     status: 'RETIRED',
+    statusChangedAt: '9999-12-31 23:59:59.999991',
     updatedAt: '9999-12-31 23:59:59.999991',
-    version: 2,
+    version: 3,
   });
   await insertSku(client, codec, {
     activatedAt: '9999-12-31 23:59:59.999990',
@@ -232,7 +242,8 @@ export async function seedCatalogHttpIntegrationFixture(runtime: DatabaseRuntime
     productId: fixture.draftProduct.id,
     retiredAt: null,
     status: 'ACTIVE',
+    statusChangedAt: '9999-12-31 23:59:59.999990',
     updatedAt: '9999-12-31 23:59:59.999990',
-    version: 1,
+    version: 2,
   });
 }

@@ -31,12 +31,14 @@ accepted reversible lifecycles, Unicode names, lossless timestamps, optimistic
 versions, immutable transitions, and domain events. SKU ownership and code are
 immutable, while cross-aggregate Product policy remains reserved for the later
 transactional application service. Both aggregates remain deliberately
-unwired until the required migration and administrative security foundations
-exist.
+unwired until the required administrative security and transactional
+foundations exist. Persistence now supports those lifecycle shapes through a
+guarded forward-only migration with deterministic legacy backfill and a real
+prior-schema upgrade test.
 Pricing, inventory, Redis caching, and integration events remain separate
 later slices.
 
-**Overall project progress: 26%.** The fixed, deployment-inclusive scoring
+**Overall project progress: 27%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
 
 ## Planned technology
@@ -196,16 +198,20 @@ pnpm test:integration:database
 pnpm test:integration:catalog
 ```
 
-The database package owns Prisma generation and the single ordered migration
-history. Module-owned Prisma models compose into that schema; the first
-reviewed migration creates Catalog Product and SKU records and their database
-invariants. Generated Prisma code is local build output and is not committed.
-The Catalog integration command creates, migrates twice, and removes an exact
-local `oms_catalog_integration` database. It verifies both the repository
-contract and the production HTTP composition against real MySQL. It grants the
-application principal only DML access while the suite runs and refuses an
-externally supplied migration URL, so normal development and showcase data are
-never test fixtures.
+The database package owns Prisma generation and one ordered forward-only
+migration history. Module-owned Prisma models compose into that schema; the
+reviewed migrations create Catalog Product and SKU records, then safely expand
+their lifecycle invariants. Generated Prisma code is local build output and is
+not committed. The Catalog integration command verifies an initial-schema
+upgrade with legacy rows, rejects ambiguous terminal history before DDL, and
+also creates, migrates twice, and removes an exact fresh
+`oms_catalog_integration` database. It verifies the repository contract and
+production HTTP composition against real MySQL. It grants the application
+principal only DML access while the suite runs and refuses an externally
+supplied migration URL, so normal development and showcase data are never test
+fixtures. The
+[Catalog lifecycle recovery runbook](docs/runbooks/catalog-lifecycle-migration-recovery.md)
+defines the fail-closed partial-DDL decision path.
 
 Catalog UUIDv7 values use natural byte order, so operational SQL must keep the
 MySQL swap flag disabled:

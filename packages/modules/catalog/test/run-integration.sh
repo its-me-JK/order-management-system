@@ -102,6 +102,7 @@ trap cleanup_catalog_test_database EXIT
 
 catalog_test_setup_complete=1
 create_catalog_test_database
+bash packages/modules/catalog/test/verify-lifecycle-migration.sh
 
 unset DATABASE_PASSWORD
 

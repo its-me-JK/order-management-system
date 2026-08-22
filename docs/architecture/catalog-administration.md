@@ -127,6 +127,42 @@ ordering compares archival against `COALESCE(activated_at, created_at)`. The
 migration is forward-only and must not edit the already applied migration or
 weaken UUID, code, name, version, or referential constraints.
 
+### Lifecycle migration rollout and recovery
+
+The initial lifecycle expansion is deliberately a single forward migration
+only while Catalog has no administrative writer and each table contains at
+most 10,000 rows. A static preflight enforces the prior schema, the bounded row
+count, supported legacy states, and recoverable chronology before the first
+persistent DDL. The migration then adds nullable columns with
+`ALGORITHM=INSTANT`, performs the deterministic backfill in one DML
+transaction, validates the result, and contracts each table with the explicit
+`ALGORITHM=COPY, LOCK=SHARED` required by the pinned MySQL release. Session
+metadata- and row-lock waits are bounded at 15 seconds. The migration job runs
+before application rollout, while Catalog writes remain disabled.
+
+The table-copy contract step can permit reads but blocks writes and may take a
+metadata lock. MySQL makes each DDL statement atomic, not the complete
+multi-table migration. A failure can therefore leave an additive nullable
+column, a completed version-floor backfill, or one contracted table. Operators
+must keep writers disabled, inspect `information_schema`, migration state, row
+counts, null counts, and the fixed postconditions, and prepare a reviewed
+roll-forward reconciliation for the remaining phase. They must not drop a
+populated, backfilled, or contracted new column, lower normalized versions,
+rewrite business timestamps, or mark a failed Prisma migration applied without
+proving the final schema and data contract. The only drop exception is the
+runbook's rehearsed, all-null nullable expansion state. A tested backup is
+required before running this migration against material data. The exact phase
+decision table, permitted ledger resolutions, and lossless partial-expansion
+rollback are maintained in the
+[Catalog lifecycle migration recovery runbook](../runbooks/catalog-lifecycle-migration-recovery.md).
+
+If either row-count guard fails or measured lock duration is no longer small,
+the threshold is not raised to force deployment. The change is split across
+releases into additive expansion, dual-compatible code, an idempotent bounded
+primary-key-keyset backfill with progress telemetry, validation, and final
+contraction. This preserves the repository-wide migration policy while
+avoiding unnecessary machinery for the current bounded, writer-free state.
+
 ## Authentication and authorization
 
 Administrative operations accept only the trusted principal produced by

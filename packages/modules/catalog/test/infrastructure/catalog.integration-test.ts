@@ -29,8 +29,10 @@ const PRODUCT_IDS = {
   active: 'ffffffff-ff00-7000-8000-000000000001',
   archived: 'ffffffff-ff00-7000-8000-000000000003',
   constraint: 'ffffffff-ff00-7000-8000-000000000004',
+  directArchived: 'ffffffff-ff00-7000-8000-000000000006',
   draft: 'ffffffff-ff00-7000-8000-000000000002',
   invalid: 'ffffffff-ff00-7000-8000-000000000005',
+  suspended: 'ffffffff-ff00-7000-8000-000000000007',
 } as const;
 
 const SKU_IDS = {
@@ -49,6 +51,7 @@ const SKU_IDS = {
   page5: parseCatalogSkuId('ffffffff-ffff-7fff-bfff-fffffffffffb'),
   page6: parseCatalogSkuId('ffffffff-ffff-7fff-bfff-fffffffffffa'),
   retired: parseCatalogSkuId('ffffffff-ff10-7000-8000-000000000002'),
+  suspended: parseCatalogSkuId('ffffffff-ff10-7000-8000-00000000000a'),
 } as const;
 
 const MINIMUM_UUID_V7 = parseCatalogSkuId('00000000-0000-7000-8000-000000000000');
@@ -58,6 +61,7 @@ const LOOPBACK_DATABASE_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 const PRODUCT_CREATED_AT = '9998-12-31 00:00:00.000000';
 const PRODUCT_ACTIVATED_AT = '9998-12-31 00:00:00.000001';
 const PRODUCT_UPDATED_AT = '9999-12-31 23:59:59.999999';
+const LIFECYCLE_CHANGED_AT = '9999-01-01 00:00:00.000001';
 const HIDDEN_SKU_CREATED_AT = '9999-12-31 23:59:59.998998';
 const HIDDEN_SKU_RETIRED_AT = '9999-12-31 23:59:59.998999';
 
@@ -110,6 +114,7 @@ type ProductWrite = Readonly<{
   id: string;
   name: string;
   status: string;
+  statusChangedAt: string;
   updatedAt: string;
   version: number;
 }>;
@@ -123,6 +128,7 @@ type SkuWrite = Readonly<{
   productId: string;
   retiredAt: string | null;
   status: string;
+  statusChangedAt: string;
   updatedAt: string;
   version: number;
 }>;
@@ -260,7 +266,8 @@ async function cleanupOwnedRows(context: IntegrationContext): Promise<void> {
 async function insertProduct(context: IntegrationContext, row: ProductWrite): Promise<void> {
   await context.client.$executeRaw`
     INSERT INTO catalog_products (
-      id, name, status, version, created_at, updated_at, activated_at, archived_at
+      id, name, status, version, created_at, updated_at,
+      status_changed_at, activated_at, archived_at
     ) VALUES (
       ${context.codec.toBytes(row.id)},
       ${row.name},
@@ -268,6 +275,7 @@ async function insertProduct(context: IntegrationContext, row: ProductWrite): Pr
       ${row.version},
       CAST(${row.createdAt} AS DATETIME(6)),
       CAST(${row.updatedAt} AS DATETIME(6)),
+      CAST(${row.statusChangedAt} AS DATETIME(6)),
       CAST(${row.activatedAt} AS DATETIME(6)),
       CAST(${row.archivedAt} AS DATETIME(6))
     )
@@ -278,7 +286,7 @@ async function insertSku(context: IntegrationContext, row: SkuWrite): Promise<vo
   await context.client.$executeRaw`
     INSERT INTO catalog_skus (
       id, product_id, code, name, status, version,
-      created_at, updated_at, activated_at, retired_at
+      created_at, updated_at, status_changed_at, activated_at, retired_at
     ) VALUES (
       ${context.codec.toBytes(row.id)},
       ${context.codec.toBytes(row.productId)},
@@ -288,6 +296,7 @@ async function insertSku(context: IntegrationContext, row: SkuWrite): Promise<vo
       ${row.version},
       CAST(${row.createdAt} AS DATETIME(6)),
       CAST(${row.updatedAt} AS DATETIME(6)),
+      CAST(${row.statusChangedAt} AS DATETIME(6)),
       CAST(${row.activatedAt} AS DATETIME(6)),
       CAST(${row.retiredAt} AS DATETIME(6))
     )
@@ -319,6 +328,7 @@ function draftProduct(id: string, name = 'Integration draft product'): ProductWr
     id,
     name,
     status: 'DRAFT',
+    statusChangedAt: PRODUCT_CREATED_AT,
     updatedAt: PRODUCT_CREATED_AT,
     version: 1,
   };
@@ -339,6 +349,7 @@ function draftSku(
     productId,
     retiredAt: null,
     status: 'DRAFT',
+    statusChangedAt: PRODUCT_CREATED_AT,
     updatedAt: PRODUCT_CREATED_AT,
     version: 1,
   };
@@ -383,6 +394,7 @@ async function assertSchemaContract(context: IntegrationContext): Promise<void> 
       'catalog_products|version|int unsigned|NO|1|NULL|NULL',
       'catalog_products|created_at|datetime(6)|NO|NULL|NULL|6',
       'catalog_products|updated_at|datetime(6)|NO|NULL|NULL|6',
+      'catalog_products|status_changed_at|datetime(6)|NO|NULL|NULL|6',
       'catalog_products|activated_at|datetime(6)|YES|NULL|NULL|6',
       'catalog_products|archived_at|datetime(6)|YES|NULL|NULL|6',
       'catalog_skus|id|binary(16)|NO|NULL|NULL|NULL',
@@ -393,6 +405,7 @@ async function assertSchemaContract(context: IntegrationContext): Promise<void> 
       'catalog_skus|version|int unsigned|NO|1|NULL|NULL',
       'catalog_skus|created_at|datetime(6)|NO|NULL|NULL|6',
       'catalog_skus|updated_at|datetime(6)|NO|NULL|NULL|6',
+      'catalog_skus|status_changed_at|datetime(6)|NO|NULL|NULL|6',
       'catalog_skus|activated_at|datetime(6)|YES|NULL|NULL|6',
       'catalog_skus|retired_at|datetime(6)|YES|NULL|NULL|6',
     ],
@@ -482,8 +495,9 @@ async function assertSchemaBehavior(context: IntegrationContext): Promise<void> 
     id: PRODUCT_IDS.constraint,
     name: 'Integration constraint product',
     status: 'ACTIVE',
+    statusChangedAt: PRODUCT_ACTIVATED_AT,
     updatedAt: PRODUCT_UPDATED_AT,
-    version: 1,
+    version: 3,
   });
   await insertSku(context, {
     activatedAt: PRODUCT_ACTIVATED_AT,
@@ -494,9 +508,82 @@ async function assertSchemaBehavior(context: IntegrationContext): Promise<void> 
     productId: PRODUCT_IDS.constraint,
     retiredAt: null,
     status: 'ACTIVE',
+    statusChangedAt: PRODUCT_ACTIVATED_AT,
     updatedAt: PRODUCT_UPDATED_AT,
-    version: 1,
+    version: 3,
   });
+
+  await insertProduct(context, {
+    activatedAt: PRODUCT_ACTIVATED_AT,
+    archivedAt: null,
+    createdAt: PRODUCT_CREATED_AT,
+    id: PRODUCT_IDS.suspended,
+    name: 'Integration suspended product',
+    status: 'SUSPENDED',
+    statusChangedAt: LIFECYCLE_CHANGED_AT,
+    updatedAt: LIFECYCLE_CHANGED_AT,
+    version: 3,
+  });
+  await insertProduct(context, {
+    activatedAt: null,
+    archivedAt: LIFECYCLE_CHANGED_AT,
+    createdAt: PRODUCT_CREATED_AT,
+    id: PRODUCT_IDS.directArchived,
+    name: 'Integration directly archived product',
+    status: 'ARCHIVED',
+    statusChangedAt: LIFECYCLE_CHANGED_AT,
+    updatedAt: LIFECYCLE_CHANGED_AT,
+    version: 2,
+  });
+  await insertSku(context, {
+    activatedAt: PRODUCT_ACTIVATED_AT,
+    code: 'ITCAT-SUSPENDED-01',
+    createdAt: PRODUCT_CREATED_AT,
+    id: SKU_IDS.suspended,
+    name: 'Integration suspended SKU',
+    productId: PRODUCT_IDS.constraint,
+    retiredAt: null,
+    status: 'SUSPENDED',
+    statusChangedAt: LIFECYCLE_CHANGED_AT,
+    updatedAt: LIFECYCLE_CHANGED_AT,
+    version: 3,
+  });
+
+  const lifecycleRows = await context.client.$queryRaw<DescriptorRow[]>`
+    SELECT CONCAT(
+      'product-direct-archive|', status, '|', version, '|',
+      IFNULL(DATE_FORMAT(activated_at, '%Y-%m-%dT%H:%i:%s.%f'), 'NULL'), '|',
+      DATE_FORMAT(status_changed_at, '%Y-%m-%dT%H:%i:%s.%f'), '|',
+      DATE_FORMAT(archived_at, '%Y-%m-%dT%H:%i:%s.%f')
+    ) AS descriptor
+    FROM catalog_products
+    WHERE id = ${context.codec.toBytes(PRODUCT_IDS.directArchived)}
+    UNION ALL
+    SELECT CONCAT(
+      'product-suspended|', status, '|', version, '|',
+      DATE_FORMAT(activated_at, '%Y-%m-%dT%H:%i:%s.%f'), '|',
+      DATE_FORMAT(status_changed_at, '%Y-%m-%dT%H:%i:%s.%f'), '|NULL'
+    ) AS descriptor
+    FROM catalog_products
+    WHERE id = ${context.codec.toBytes(PRODUCT_IDS.suspended)}
+    UNION ALL
+    SELECT CONCAT(
+      'sku-suspended|', status, '|', version, '|',
+      DATE_FORMAT(activated_at, '%Y-%m-%dT%H:%i:%s.%f'), '|',
+      DATE_FORMAT(status_changed_at, '%Y-%m-%dT%H:%i:%s.%f'), '|NULL'
+    ) AS descriptor
+    FROM catalog_skus
+    WHERE id = ${context.codec.toBytes(SKU_IDS.suspended)}
+    ORDER BY descriptor
+  `;
+  assert.deepEqual(
+    lifecycleRows.map(({ descriptor }) => descriptor),
+    [
+      'product-direct-archive|ARCHIVED|2|NULL|9999-01-01T00:00:00.000001|9999-01-01T00:00:00.000001',
+      'product-suspended|SUSPENDED|3|9998-12-31T00:00:00.000001|9999-01-01T00:00:00.000001|NULL',
+      'sku-suspended|SUSPENDED|3|9998-12-31T00:00:00.000001|9999-01-01T00:00:00.000001|NULL',
+    ],
+  );
 
   const invalidNames = [
     ['', 'empty'],
@@ -565,6 +652,11 @@ async function assertSchemaBehavior(context: IntegrationContext): Promise<void> 
     'Product status must use the closed lifecycle set',
   );
   await expectRawWriteRejected(
+    () => insertProduct(context, { ...draftProduct(PRODUCT_IDS.invalid), status: 'DRAFT ' }),
+    'ck_catalog_products_status',
+    'Product status must reject collation-equivalent padding',
+  );
+  await expectRawWriteRejected(
     () =>
       insertSku(context, {
         ...draftSku(SKU_IDS.invalid, PRODUCT_IDS.constraint, 'ITCAT-INVALID-STATUS'),
@@ -572,6 +664,15 @@ async function assertSchemaBehavior(context: IntegrationContext): Promise<void> 
       }),
     'ck_catalog_skus_',
     'SKU status must use the closed lifecycle set',
+  );
+  await expectRawWriteRejected(
+    () =>
+      insertSku(context, {
+        ...draftSku(SKU_IDS.invalid, PRODUCT_IDS.constraint, 'ITCAT-PADDED-STATUS'),
+        status: 'DRAFT ',
+      }),
+    'ck_catalog_skus_status',
+    'SKU status must reject collation-equivalent padding',
   );
   await expectRawWriteRejected(
     () => insertProduct(context, { ...draftProduct(PRODUCT_IDS.invalid), version: 0 }),
@@ -586,6 +687,211 @@ async function assertSchemaBehavior(context: IntegrationContext): Promise<void> 
       }),
     'ck_catalog_skus_version',
     'SKU version must start at one',
+  );
+
+  await expectRawWriteRejected(
+    () =>
+      insertProduct(context, {
+        ...draftProduct(PRODUCT_IDS.invalid),
+        updatedAt: LIFECYCLE_CHANGED_AT,
+      }),
+    'ck_catalog_products_lifecycle',
+    'An initial Draft Product cannot claim a later update',
+  );
+  await expectRawWriteRejected(
+    () =>
+      insertSku(context, {
+        ...draftSku(SKU_IDS.invalid, PRODUCT_IDS.constraint, 'ITCAT-DRAFT-LATER-UPDATE'),
+        updatedAt: LIFECYCLE_CHANGED_AT,
+      }),
+    'ck_catalog_skus_lifecycle',
+    'An initial Draft SKU cannot claim a later update',
+  );
+  await expectRawWriteRejected(
+    () =>
+      insertProduct(context, {
+        activatedAt: PRODUCT_ACTIVATED_AT,
+        archivedAt: null,
+        createdAt: PRODUCT_CREATED_AT,
+        id: PRODUCT_IDS.invalid,
+        name: 'Unreachable first Active Product',
+        status: 'ACTIVE',
+        statusChangedAt: PRODUCT_ACTIVATED_AT,
+        updatedAt: PRODUCT_ACTIVATED_AT,
+        version: 1,
+      }),
+    'ck_catalog_products_lifecycle',
+    'A first Active Product requires version two',
+  );
+  await expectRawWriteRejected(
+    () =>
+      insertSku(context, {
+        activatedAt: PRODUCT_ACTIVATED_AT,
+        code: 'ITCAT-ACTIVE-VERSION-ONE',
+        createdAt: PRODUCT_CREATED_AT,
+        id: SKU_IDS.invalid,
+        name: 'Unreachable first Active SKU',
+        productId: PRODUCT_IDS.constraint,
+        retiredAt: null,
+        status: 'ACTIVE',
+        statusChangedAt: PRODUCT_ACTIVATED_AT,
+        updatedAt: PRODUCT_ACTIVATED_AT,
+        version: 1,
+      }),
+    'ck_catalog_skus_lifecycle',
+    'A first Active SKU requires version two',
+  );
+  await expectRawWriteRejected(
+    () =>
+      insertProduct(context, {
+        activatedAt: PRODUCT_ACTIVATED_AT,
+        archivedAt: null,
+        createdAt: PRODUCT_CREATED_AT,
+        id: PRODUCT_IDS.invalid,
+        name: 'Unreachable resumed Product',
+        status: 'ACTIVE',
+        statusChangedAt: LIFECYCLE_CHANGED_AT,
+        updatedAt: LIFECYCLE_CHANGED_AT,
+        version: 3,
+      }),
+    'ck_catalog_products_lifecycle',
+    'A resumed Active Product requires version four',
+  );
+  await expectRawWriteRejected(
+    () =>
+      insertSku(context, {
+        activatedAt: PRODUCT_ACTIVATED_AT,
+        code: 'ITCAT-RESUMED-VERSION-THREE',
+        createdAt: PRODUCT_CREATED_AT,
+        id: SKU_IDS.invalid,
+        name: 'Unreachable resumed SKU',
+        productId: PRODUCT_IDS.constraint,
+        retiredAt: null,
+        status: 'ACTIVE',
+        statusChangedAt: LIFECYCLE_CHANGED_AT,
+        updatedAt: LIFECYCLE_CHANGED_AT,
+        version: 3,
+      }),
+    'ck_catalog_skus_lifecycle',
+    'A resumed Active SKU requires version four',
+  );
+  await expectRawWriteRejected(
+    () =>
+      insertProduct(context, {
+        activatedAt: PRODUCT_ACTIVATED_AT,
+        archivedAt: null,
+        createdAt: PRODUCT_CREATED_AT,
+        id: PRODUCT_IDS.invalid,
+        name: 'Unreachable Suspended Product',
+        status: 'SUSPENDED',
+        statusChangedAt: LIFECYCLE_CHANGED_AT,
+        updatedAt: LIFECYCLE_CHANGED_AT,
+        version: 2,
+      }),
+    'ck_catalog_products_lifecycle',
+    'A Suspended Product requires version three',
+  );
+  await expectRawWriteRejected(
+    () =>
+      insertSku(context, {
+        activatedAt: PRODUCT_ACTIVATED_AT,
+        code: 'ITCAT-SUSPENDED-VERSION-TWO',
+        createdAt: PRODUCT_CREATED_AT,
+        id: SKU_IDS.invalid,
+        name: 'Unreachable Suspended SKU',
+        productId: PRODUCT_IDS.constraint,
+        retiredAt: null,
+        status: 'SUSPENDED',
+        statusChangedAt: LIFECYCLE_CHANGED_AT,
+        updatedAt: LIFECYCLE_CHANGED_AT,
+        version: 2,
+      }),
+    'ck_catalog_skus_lifecycle',
+    'A Suspended SKU requires version three',
+  );
+  await expectRawWriteRejected(
+    () =>
+      insertProduct(context, {
+        activatedAt: null,
+        archivedAt: LIFECYCLE_CHANGED_AT,
+        createdAt: PRODUCT_CREATED_AT,
+        id: PRODUCT_IDS.invalid,
+        name: 'Unreachable direct archive',
+        status: 'ARCHIVED',
+        statusChangedAt: LIFECYCLE_CHANGED_AT,
+        updatedAt: LIFECYCLE_CHANGED_AT,
+        version: 1,
+      }),
+    'ck_catalog_products_lifecycle',
+    'A direct Product archive requires version two',
+  );
+  await expectRawWriteRejected(
+    () =>
+      insertSku(context, {
+        activatedAt: null,
+        code: 'ITCAT-DIRECT-RETIRED-VERSION-ONE',
+        createdAt: PRODUCT_CREATED_AT,
+        id: SKU_IDS.invalid,
+        name: 'Unreachable direct retirement',
+        productId: PRODUCT_IDS.constraint,
+        retiredAt: LIFECYCLE_CHANGED_AT,
+        status: 'RETIRED',
+        statusChangedAt: LIFECYCLE_CHANGED_AT,
+        updatedAt: LIFECYCLE_CHANGED_AT,
+        version: 1,
+      }),
+    'ck_catalog_skus_lifecycle',
+    'A direct SKU retirement requires version two',
+  );
+  await expectRawWriteRejected(
+    () =>
+      insertProduct(context, {
+        activatedAt: PRODUCT_ACTIVATED_AT,
+        archivedAt: LIFECYCLE_CHANGED_AT,
+        createdAt: PRODUCT_CREATED_AT,
+        id: PRODUCT_IDS.invalid,
+        name: 'Unreachable activated archive',
+        status: 'ARCHIVED',
+        statusChangedAt: LIFECYCLE_CHANGED_AT,
+        updatedAt: LIFECYCLE_CHANGED_AT,
+        version: 2,
+      }),
+    'ck_catalog_products_lifecycle',
+    'An activated Product archive requires version three',
+  );
+  await expectRawWriteRejected(
+    () =>
+      insertSku(context, {
+        activatedAt: PRODUCT_ACTIVATED_AT,
+        code: 'ITCAT-RETIRED-VERSION-TWO',
+        createdAt: PRODUCT_CREATED_AT,
+        id: SKU_IDS.invalid,
+        name: 'Unreachable activated Retired SKU',
+        productId: PRODUCT_IDS.constraint,
+        retiredAt: LIFECYCLE_CHANGED_AT,
+        status: 'RETIRED',
+        statusChangedAt: LIFECYCLE_CHANGED_AT,
+        updatedAt: LIFECYCLE_CHANGED_AT,
+        version: 2,
+      }),
+    'ck_catalog_skus_lifecycle',
+    'An activated Retired SKU requires version three',
+  );
+  await expectRawWriteRejected(
+    () =>
+      insertProduct(context, {
+        activatedAt: PRODUCT_ACTIVATED_AT,
+        archivedAt: null,
+        createdAt: PRODUCT_CREATED_AT,
+        id: PRODUCT_IDS.invalid,
+        name: 'Invalid status change chronology',
+        status: 'ACTIVE',
+        statusChangedAt: LIFECYCLE_CHANGED_AT,
+        updatedAt: PRODUCT_ACTIVATED_AT,
+        version: 5,
+      }),
+    'ck_catalog_products_timestamp_order',
+    'Product status change time cannot follow its update time',
   );
 
   await expectRawWriteRejected(
@@ -620,6 +926,7 @@ async function assertSchemaBehavior(context: IntegrationContext): Promise<void> 
       insertProduct(context, {
         ...draftProduct(PRODUCT_IDS.invalid),
         updatedAt: '9997-12-31 00:00:00.000000',
+        version: 2,
       }),
     'ck_catalog_products_timestamp_order',
     'Product timestamps must be monotonic',
@@ -630,6 +937,9 @@ async function assertSchemaBehavior(context: IntegrationContext): Promise<void> 
         ...draftSku(SKU_IDS.invalid, PRODUCT_IDS.constraint, 'ITCAT-INVALID-TIME'),
         retiredAt: '9997-12-31 00:00:00.000000',
         status: 'RETIRED',
+        statusChangedAt: '9997-12-31 00:00:00.000000',
+        updatedAt: '9997-12-31 00:00:00.000000',
+        version: 2,
       }),
     'ck_catalog_skus_timestamp_order',
     'SKU timestamps must be monotonic',
@@ -671,18 +981,28 @@ async function assertSchemaBehavior(context: IntegrationContext): Promise<void> 
     SET
       status = 'RETIRED',
       retired_at = CAST('9999-01-01 00:00:00.000001' AS DATETIME(6)),
+      status_changed_at = CAST('9999-01-01 00:00:00.000001' AS DATETIME(6)),
       updated_at = CAST('9999-01-01 00:00:00.000001' AS DATETIME(6)),
       version = version + 1
     WHERE id = ${context.codec.toBytes(SKU_IDS.directRetired)}
   `;
   const directlyRetired = await context.client.catalogSkuRecord.findUnique({
-    select: { activatedAt: true, retiredAt: true, status: true, version: true },
+    select: {
+      activatedAt: true,
+      retiredAt: true,
+      status: true,
+      statusChangedAt: true,
+      updatedAt: true,
+      version: true,
+    },
     where: { id: context.codec.toBytes(SKU_IDS.directRetired) },
   });
   assert.ok(directlyRetired);
   assert.equal(directlyRetired.status, 'RETIRED');
   assert.equal(directlyRetired.activatedAt, null);
   assert.ok(directlyRetired.retiredAt);
+  assert.deepEqual(directlyRetired.statusChangedAt, directlyRetired.retiredAt);
+  assert.deepEqual(directlyRetired.updatedAt, directlyRetired.retiredAt);
   assert.equal(directlyRetired.version, 2);
 
   assert.equal(
@@ -716,8 +1036,9 @@ async function insertPublicReadFixtures(context: IntegrationContext): Promise<vo
     id: PRODUCT_IDS.active,
     name: 'Integration active product',
     status: 'ACTIVE',
+    statusChangedAt: PRODUCT_ACTIVATED_AT,
     updatedAt: PRODUCT_UPDATED_AT,
-    version: 1,
+    version: 3,
   });
   await insertProduct(context, draftProduct(PRODUCT_IDS.draft, 'Integration draft product'));
   await insertProduct(context, {
@@ -727,8 +1048,9 @@ async function insertPublicReadFixtures(context: IntegrationContext): Promise<vo
     id: PRODUCT_IDS.archived,
     name: 'Integration archived product',
     status: 'ARCHIVED',
-    updatedAt: PRODUCT_UPDATED_AT,
-    version: 2,
+    statusChangedAt: '9999-01-01 00:00:00.000000',
+    updatedAt: '9999-01-01 00:00:00.000000',
+    version: 3,
   });
 
   for (const [index, row] of PAGE_ROWS.entries()) {
@@ -741,14 +1063,16 @@ async function insertPublicReadFixtures(context: IntegrationContext): Promise<vo
       productId: PRODUCT_IDS.active,
       retiredAt: null,
       status: 'ACTIVE',
+      statusChangedAt: row.createdAt,
       updatedAt: PRODUCT_UPDATED_AT,
-      version: 1,
+      version: 3,
     });
   }
 
   await insertSku(context, {
     ...draftSku(SKU_IDS.draft, PRODUCT_IDS.active, 'ITCAT-HIDDEN-DRAFT'),
     createdAt: HIDDEN_SKU_CREATED_AT,
+    statusChangedAt: HIDDEN_SKU_CREATED_AT,
     updatedAt: HIDDEN_SKU_CREATED_AT,
   });
   await insertSku(context, {
@@ -756,7 +1080,9 @@ async function insertPublicReadFixtures(context: IntegrationContext): Promise<vo
     createdAt: HIDDEN_SKU_CREATED_AT,
     retiredAt: HIDDEN_SKU_RETIRED_AT,
     status: 'RETIRED',
+    statusChangedAt: HIDDEN_SKU_RETIRED_AT,
     updatedAt: HIDDEN_SKU_RETIRED_AT,
+    version: 2,
   });
   await insertSku(context, {
     activatedAt: HIDDEN_SKU_CREATED_AT,
@@ -767,8 +1093,9 @@ async function insertPublicReadFixtures(context: IntegrationContext): Promise<vo
     productId: PRODUCT_IDS.draft,
     retiredAt: null,
     status: 'ACTIVE',
+    statusChangedAt: HIDDEN_SKU_CREATED_AT,
     updatedAt: PRODUCT_UPDATED_AT,
-    version: 1,
+    version: 3,
   });
   await insertSku(context, {
     activatedAt: HIDDEN_SKU_CREATED_AT,
@@ -779,8 +1106,9 @@ async function insertPublicReadFixtures(context: IntegrationContext): Promise<vo
     productId: PRODUCT_IDS.archived,
     retiredAt: null,
     status: 'ACTIVE',
+    statusChangedAt: HIDDEN_SKU_CREATED_AT,
     updatedAt: PRODUCT_UPDATED_AT,
-    version: 1,
+    version: 3,
   });
 }
 
