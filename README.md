@@ -26,10 +26,13 @@ query use cases. Its anonymous list and detail endpoints publish an exact
 active-only representation, opaque cursor pagination, fixed Problem Details,
 and `no-store` responses. A real vertical integration suite exercises the
 production NestJS composition through Prisma and isolated MySQL. Catalog still
-has no write path, but its internal Product aggregate now enforces the accepted
-reversible lifecycle, Unicode names, lossless timestamps, optimistic versions,
-immutable transitions, and domain events. It remains deliberately unwired
-until the required migration and administrative security foundations exist.
+has no write path, but its internal Product and SKU aggregates now enforce the
+accepted reversible lifecycles, Unicode names, lossless timestamps, optimistic
+versions, immutable transitions, and domain events. SKU ownership and code are
+immutable, while cross-aggregate Product policy remains reserved for the later
+transactional application service. Both aggregates remain deliberately
+unwired until the required migration and administrative security foundations
+exist.
 Pricing, inventory, Redis caching, and integration events remain separate
 later slices.
 

@@ -317,8 +317,10 @@ describe('CatalogProduct creation and rehydration', (): void => {
     ['Draft with activation', draftSnapshot({ activatedAt: T0 })],
     ['Draft with archive', draftSnapshot({ archivedAt: T0 })],
     ['Draft with changed lifecycle time', draftSnapshot({ statusChangedAt: T1, updatedAt: T1 })],
+    ['initial Draft with a later update', draftSnapshot({ updatedAt: T1 })],
     ['Active without activation', activeSnapshot({ activatedAt: null })],
     ['Active at unreachable version 1', activeSnapshot({ version: 1 })],
+    ['first Active with a later update', activeSnapshot({ updatedAt: T2 })],
     [
       'resumed Active lifecycle time at unreachable version 3',
       activeSnapshot({ version: 3, updatedAt: T2, statusChangedAt: T2 }),
@@ -330,6 +332,7 @@ describe('CatalogProduct creation and rehydration', (): void => {
     ],
     ['Suspended without activation', suspendedSnapshot({ activatedAt: null })],
     ['Suspended at unreachable version 2', suspendedSnapshot({ version: 2 })],
+    ['first Suspended with a later update', suspendedSnapshot({ updatedAt: T3 })],
     ['Suspended with archive', suspendedSnapshot({ archivedAt: T2 })],
     ['Archived without archive time', archivedSnapshot({ archivedAt: null })],
     ['Archived with mismatched status time', archivedSnapshot({ statusChangedAt: T1 })],
@@ -399,6 +402,9 @@ describe('CatalogProduct rename', (): void => {
         version: before.version + 1,
         occurredAt: T4,
       });
+      expect(CatalogProduct.rehydrate(result.product.toSnapshot()).toSnapshot()).toEqual(
+        result.product.toSnapshot(),
+      );
       expect(product.toSnapshot()).toBe(before);
       expect(Object.isFrozen(result.event)).toBe(true);
     },
@@ -482,6 +488,7 @@ describe('CatalogProduct lifecycle', (): void => {
         archivedAt: action === 'archive' ? T4 : before.archivedAt,
       });
       expect(result.event).toEqual(expectedLifecycleEvent(action, before, after));
+      expect(CatalogProduct.rehydrate(after).toSnapshot()).toEqual(after);
       expect(Object.isFrozen(result)).toBe(true);
       expect(Object.isFrozen(result.event)).toBe(true);
       expect(product.toSnapshot()).toBe(before);

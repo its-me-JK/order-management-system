@@ -1,26 +1,29 @@
 import { parseCatalogName, type CatalogName } from './catalog-name';
+import { parseCatalogProductId, type CatalogProductId } from './catalog-product.values';
 import {
-  CatalogProductLifecycleConflictError,
-  CatalogProductTimestampRegressionError,
-  CatalogProductVersionMismatchError,
-  InvalidCatalogProductStateError,
-} from './catalog-product.errors';
+  CatalogSkuLifecycleConflictError,
+  CatalogSkuTimestampRegressionError,
+  CatalogSkuVersionMismatchError,
+  InvalidCatalogSkuStateError,
+} from './catalog-sku.errors';
 import type {
-  CatalogProductActivatedEvent,
-  CatalogProductArchivedEvent,
-  CatalogProductCreatedEvent,
-  CatalogProductDomainEvent,
-  CatalogProductMutationEvent,
-  CatalogProductRenamedEvent,
-  CatalogProductResumedEvent,
-  CatalogProductSuspendedEvent,
-} from './catalog-product.events';
+  CatalogSkuActivatedEvent,
+  CatalogSkuCreatedEvent,
+  CatalogSkuDomainEvent,
+  CatalogSkuMutationEvent,
+  CatalogSkuRenamedEvent,
+  CatalogSkuResumedEvent,
+  CatalogSkuRetiredEvent,
+  CatalogSkuSuspendedEvent,
+} from './catalog-sku.events';
 import {
-  parseCatalogProductId,
-  parseCatalogProductStatus,
-  type CatalogProductId,
-  type CatalogProductStatus,
-} from './catalog-product.values';
+  parseCatalogSkuCode,
+  parseCatalogSkuId,
+  parseCatalogSkuStatus,
+  type CatalogSkuCode,
+  type CatalogSkuId,
+  type CatalogSkuStatus,
+} from './catalog-sku.values';
 import {
   compareCatalogInstants,
   nextCatalogAggregateVersion,
@@ -31,8 +34,10 @@ import {
   type CatalogInstant,
 } from './catalog-values';
 
-const CATALOG_PRODUCT_SNAPSHOT_KEYS = Object.freeze([
+const CATALOG_SKU_SNAPSHOT_KEYS = Object.freeze([
   'id',
+  'productId',
+  'code',
   'name',
   'status',
   'version',
@@ -40,59 +45,62 @@ const CATALOG_PRODUCT_SNAPSHOT_KEYS = Object.freeze([
   'updatedAt',
   'statusChangedAt',
   'activatedAt',
-  'archivedAt',
+  'retiredAt',
 ] as const);
 
-export type CatalogProductSnapshot = Readonly<{
-  id: CatalogProductId;
+export type CatalogSkuSnapshot = Readonly<{
+  id: CatalogSkuId;
+  productId: CatalogProductId;
+  code: CatalogSkuCode;
   name: CatalogName;
-  status: CatalogProductStatus;
+  status: CatalogSkuStatus;
   version: CatalogAggregateVersion;
   createdAt: CatalogInstant;
   updatedAt: CatalogInstant;
   statusChangedAt: CatalogInstant;
   activatedAt: CatalogInstant | null;
-  archivedAt: CatalogInstant | null;
+  retiredAt: CatalogInstant | null;
 }>;
 
-export type CreateCatalogProductInput = Readonly<{
+export type CreateCatalogSkuInput = Readonly<{
   id: unknown;
+  productId: unknown;
+  code: unknown;
   name: unknown;
   occurredAt: unknown;
 }>;
 
-export type RenameCatalogProductInput = Readonly<{
+export type RenameCatalogSkuInput = Readonly<{
   name: unknown;
   expectedVersion: unknown;
   occurredAt: unknown;
 }>;
 
-export type TransitionCatalogProductInput = Readonly<{
+export type TransitionCatalogSkuInput = Readonly<{
   expectedVersion: unknown;
   occurredAt: unknown;
 }>;
 
-export type ReasonedCatalogProductTransitionInput = TransitionCatalogProductInput &
+export type ReasonedCatalogSkuTransitionInput = TransitionCatalogSkuInput &
   Readonly<{
     reasonCode: unknown;
   }>;
 
-export type CatalogProductChangedResult<
-  Event extends CatalogProductDomainEvent = CatalogProductDomainEvent,
-> = Readonly<{
-  kind: 'changed';
-  product: CatalogProduct;
-  event: Event;
-}>;
+export type CatalogSkuChangedResult<Event extends CatalogSkuDomainEvent = CatalogSkuDomainEvent> =
+  Readonly<{
+    kind: 'changed';
+    sku: CatalogSku;
+    event: Event;
+  }>;
 
-export type CatalogProductUnchangedResult = Readonly<{
+export type CatalogSkuUnchangedResult = Readonly<{
   kind: 'unchanged';
-  product: CatalogProduct;
+  sku: CatalogSku;
 }>;
 
-export type CatalogProductMutationResult<
-  Event extends CatalogProductMutationEvent = CatalogProductMutationEvent,
-> = CatalogProductChangedResult<Event> | CatalogProductUnchangedResult;
+export type CatalogSkuMutationResult<
+  Event extends CatalogSkuMutationEvent = CatalogSkuMutationEvent,
+> = CatalogSkuChangedResult<Event> | CatalogSkuUnchangedResult;
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -102,8 +110,8 @@ function hasExactSnapshotKeys(value: Readonly<Record<string, unknown>>): boolean
   const keys = Object.keys(value);
 
   return (
-    keys.length === CATALOG_PRODUCT_SNAPSHOT_KEYS.length &&
-    keys.every((key) => CATALOG_PRODUCT_SNAPSHOT_KEYS.some((expected) => expected === key))
+    keys.length === CATALOG_SKU_SNAPSHOT_KEYS.length &&
+    keys.every((key) => CATALOG_SKU_SNAPSHOT_KEYS.some((expected) => expected === key))
   );
 }
 
@@ -111,35 +119,35 @@ function parseNullableCatalogInstant(value: unknown): CatalogInstant | null {
   return value === null ? null : parseCatalogInstant(value);
 }
 
-function freezeSnapshot(snapshot: CatalogProductSnapshot): CatalogProductSnapshot {
+function freezeSnapshot(snapshot: CatalogSkuSnapshot): CatalogSkuSnapshot {
   return Object.freeze({ ...snapshot });
 }
 
 function invalidSnapshot(): never {
-  throw new InvalidCatalogProductStateError();
+  throw new InvalidCatalogSkuStateError();
 }
 
-function assertSnapshotChronology(snapshot: CatalogProductSnapshot): void {
+function assertSnapshotChronology(snapshot: CatalogSkuSnapshot): void {
   if (
     compareCatalogInstants(snapshot.createdAt, snapshot.statusChangedAt) > 0 ||
     compareCatalogInstants(snapshot.statusChangedAt, snapshot.updatedAt) > 0 ||
     (snapshot.activatedAt !== null &&
       (compareCatalogInstants(snapshot.createdAt, snapshot.activatedAt) > 0 ||
         compareCatalogInstants(snapshot.activatedAt, snapshot.updatedAt) > 0)) ||
-    (snapshot.archivedAt !== null &&
-      (compareCatalogInstants(snapshot.createdAt, snapshot.archivedAt) > 0 ||
-        compareCatalogInstants(snapshot.archivedAt, snapshot.updatedAt) > 0))
+    (snapshot.retiredAt !== null &&
+      (compareCatalogInstants(snapshot.createdAt, snapshot.retiredAt) > 0 ||
+        compareCatalogInstants(snapshot.retiredAt, snapshot.updatedAt) > 0))
   ) {
     invalidSnapshot();
   }
 }
 
-function assertSnapshotLifecycle(snapshot: CatalogProductSnapshot): void {
+function assertSnapshotLifecycle(snapshot: CatalogSkuSnapshot): void {
   switch (snapshot.status) {
     case 'DRAFT':
       if (
         snapshot.activatedAt !== null ||
-        snapshot.archivedAt !== null ||
+        snapshot.retiredAt !== null ||
         snapshot.statusChangedAt !== snapshot.createdAt ||
         (snapshot.version === 1 && snapshot.updatedAt !== snapshot.createdAt)
       ) {
@@ -150,7 +158,7 @@ function assertSnapshotLifecycle(snapshot: CatalogProductSnapshot): void {
       const minimumVersion = snapshot.activatedAt === snapshot.statusChangedAt ? 2 : 4;
       if (
         snapshot.activatedAt === null ||
-        snapshot.archivedAt !== null ||
+        snapshot.retiredAt !== null ||
         compareCatalogInstants(snapshot.activatedAt, snapshot.statusChangedAt) > 0 ||
         snapshot.version < minimumVersion ||
         (snapshot.version === minimumVersion && snapshot.updatedAt !== snapshot.statusChangedAt)
@@ -162,7 +170,7 @@ function assertSnapshotLifecycle(snapshot: CatalogProductSnapshot): void {
     case 'SUSPENDED':
       if (
         snapshot.activatedAt === null ||
-        snapshot.archivedAt !== null ||
+        snapshot.retiredAt !== null ||
         compareCatalogInstants(snapshot.activatedAt, snapshot.statusChangedAt) > 0 ||
         snapshot.version < 3 ||
         (snapshot.version === 3 && snapshot.updatedAt !== snapshot.statusChangedAt)
@@ -170,19 +178,19 @@ function assertSnapshotLifecycle(snapshot: CatalogProductSnapshot): void {
         invalidSnapshot();
       }
       return;
-    case 'ARCHIVED': {
+    case 'RETIRED': {
       if (
-        snapshot.archivedAt === null ||
-        snapshot.archivedAt !== snapshot.statusChangedAt ||
-        snapshot.archivedAt !== snapshot.updatedAt
+        snapshot.retiredAt === null ||
+        snapshot.retiredAt !== snapshot.statusChangedAt ||
+        snapshot.retiredAt !== snapshot.updatedAt
       ) {
         invalidSnapshot();
       }
 
-      const earliestArchive = snapshot.activatedAt ?? snapshot.createdAt;
+      const earliestRetirement = snapshot.activatedAt ?? snapshot.createdAt;
       const minimumVersion = snapshot.activatedAt === null ? 2 : 3;
       if (
-        compareCatalogInstants(earliestArchive, snapshot.archivedAt) > 0 ||
+        compareCatalogInstants(earliestRetirement, snapshot.retiredAt) > 0 ||
         snapshot.version < minimumVersion
       ) {
         invalidSnapshot();
@@ -191,21 +199,23 @@ function assertSnapshotLifecycle(snapshot: CatalogProductSnapshot): void {
   }
 }
 
-function parseSnapshot(value: unknown): CatalogProductSnapshot {
+function parseSnapshot(value: unknown): CatalogSkuSnapshot {
   if (!isRecord(value) || !hasExactSnapshotKeys(value)) {
     invalidSnapshot();
   }
 
   const snapshot = freezeSnapshot({
-    id: parseCatalogProductId(value['id']),
+    id: parseCatalogSkuId(value['id']),
+    productId: parseCatalogProductId(value['productId']),
+    code: parseCatalogSkuCode(value['code']),
     name: parseCatalogName(value['name']),
-    status: parseCatalogProductStatus(value['status']),
+    status: parseCatalogSkuStatus(value['status']),
     version: parseCatalogAggregateVersion(value['version']),
     createdAt: parseCatalogInstant(value['createdAt']),
     updatedAt: parseCatalogInstant(value['updatedAt']),
     statusChangedAt: parseCatalogInstant(value['statusChangedAt']),
     activatedAt: parseNullableCatalogInstant(value['activatedAt']),
-    archivedAt: parseNullableCatalogInstant(value['archivedAt']),
+    retiredAt: parseNullableCatalogInstant(value['retiredAt']),
   });
 
   assertSnapshotChronology(snapshot);
@@ -214,32 +224,35 @@ function parseSnapshot(value: unknown): CatalogProductSnapshot {
   return snapshot;
 }
 
-function changed<Event extends CatalogProductDomainEvent>(
-  product: CatalogProduct,
+function changed<Event extends CatalogSkuDomainEvent>(
+  sku: CatalogSku,
   event: Event,
-): CatalogProductChangedResult<Event> {
-  return Object.freeze({ kind: 'changed', product, event: Object.freeze(event) });
+): CatalogSkuChangedResult<Event> {
+  return Object.freeze({ kind: 'changed', sku, event: Object.freeze(event) });
 }
 
-function unchanged(product: CatalogProduct): CatalogProductUnchangedResult {
-  return Object.freeze({ kind: 'unchanged', product });
+function unchanged(sku: CatalogSku): CatalogSkuUnchangedResult {
+  return Object.freeze({ kind: 'unchanged', sku });
 }
 
-/** Framework-free Product aggregate. Every mutation returns a new immutable value. */
-export class CatalogProduct {
-  readonly #snapshot: CatalogProductSnapshot;
+/** Framework-free SKU aggregate. Cross-root Product policy belongs to the application Unit of Work. */
+export class CatalogSku {
+  readonly #snapshot: CatalogSkuSnapshot;
 
-  private constructor(snapshot: CatalogProductSnapshot) {
+  private constructor(snapshot: CatalogSkuSnapshot) {
     this.#snapshot = snapshot;
     Object.freeze(this);
   }
 
+  /** Must be called only after the application layer verifies that the owning Product is nonterminal. */
   public static create(
-    input: CreateCatalogProductInput,
-  ): CatalogProductChangedResult<CatalogProductCreatedEvent> {
+    input: CreateCatalogSkuInput,
+  ): CatalogSkuChangedResult<CatalogSkuCreatedEvent> {
     const occurredAt = parseCatalogInstant(input.occurredAt);
     const snapshot = freezeSnapshot({
-      id: parseCatalogProductId(input.id),
+      id: parseCatalogSkuId(input.id),
+      productId: parseCatalogProductId(input.productId),
+      code: parseCatalogSkuCode(input.code),
       name: parseCatalogName(input.name),
       status: 'DRAFT',
       version: parseCatalogAggregateVersion(1),
@@ -247,13 +260,15 @@ export class CatalogProduct {
       updatedAt: occurredAt,
       statusChangedAt: occurredAt,
       activatedAt: null,
-      archivedAt: null,
+      retiredAt: null,
     });
-    const product = new CatalogProduct(snapshot);
+    const sku = new CatalogSku(snapshot);
 
-    return changed(product, {
-      type: 'PRODUCT_CREATED',
-      productId: snapshot.id,
+    return changed(sku, {
+      type: 'SKU_CREATED',
+      skuId: snapshot.id,
+      productId: snapshot.productId,
+      code: snapshot.code,
       name: snapshot.name,
       status: 'DRAFT',
       version: snapshot.version,
@@ -262,23 +277,21 @@ export class CatalogProduct {
   }
 
   /** Rebuilds authoritative state without replaying historical domain events. */
-  public static rehydrate(value: unknown): CatalogProduct {
+  public static rehydrate(value: unknown): CatalogSku {
     try {
-      return new CatalogProduct(parseSnapshot(value));
+      return new CatalogSku(parseSnapshot(value));
     } catch {
-      throw new InvalidCatalogProductStateError();
+      throw new InvalidCatalogSkuStateError();
     }
   }
 
-  public toSnapshot(): CatalogProductSnapshot {
+  public toSnapshot(): CatalogSkuSnapshot {
     return this.#snapshot;
   }
 
-  public rename(
-    input: RenameCatalogProductInput,
-  ): CatalogProductMutationResult<CatalogProductRenamedEvent> {
+  public rename(input: RenameCatalogSkuInput): CatalogSkuMutationResult<CatalogSkuRenamedEvent> {
     this.assertExpectedVersion(input.expectedVersion);
-    const status = this.nonArchivedStatus();
+    const status = this.nonRetiredStatus();
     const name = parseCatalogName(input.name);
 
     if (name === this.#snapshot.name) {
@@ -292,11 +305,13 @@ export class CatalogProduct {
       version: nextCatalogAggregateVersion(this.#snapshot.version),
       updatedAt: occurredAt,
     });
-    const product = new CatalogProduct(snapshot);
+    const sku = new CatalogSku(snapshot);
 
-    return changed(product, {
-      type: 'PRODUCT_RENAMED',
-      productId: snapshot.id,
+    return changed(sku, {
+      type: 'SKU_RENAMED',
+      skuId: snapshot.id,
+      productId: snapshot.productId,
+      code: snapshot.code,
       previousName: this.#snapshot.name,
       name: snapshot.name,
       status,
@@ -305,9 +320,10 @@ export class CatalogProduct {
     });
   }
 
+  /** The application layer must transactionally verify that the owning Product is not Archived. */
   public activate(
-    input: TransitionCatalogProductInput,
-  ): CatalogProductChangedResult<CatalogProductActivatedEvent> {
+    input: TransitionCatalogSkuInput,
+  ): CatalogSkuChangedResult<CatalogSkuActivatedEvent> {
     this.assertExpectedVersion(input.expectedVersion);
     this.assertStatus('DRAFT');
     const occurredAt = this.mutationInstant(input.occurredAt);
@@ -319,11 +335,13 @@ export class CatalogProduct {
       statusChangedAt: occurredAt,
       activatedAt: occurredAt,
     });
-    const product = new CatalogProduct(snapshot);
+    const sku = new CatalogSku(snapshot);
 
-    return changed(product, {
-      type: 'PRODUCT_ACTIVATED',
-      productId: snapshot.id,
+    return changed(sku, {
+      type: 'SKU_ACTIVATED',
+      skuId: snapshot.id,
+      productId: snapshot.productId,
+      code: snapshot.code,
       name: snapshot.name,
       previousStatus: 'DRAFT',
       status: 'ACTIVE',
@@ -333,8 +351,8 @@ export class CatalogProduct {
   }
 
   public suspend(
-    input: ReasonedCatalogProductTransitionInput,
-  ): CatalogProductChangedResult<CatalogProductSuspendedEvent> {
+    input: ReasonedCatalogSkuTransitionInput,
+  ): CatalogSkuChangedResult<CatalogSkuSuspendedEvent> {
     this.assertExpectedVersion(input.expectedVersion);
     this.assertStatus('ACTIVE');
     const reasonCode = parseCatalogLifecycleReasonCode(input.reasonCode);
@@ -346,11 +364,13 @@ export class CatalogProduct {
       updatedAt: occurredAt,
       statusChangedAt: occurredAt,
     });
-    const product = new CatalogProduct(snapshot);
+    const sku = new CatalogSku(snapshot);
 
-    return changed(product, {
-      type: 'PRODUCT_SUSPENDED',
-      productId: snapshot.id,
+    return changed(sku, {
+      type: 'SKU_SUSPENDED',
+      skuId: snapshot.id,
+      productId: snapshot.productId,
+      code: snapshot.code,
       name: snapshot.name,
       previousStatus: 'ACTIVE',
       status: 'SUSPENDED',
@@ -360,9 +380,8 @@ export class CatalogProduct {
     });
   }
 
-  public resume(
-    input: TransitionCatalogProductInput,
-  ): CatalogProductChangedResult<CatalogProductResumedEvent> {
+  /** The application layer must transactionally verify that the owning Product is not Archived. */
+  public resume(input: TransitionCatalogSkuInput): CatalogSkuChangedResult<CatalogSkuResumedEvent> {
     this.assertExpectedVersion(input.expectedVersion);
     this.assertStatus('SUSPENDED');
     const occurredAt = this.mutationInstant(input.occurredAt);
@@ -373,11 +392,13 @@ export class CatalogProduct {
       updatedAt: occurredAt,
       statusChangedAt: occurredAt,
     });
-    const product = new CatalogProduct(snapshot);
+    const sku = new CatalogSku(snapshot);
 
-    return changed(product, {
-      type: 'PRODUCT_RESUMED',
-      productId: snapshot.id,
+    return changed(sku, {
+      type: 'SKU_RESUMED',
+      skuId: snapshot.id,
+      productId: snapshot.productId,
+      code: snapshot.code,
       name: snapshot.name,
       previousStatus: 'SUSPENDED',
       status: 'ACTIVE',
@@ -386,29 +407,31 @@ export class CatalogProduct {
     });
   }
 
-  public archive(
-    input: ReasonedCatalogProductTransitionInput,
-  ): CatalogProductChangedResult<CatalogProductArchivedEvent> {
+  public retire(
+    input: ReasonedCatalogSkuTransitionInput,
+  ): CatalogSkuChangedResult<CatalogSkuRetiredEvent> {
     this.assertExpectedVersion(input.expectedVersion);
-    const previousStatus = this.nonArchivedStatus();
+    const previousStatus = this.nonRetiredStatus();
     const reasonCode = parseCatalogLifecycleReasonCode(input.reasonCode);
     const occurredAt = this.mutationInstant(input.occurredAt);
     const snapshot = freezeSnapshot({
       ...this.#snapshot,
-      status: 'ARCHIVED',
+      status: 'RETIRED',
       version: nextCatalogAggregateVersion(this.#snapshot.version),
       updatedAt: occurredAt,
       statusChangedAt: occurredAt,
-      archivedAt: occurredAt,
+      retiredAt: occurredAt,
     });
-    const product = new CatalogProduct(snapshot);
+    const sku = new CatalogSku(snapshot);
 
-    return changed(product, {
-      type: 'PRODUCT_ARCHIVED',
-      productId: snapshot.id,
+    return changed(sku, {
+      type: 'SKU_RETIRED',
+      skuId: snapshot.id,
+      productId: snapshot.productId,
+      code: snapshot.code,
       name: snapshot.name,
       previousStatus,
-      status: 'ARCHIVED',
+      status: 'RETIRED',
       version: snapshot.version,
       occurredAt,
       reasonCode,
@@ -419,19 +442,19 @@ export class CatalogProduct {
     const expectedVersion = parseCatalogAggregateVersion(value);
 
     if (expectedVersion !== this.#snapshot.version) {
-      throw new CatalogProductVersionMismatchError();
+      throw new CatalogSkuVersionMismatchError();
     }
   }
 
-  private assertStatus(required: CatalogProductStatus): void {
+  private assertStatus(required: CatalogSkuStatus): void {
     if (this.#snapshot.status !== required) {
-      throw new CatalogProductLifecycleConflictError();
+      throw new CatalogSkuLifecycleConflictError();
     }
   }
 
-  private nonArchivedStatus(): Exclude<CatalogProductStatus, 'ARCHIVED'> {
-    if (this.#snapshot.status === 'ARCHIVED') {
-      throw new CatalogProductLifecycleConflictError();
+  private nonRetiredStatus(): Exclude<CatalogSkuStatus, 'RETIRED'> {
+    if (this.#snapshot.status === 'RETIRED') {
+      throw new CatalogSkuLifecycleConflictError();
     }
 
     return this.#snapshot.status;
@@ -441,7 +464,7 @@ export class CatalogProduct {
     const occurredAt = parseCatalogInstant(value);
 
     if (compareCatalogInstants(occurredAt, this.#snapshot.updatedAt) < 0) {
-      throw new CatalogProductTimestampRegressionError();
+      throw new CatalogSkuTimestampRegressionError();
     }
 
     return occurredAt;

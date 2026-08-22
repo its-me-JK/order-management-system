@@ -116,10 +116,16 @@ It first adds that column as nullable, backfills Product Draft from
 `created_at`, Active from `activated_at`, and Archived from `archived_at`, and
 backfills SKU Draft from `created_at`, Active from `activated_at`, and Retired
 from `retired_at`. It then makes the column non-null and installs the revised
-checks. Product terminal timestamp ordering compares archival against
-`COALESCE(activated_at, created_at)`. The migration is forward-only and must
-not edit the already applied migration or weaken UUID, code, name, version, or
-referential constraints.
+checks. Before installing them, it raises, but never decreases, a legacy
+version to the least reachable value implied by the existing lifecycle and
+timestamps: Draft with a later update is at least 2, first Active is at least
+2, Active with a later update is at least 3, direct terminal is at least 2, and
+previously activated terminal is at least 3. It rejects incompatible chronology
+or a terminal row whose update time differs from its terminal time rather than
+rewriting business timestamps to invent history. Product terminal timestamp
+ordering compares archival against `COALESCE(activated_at, created_at)`. The
+migration is forward-only and must not edit the already applied migration or
+weaken UUID, code, name, version, or referential constraints.
 
 ## Authentication and authorization
 

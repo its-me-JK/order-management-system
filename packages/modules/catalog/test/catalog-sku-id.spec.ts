@@ -39,6 +39,7 @@ describe('parseCatalogSkuId', (): void => {
       parseCatalogSkuId(rejectedValue);
     } catch (error: unknown) {
       expect(String(error)).not.toContain(rejectedValue);
+      expect((error as { cause?: unknown }).cause).toBeUndefined();
     }
   });
 });
