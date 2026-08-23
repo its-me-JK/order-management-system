@@ -32,6 +32,7 @@ import {
   nextIdentityAggregateVersion,
   parseIdentityAggregateVersion,
   parseIdentityInstant,
+  tryAddIdentitySeconds,
   type IdentityAggregateVersion,
   type IdentityInstant,
 } from './identity-values';
@@ -167,63 +168,14 @@ function invalidSnapshot(): never {
   throw new InvalidIdentityPasswordAuthenticatorStateError();
 }
 
-function isLeapYear(year: number): boolean {
-  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-}
-
-function daysInMonth(year: number, month: number): number {
-  if (month === 2) {
-    return isLeapYear(year) ? 29 : 28;
-  }
-
-  if (month === 4 || month === 6 || month === 9 || month === 11) {
-    return 30;
-  }
-
-  return 31;
-}
-
-function pad(value: number, width: number): string {
-  return String(value).padStart(width, '0');
-}
-
 function addCooldownSeconds(instant: IdentityInstant, secondsToAdd: number): IdentityInstant {
-  let year = Number(instant.slice(0, 4));
-  let month = Number(instant.slice(5, 7));
-  let day = Number(instant.slice(8, 10));
-  let hour = Number(instant.slice(11, 13));
-  let minute = Number(instant.slice(14, 16));
-  let second = Number(instant.slice(17, 19)) + secondsToAdd;
+  const deadline = tryAddIdentitySeconds(instant, secondsToAdd);
 
-  minute += Math.floor(second / 60);
-  second %= 60;
-  hour += Math.floor(minute / 60);
-  minute %= 60;
-  day += Math.floor(hour / 24);
-  hour %= 24;
-
-  while (day > daysInMonth(year, month)) {
-    day -= daysInMonth(year, month);
-    month += 1;
-
-    if (month > 12) {
-      month = 1;
-      year += 1;
-    }
-
-    if (year > 9999) {
-      throw new IdentityPasswordAuthenticatorDeadlineOverflowError();
-    }
+  if (deadline === null) {
+    throw new IdentityPasswordAuthenticatorDeadlineOverflowError();
   }
 
-  const fractionalSeconds = instant.slice(19, 26);
-
-  return parseIdentityInstant(
-    `${pad(year, 4)}-${pad(month, 2)}-${pad(day, 2)}T${pad(hour, 2)}:${pad(
-      minute,
-      2,
-    )}:${pad(second, 2)}${fractionalSeconds}Z`,
-  );
+  return deadline;
 }
 
 function cooldownSeconds(failureCount: IdentityConsecutiveFailureCount): number | null {

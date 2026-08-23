@@ -11,13 +11,17 @@ import {
 import {
   IdentityAggregateVersionExhaustedError,
   InvalidIdentityAggregateVersionError,
+  InvalidIdentityIntervalSecondsError,
   InvalidIdentityInstantError,
   MAX_IDENTITY_AGGREGATE_VERSION,
+  MAX_IDENTITY_INTERVAL_SECONDS,
   compareIdentityInstants,
   nextIdentityAggregateVersion,
   parseIdentityAggregateVersion,
   parseIdentityInstant,
+  tryAddIdentitySeconds,
   type IdentityAggregateVersion,
+  type IdentityInstant,
 } from '../src/domain/identity-values';
 
 type ErrorClass = abstract new (...arguments_: never[]) => Error;
@@ -221,6 +225,101 @@ describe('Identity instants', (): void => {
     expectFixedSafeError(
       () => parseIdentityInstant(rejectedValue),
       InvalidIdentityInstantError,
+      rejectedValue,
+    );
+  });
+});
+
+describe('Identity whole-second interval arithmetic', (): void => {
+  it('publishes the exact unsigned interval bound', (): void => {
+    expect(MAX_IDENTITY_INTERVAL_SECONDS).toBe(4_294_967_295);
+  });
+
+  it.each([
+    ['zero interval', '2026-08-23T12:34:56.123456Z', 0, '2026-08-23T12:34:56.123456Z'],
+    ['second-to-minute carry', '2026-08-23T12:34:59.999999Z', 1, '2026-08-23T12:35:00.999999Z'],
+    ['minute-to-hour carry', '2026-08-23T12:59:59.000001Z', 1, '2026-08-23T13:00:00.000001Z'],
+    ['day carry', '2026-08-23T23:59:59.654321Z', 1, '2026-08-24T00:00:00.654321Z'],
+    ['thirty-day month carry', '2026-04-30T23:59:59.111111Z', 1, '2026-05-01T00:00:00.111111Z'],
+    ['ordinary February carry', '2023-02-28T23:59:59.222222Z', 1, '2023-03-01T00:00:00.222222Z'],
+    ['leap-day entry', '2024-02-28T23:59:59.333333Z', 1, '2024-02-29T00:00:00.333333Z'],
+    ['leap-day exit', '2024-02-29T23:59:59.444444Z', 1, '2024-03-01T00:00:00.444444Z'],
+    [
+      'divisible-by-400 leap century',
+      '2000-02-28T23:59:59.555555Z',
+      1,
+      '2000-02-29T00:00:00.555555Z',
+    ],
+    ['non-leap century', '2100-02-28T23:59:59.666666Z', 1, '2100-03-01T00:00:00.666666Z'],
+    ['year carry', '2026-12-31T23:59:59.777777Z', 1, '2027-01-01T00:00:00.777777Z'],
+    [
+      'maximum supported interval',
+      '1000-01-01T00:00:00.654321Z',
+      MAX_IDENTITY_INTERVAL_SECONDS,
+      '1136-02-08T06:28:15.654321Z',
+    ],
+  ] as const)(
+    'adds a %s with exact Gregorian and microsecond behavior',
+    (_scenario, initialValue, seconds, expected): void => {
+      const initial = parseIdentityInstant(initialValue);
+
+      expect(tryAddIdentitySeconds(initial, seconds)).toBe(expected);
+    },
+  );
+
+  it('returns the greatest representable instant without truncating its fraction', (): void => {
+    const penultimateSecond = parseIdentityInstant('9999-12-31T23:59:58.999999Z');
+
+    expect(tryAddIdentitySeconds(penultimateSecond, 1)).toBe('9999-12-31T23:59:59.999999Z');
+  });
+
+  it.each([
+    ['one second beyond the range', '9999-12-31T23:59:59.999999Z', 1],
+    ['a two-second carry beyond the range', '9999-12-31T23:59:58.000001Z', 2],
+  ] as const)('returns null only for %s', (_scenario, initialValue, seconds): void => {
+    const initial = parseIdentityInstant(initialValue);
+
+    expect(tryAddIdentitySeconds(initial, seconds)).toBeNull();
+  });
+
+  it.each([
+    -1,
+    0.5,
+    Number.NaN,
+    Number.NEGATIVE_INFINITY,
+    Number.POSITIVE_INFINITY,
+    MAX_IDENTITY_INTERVAL_SECONDS + 1,
+    '1',
+    true,
+    null,
+    undefined,
+    {},
+    [],
+  ])('rejects an unsupported whole-second interval: %p', (seconds): void => {
+    const initial = parseIdentityInstant('2026-08-23T12:34:56.123456Z');
+
+    expect(() => tryAddIdentitySeconds(initial, seconds)).toThrow(
+      InvalidIdentityIntervalSecondsError,
+    );
+  });
+
+  it('defensively validates the branded instant at runtime', (): void => {
+    const malformedInstant = 'sensitive-invalid-session-instant' as IdentityInstant;
+
+    expectFixedSafeError(
+      () => tryAddIdentitySeconds(malformedInstant, 0),
+      InvalidIdentityInstantError,
+      malformedInstant,
+    );
+  });
+
+  it('uses a fixed cause-free error that does not expose an invalid interval', (): void => {
+    const initial = parseIdentityInstant('2026-08-23T12:34:56.123456Z');
+    const rejectedValue = 'sensitive-session-interval';
+
+    expectFixedSafeError(
+      () => tryAddIdentitySeconds(initial, rejectedValue),
+      InvalidIdentityIntervalSecondsError,
       rejectedValue,
     );
   });

@@ -14,6 +14,7 @@ export type IdentityAggregateVersion = number & {
 };
 
 export const MAX_IDENTITY_AGGREGATE_VERSION = 4_294_967_295;
+export const MAX_IDENTITY_INTERVAL_SECONDS = 4_294_967_295;
 
 export class InvalidIdentityInstantError extends Error {
   public constructor() {
@@ -26,6 +27,13 @@ export class InvalidIdentityAggregateVersionError extends Error {
   public constructor() {
     super('Expected a supported positive Identity aggregate version');
     this.name = 'InvalidIdentityAggregateVersionError';
+  }
+}
+
+export class InvalidIdentityIntervalSecondsError extends Error {
+  public constructor() {
+    super('Expected a supported non-negative Identity interval in whole seconds');
+    this.name = 'InvalidIdentityIntervalSecondsError';
   }
 }
 
@@ -52,6 +60,10 @@ function daysInMonth(year: number, month: number): number {
   return 31;
 }
 
+function padIdentityInstantPart(value: number, width: number): string {
+  return String(value).padStart(width, '0');
+}
+
 /** Validates without converting through JavaScript Date and losing microseconds. */
 export function parseIdentityInstant(value: unknown): IdentityInstant {
   if (typeof value !== 'string' || !IDENTITY_INSTANT_PATTERN.test(value)) {
@@ -74,6 +86,66 @@ export function parseIdentityInstant(value: unknown): IdentityInstant {
   }
 
   return value as IdentityInstant;
+}
+
+/** Adds a bounded whole-second interval without truncating DATETIME(6) precision. */
+export function tryAddIdentitySeconds(
+  instant: IdentityInstant,
+  secondsToAdd: unknown,
+): IdentityInstant | null {
+  const validatedInstant = parseIdentityInstant(instant);
+
+  if (
+    typeof secondsToAdd !== 'number' ||
+    !Number.isInteger(secondsToAdd) ||
+    secondsToAdd < 0 ||
+    secondsToAdd > MAX_IDENTITY_INTERVAL_SECONDS
+  ) {
+    throw new InvalidIdentityIntervalSecondsError();
+  }
+
+  let year = Number(validatedInstant.slice(0, 4));
+  let month = Number(validatedInstant.slice(5, 7));
+  let day = Number(validatedInstant.slice(8, 10));
+  let hour = Number(validatedInstant.slice(11, 13));
+  let minute = Number(validatedInstant.slice(14, 16));
+  let second = Number(validatedInstant.slice(17, 19)) + secondsToAdd;
+
+  minute += Math.floor(second / 60);
+  second %= 60;
+  hour += Math.floor(minute / 60);
+  minute %= 60;
+  day += Math.floor(hour / 24);
+  hour %= 24;
+
+  while (day > daysInMonth(year, month)) {
+    day -= daysInMonth(year, month);
+    month += 1;
+
+    if (month > 12) {
+      month = 1;
+      year += 1;
+    }
+
+    if (year > 9999) {
+      return null;
+    }
+  }
+
+  const fractionalSeconds = validatedInstant.slice(19, 26);
+
+  return parseIdentityInstant(
+    `${padIdentityInstantPart(year, 4)}-${padIdentityInstantPart(
+      month,
+      2,
+    )}-${padIdentityInstantPart(day, 2)}T${padIdentityInstantPart(
+      hour,
+      2,
+    )}:${padIdentityInstantPart(minute, 2)}:${padIdentityInstantPart(
+      second,
+      2,
+    )}${fractionalSeconds}Z`,
+  );
 }
 
 /** Fixed-width canonical instants compare in chronological order as strings. */
