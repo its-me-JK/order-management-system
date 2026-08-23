@@ -352,11 +352,14 @@ one database instant with Gregorian, microsecond-preserving arithmetic and no
 JavaScript `Date`. An absolute deadline beyond MySQL year 9999 is a fixed
 overflow failure. Version-1 open families and version-2 families revoked
 without rotation retain `createdAt = lastRotatedAt` and the initial lifetime
-bounds. A retained rotated snapshot has at least one whole second and at most
-24 hours from its last rotation to its idle deadline. When the idle deadline is
-before the absolute deadline, the configured 15-minute minimum still applies;
-the one-second minimum applies only when the idle deadline equals the earlier
-absolute cap.
+bounds. `REFRESH_REUSE_DETECTED` is reachable only on a revoked version-3-or-
+later family because consuming the predecessor and installing its successor
+must have advanced the family before replay can be concluded. A retained
+rotated snapshot has at least one whole second and at most 24 hours from its
+last rotation to its idle deadline. When the idle deadline is before the
+absolute deadline, the configured 15-minute minimum still applies; the one-
+second minimum applies only when the idle deadline equals the earlier absolute
+cap.
 
 At one authoritative observation instant, the derived family state is:
 
