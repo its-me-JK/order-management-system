@@ -353,8 +353,10 @@ JavaScript `Date`. An absolute deadline beyond MySQL year 9999 is a fixed
 overflow failure. Version-1 open families and version-2 families revoked
 without rotation retain `createdAt = lastRotatedAt` and the initial lifetime
 bounds. A retained rotated snapshot has at least one whole second and at most
-24 hours from its last rotation to its idle deadline; equality between idle
-and absolute deadlines is valid.
+24 hours from its last rotation to its idle deadline. When the idle deadline is
+before the absolute deadline, the configured 15-minute minimum still applies;
+the one-second minimum applies only when the idle deadline equals the earlier
+absolute cap.
 
 At one authoritative observation instant, the derived family state is:
 
