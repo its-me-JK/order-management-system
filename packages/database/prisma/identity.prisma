@@ -1,7 +1,7 @@
-// Lifecycle, chronology, UUIDv7-bit, closed-code, active-slot, and credential-
-// lifetime constraints plus per-column ASCII collations are intentionally owned
-// by the reviewed migration SQL because Prisma's schema language cannot express
-// them.
+// Lifecycle, chronology, UUID-version, closed-code, event-compatibility,
+// active-slot, and credential-lifetime constraints plus per-column collations
+// are intentionally owned by the reviewed migration SQL because Prisma's schema
+// language cannot express them.
 
 /// Identity persistence record; this is not the Account domain aggregate.
 model IdentityAccountRecord {
@@ -13,10 +13,61 @@ model IdentityAccountRecord {
   updatedAt       DateTime                      @map("updated_at") @db.DateTime(6)
   suspendedAt     DateTime?                     @map("suspended_at") @db.DateTime(6)
   deactivatedAt   DateTime?                     @map("deactivated_at") @db.DateTime(6)
+  roleAssignments IdentityAccountRoleRecord[]
   sessionFamilies IdentitySessionFamilyRecord[]
 
   @@unique([loginName], map: "uq_identity_accounts_login_name")
   @@map("identity_accounts")
+}
+
+/// Immutable application-owned permission registry record.
+model IdentityPermissionRecord {
+  code            String                         @id @db.VarChar(98)
+  description     String                         @db.VarChar(160)
+  roleAssignments IdentityRolePermissionRecord[]
+
+  @@map("identity_permissions")
+}
+
+/// Identity persistence record; this is not the Role domain aggregate.
+model IdentityRoleRecord {
+  id                 Bytes                          @id @db.Binary(16)
+  code               String                         @db.VarChar(64)
+  displayName        String                         @map("display_name") @db.VarChar(100)
+  status             String                         @db.VarChar(16)
+  version            Int                            @default(1) @db.UnsignedInt
+  createdAt          DateTime                       @map("created_at") @db.DateTime(6)
+  updatedAt          DateTime                       @map("updated_at") @db.DateTime(6)
+  retiredAt          DateTime?                      @map("retired_at") @db.DateTime(6)
+  permissionMappings IdentityRolePermissionRecord[]
+  accountAssignments IdentityAccountRoleRecord[]
+
+  @@unique([code], map: "uq_identity_roles_code")
+  @@map("identity_roles")
+}
+
+/// Explicit Role-to-Permission mapping owned by the Role aggregate transaction.
+model IdentityRolePermissionRecord {
+  roleId         Bytes                    @map("role_id") @db.Binary(16)
+  permissionCode String                   @map("permission_code") @db.VarChar(98)
+  role           IdentityRoleRecord       @relation(fields: [roleId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "fk_identity_role_permissions_role")
+  permission     IdentityPermissionRecord @relation(fields: [permissionCode], references: [code], onDelete: Restrict, onUpdate: Restrict, map: "fk_identity_role_permissions_permission")
+
+  @@id([roleId, permissionCode])
+  @@index([permissionCode, roleId], map: "ix_identity_role_permissions_permission_role")
+  @@map("identity_role_permissions")
+}
+
+/// Explicit Account-to-Role assignment; it is not part of either aggregate.
+model IdentityAccountRoleRecord {
+  accountId Bytes                 @map("account_id") @db.Binary(16)
+  roleId    Bytes                 @map("role_id") @db.Binary(16)
+  account   IdentityAccountRecord @relation(fields: [accountId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "fk_identity_account_roles_account")
+  role      IdentityRoleRecord    @relation(fields: [roleId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "fk_identity_account_roles_role")
+
+  @@id([accountId, roleId])
+  @@index([roleId, accountId], map: "ix_identity_account_roles_role_account")
+  @@map("identity_account_roles")
 }
 
 /// Identity persistence record; this is not the SessionFamily domain aggregate.
@@ -77,4 +128,27 @@ model IdentityAccessCredentialRecord {
   @@index([familyId, expiresAt, id], map: "ix_identity_access_credentials_family_expiry")
   @@index([expiresAt, id], map: "ix_identity_access_credentials_expiry")
   @@map("identity_access_credentials")
+}
+
+/// Logically append-only security evidence. Identifier columns deliberately
+/// have no relations so retention workflows cannot erase historical evidence.
+model IdentitySecurityEventRecord {
+  id                Bytes    @id @db.Binary(16)
+  eventType         String   @map("event_type") @db.VarChar(48)
+  outcome           String   @db.VarChar(16)
+  reasonCode        String?  @map("reason_code") @db.VarChar(32)
+  actorAccountId    Bytes?   @map("actor_account_id") @db.Binary(16)
+  subjectAccountId  Bytes?   @map("subject_account_id") @db.Binary(16)
+  roleId            Bytes?   @map("role_id") @db.Binary(16)
+  sessionId         Bytes?   @map("session_id") @db.Binary(16)
+  permissionCode    String?  @map("permission_code") @db.VarChar(98)
+  requestId         Bytes?   @map("request_id") @db.Binary(16)
+  correlationId     Bytes?   @map("correlation_id") @db.Binary(16)
+  operatorReference String?  @map("operator_reference") @db.VarChar(128)
+  occurredAt        DateTime @map("occurred_at") @db.DateTime(6)
+
+  @@index([occurredAt, id], map: "ix_identity_security_events_time")
+  @@index([subjectAccountId, occurredAt, id], map: "ix_identity_security_events_subject_time")
+  @@index([sessionId, occurredAt, id], map: "ix_identity_security_events_session_time")
+  @@map("identity_security_events")
 }

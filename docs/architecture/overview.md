@@ -89,7 +89,7 @@ types do not become domain models.
 
 | Module | Responsibilities | Explicit exclusions |
 | --- | --- | --- |
-| Identity and Access | Login identity, token lifecycle, roles, and permissions | Customer commerce profile |
+| Identity and Access | Administrator identity, token lifecycle, roles, permissions, and Identity security evidence | Customer commerce profile and cross-module audit queries |
 | Customers | Customer profile and saved addresses | Immutable order snapshots |
 | Catalog | Products, SKUs, attributes, and lifecycle | Stock and payment |
 | Pricing | Price lists, currency, and effective-price lookup | Payment collection |
@@ -99,11 +99,16 @@ types do not become domain models.
 | Fulfillment | Allocation, pick, pack, shipment, and delivery state | Raw stock accounting |
 | Notifications | Templates and delivery attempts | Decisions that trigger business notifications |
 | Integrations | Provider adapters, webhook validation, and external references | Core business policy |
-| Audit | Security and operational audit trail | General diagnostic logging |
+| Audit | Authorized cross-module audit queries, projections, and export | Ownership of another module's mutation evidence and general diagnostic logging |
 
 Platform capabilities such as configuration, logging, tracing, health,
 database access, and messaging support business modules but contain no business
 rules.
+
+Each source module owns the atomic write model for evidence created with its
+state. Identity therefore owns `identity_security_events`; a future Audit
+boundary consumes an exported application query/projection contract and never
+uses the shared Prisma client as permission to read Identity tables directly.
 
 Returns will become a distinct module after the purchase-to-delivery path is
 stable. Promotions, procurement, supplier management, route optimization, and
@@ -309,7 +314,9 @@ The not-yet-implemented administrator authentication boundary is specified in
 the complete security and dependency contract is tested together.
 
 - Authentication and authorization are separate concerns.
-- Administrative actions use explicit permissions and audit records.
+- Administrative actions use explicit permissions and atomically persisted,
+  source-module-owned evidence. A future Audit module exposes authorized
+  queries without taking ownership of Identity writes.
 - Secrets, tokens, payment details, and personal data are redacted from logs.
 - Payment webhooks require provider-specific signature verification and replay
   protection.

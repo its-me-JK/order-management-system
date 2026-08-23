@@ -64,14 +64,24 @@ the exact wire-to-digest pair, a nominal SecurityEvent identifier, and
 digest-only refresh discovery with authentic one-use tickets. Its internal
 attempt-bound refresh workflow now produces scope- and decision-bound pending
 transaction evidence without claiming commit or credential-delivery authority.
-The unused Identity Prisma slice and reviewed migration persist Account,
-SessionFamily, retained refresh lineage, and generation-bound access records
-with database-enforced lifecycle, active-slot, and referential invariants.
-Identity still exposes no resolver use case or route; the concrete locked store
-and Unit of Work, committed completion, authority/event persistence, Argon2
-adapter, password input policy, and Redis remain gated later slices. Pricing,
-inventory, Redis caching, and integration events also remain separate later
-slices.
+The unused Identity Prisma slice and reviewed migrations persist Account,
+SessionFamily, retained refresh lineage, generation-bound access records, and
+the first authorization/security-evidence records. The versioned authorization
+registry seeds exactly seven permissions and one explicitly mapped
+`SYSTEM_ADMINISTRATOR`; no role is a wildcard and future permissions are not
+granted implicitly. Role state, permission mappings, and Account assignments
+have constrained keys and `RESTRICT` references. Typed security events
+normalize 19 action types against compatible `SUCCEEDED`/`REJECTED` outcomes
+and reasons, distinguish UUIDv4 request context from UUIDv7 Identity objects,
+and contain neither arbitrary JSON nor retention-coupling foreign keys. Seed
+rows are configuration rather than fabricated runtime events, and append-only
+behavior remains logical under the current shared database role. The future
+Unit of Work must enforce at most 16 total role assignments per Account.
+Identity still exposes no resolver use case or authentication route; no locked
+store, concrete Unit of Work, authority/event adapter, NestJS composition,
+Argon2 adapter, password input policy, or Redis abuse control consumes this
+schema yet. Pricing, inventory, Redis caching, and integration events also
+remain separate later slices.
 
 **Overall project progress: 35%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
@@ -238,6 +248,7 @@ pnpm db:schema:validate
 pnpm db:migrate:deploy
 pnpm test:integration:database
 pnpm test:integration:identity-refresh-lineage
+pnpm test:integration:identity-authorization
 pnpm test:integration:catalog
 ```
 
@@ -245,12 +256,14 @@ The database package owns Prisma generation and one ordered forward-only
 migration history. Module-owned Prisma models compose into that schema; the
 reviewed migrations create Catalog Product and SKU records, then safely expand
 their lifecycle invariants, and add the currently unused Identity refresh
-lineage. Generated Prisma code is local build output and is not committed. The
-Identity verifier applies the complete migration history twice in dedicated
-main and shadow databases, proves Prisma has no representable schema drift, and
-adversarially checks the byte-exact codes, microseconds, foreign keys, issuance
-witness, and one-active-refresh invariant against pinned MySQL. The Catalog
-integration command verifies an initial-schema
+lineage, authorization registry, Role mappings, Account assignments, and
+security evidence. Generated Prisma code is local build output and is not
+committed. The dedicated Identity verifiers apply the complete migration
+history twice in isolated main and shadow databases, prove Prisma has no
+representable schema drift, and adversarially check byte-exact codes, exact
+seed policy, microseconds, UUID versions, foreign keys, event compatibility,
+issuance witness, and the one-active-refresh invariant against pinned MySQL.
+The Catalog integration command verifies an initial-schema
 upgrade with legacy rows, rejects ambiguous terminal history before DDL, and
 also creates, migrates twice, and removes an exact fresh
 `oms_catalog_integration` database. It verifies the repository contract and

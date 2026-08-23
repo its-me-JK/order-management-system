@@ -117,6 +117,9 @@ jobs:
       - name: Verify Identity refresh-lineage migration
         run: pnpm test:integration:identity-refresh-lineage
 
+      - name: Verify Identity authorization and security-event migration
+        run: pnpm test:integration:identity-authorization
+
       - name: Test Catalog vertical read slice against MySQL
         run: pnpm test:integration:catalog
 

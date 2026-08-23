@@ -187,7 +187,7 @@ the runtime root surface empty until an actual use case is exported.
 | `Role` aggregate | Immutable code, display name, `ACTIVE` or terminal `RETIRED`, optimistic version, and a bounded permission set. |
 | `SessionFamily` aggregate | Stable session identifier, one account, absolute and idle deadlines, revocation, only the current command's presented/successor refresh entities, and the access entity issued by that command. It never loads access or refresh history. |
 | `Permission` reference | Immutable application-owned permission code seeded by a reviewed migration. |
-| `SecurityEvent` record | Append-only evidence with closed event and reason codes; it is not a mutable aggregate. |
+| `SecurityEvent` record | Logically append-only evidence with a closed action type, compatible outcome/reason pair, and typed context; it is not a mutable aggregate. |
 | Authority read model | One purpose-built current-state projection returning only the authenticated principal. |
 
 An active account may be suspended and resumed. Active or suspended accounts
@@ -282,6 +282,14 @@ operationally visible but grants nothing, while forcing retirement would make a
 temporary least-privilege response irreversible. Account-role assignments
 remain outside both Account and Role so their independent hot paths do not
 create oversized aggregates.
+
+An account may have at most 16 total role assignments, including assignments
+to roles later retired. The composite database key prevents a duplicate pair,
+but a row-count invariant cannot be expressed by a row-local check. The future
+assignment Unit of Work locks the Account before the Role, counts the Account's
+complete assignment set under that transaction, and conditionally inserts only
+below the bound. The authority mapper independently fails closed above 16
+active roles, so persistence corruption cannot become partial authority.
 
 Every mutation validates expected version, Active lifecycle, and its new value
 before deciding whether it is a no-op. Effective changes then validate
@@ -809,11 +817,13 @@ tables. Prisma models are persistence records, not domain objects. The
 migration owns ASCII binary collations, checks and their names, and index
 direction that Prisma cannot express.
 
-All identifiers are application-generated UUIDv7 stored as `BINARY(16)`. All
-application timestamps are UTC `DATETIME(6)`. Codes, states, login names,
-credential digests, and PHC values use byte-exact representations. Foreign
-keys use `RESTRICT`; deletion and retention are explicit workflows rather than
-cascades.
+Identity object identifiers are application-generated UUIDv7 values stored as
+`BINARY(16)`. Security-event transport context is the deliberate exception: a
+server-owned request ID is UUIDv4, and a validated correlation ID is UUIDv4 or
+UUIDv7. All application timestamps are UTC `DATETIME(6)`. Codes, states, login
+names, credential digests, and PHC values use byte-exact representations.
+Foreign keys use `RESTRICT`; deletion and retention are explicit workflows
+rather than cascades.
 
 Closed-code checks cast their ASCII columns to binary strings before equality
 or membership comparison. MySQL's `ascii_bin` collation still uses PAD SPACE
@@ -834,14 +844,14 @@ otherwise-equal values that differ only in those digits.
 | --- | --- |
 | `identity_accounts` | UUID primary key; nullable-after-erasure canonical `login_name VARCHAR(64)` with ASCII binary unique index and format check; status; unsigned version; created, updated, suspended, and deactivated timestamps with lifecycle checks. |
 | `identity_password_credentials` | `account_id` primary/foreign key; `ACTIVE` or `REBIND_REQUIRED`; `password_phc VARCHAR(255)` using ASCII binary comparison; consecutive-failure count from 0 through 100; optional `next_verification_at` and `disabled_at`; unsigned version; created, updated, and password-changed timestamps. `REBIND_REQUIRED` requires count 100, a disabled time, and no verification deadline. The row is the `PasswordAuthenticator` aggregate. The PHC value already contains algorithm, cost, salt, and hash. |
-| `identity_permissions` | Immutable lowercase permission code natural primary key and fixed description; initially seeded with the codes accepted in ADR-0015. |
-| `identity_roles` | UUID primary key; immutable unique ASCII code; display name; status; unsigned version and lifecycle timestamps. |
+| `identity_permissions` | Immutable lowercase permission code natural primary key and fixed bounded description; initially seeded from the reviewed authorization registry. |
+| `identity_roles` | UUID primary key; immutable unique ASCII code; display name; status; unsigned version and lifecycle timestamps. The initial system role is seeded from the same registry. |
 | `identity_role_permissions` | Composite primary key `(role_id, permission_code)` plus reverse `(permission_code, role_id)` index. |
-| `identity_account_roles` | Composite primary key `(account_id, role_id)` plus reverse `(role_id, account_id)` index. |
+| `identity_account_roles` | Composite primary key `(account_id, role_id)` plus reverse `(role_id, account_id)` index. The future Unit of Work, not a row-local constraint, enforces at most 16 total assignments per account. |
 | `identity_session_families` | Externally visible UUID session ID; account ID; unsigned version; `created_at`, `last_rotated_at`, `idle_expires_at`, `absolute_expires_at`, optional revoked time, and closed reason. Indexes `(account_id, revoked_at, absolute_expires_at, id)` and `(absolute_expires_at, id)`. Expiry is derived from time, not a stored status. |
 | `identity_access_credentials` | UUID primary key; family ID; unsigned sequence; unique `BINARY(32)` digest; issued and expiry times. Unique `(family_id, sequence)` is also a composite foreign key to the retained refresh generation with the same pair. Indexes `(family_id, expires_at, id)` and `(expires_at, id)`. The digest is persistence-only; validity derives from credential, paired issuance generation, family, account, and current permissions. |
 | `identity_refresh_credentials` | UUID primary key; family ID; unique `BINARY(32)` digest; unsigned sequence; issued, expiry, optional consumed time, optional unique successor ID, and nullable writable `active_slot TINYINT UNSIGNED` with no default. Unique `(family_id, sequence)` and `(family_id, active_slot)` enforce generation identity and at most one unconsumed credential per family. |
-| `identity_security_events` | UUID, closed event/outcome/reason codes, optional opaque actor/subject/session/request/correlation IDs, and occurrence time. It has no arbitrary JSON and no foreign key to account or session retention. Indexes support time, subject-time, and session-time queries. |
+| `identity_security_events` | UUIDv7 primary key; normalized action type; compatible `SUCCEEDED` or `REJECTED` outcome and closed reason; typed actor-account, subject-account, role, session, permission, request, correlation, and offline-operator context; occurrence time; and keyset indexes for time, subject, and session queries. It has no arbitrary JSON and no foreign key from any evidence identifier to mutable or purgeable Identity state. |
 | `identity_bootstrap_state` | One seeded singleton row locked by first-admin provisioning so two concurrent commands cannot both claim bootstrap. |
 
 The refresh active slot is deliberately writable rather than a generated
@@ -857,16 +867,30 @@ update before inserting the successor with slot `1`. This costs one derived
 column assignment per rotation, but keeps the Prisma record accurate while the
 database—not writer convention—rejects divergence.
 
-The permission migration seeds exactly the seven codes in ADR-0015 and one
-built-in `SYSTEM_ADMINISTRATOR` role containing exactly those seven mappings:
+The versioned
+[authorization registry](../../packages/modules/identity/authorization.registry.json)
+and migration seed exactly this initial policy:
 
-- `catalog.products.read`
-- `catalog.products.write`
-- `catalog.products.publish`
-- `catalog.skus.read`
-- `catalog.skus.write`
-- `catalog.skus.publish`
-- `audit.records.read`
+| Permission code | Fixed description |
+| --- | --- |
+| `audit.records.read` | Read immutable audit records. |
+| `catalog.products.publish` | Change catalog product publication lifecycle. |
+| `catalog.products.read` | Read catalog product administration data. |
+| `catalog.products.write` | Create and rename catalog products. |
+| `catalog.skus.publish` | Change catalog SKU publication lifecycle. |
+| `catalog.skus.read` | Read catalog SKU administration data. |
+| `catalog.skus.write` | Create and update catalog SKUs. |
+
+The one built-in role has ID
+`01a02f59-a800-7000-8000-000000000001`, code
+`SYSTEM_ADMINISTRATOR`, display name `System Administrator`, status `ACTIVE`,
+version 1, and creation/update instant `2026-08-23T16:00:00.000000Z`. It maps
+to exactly all seven codes above. The registry, Prisma representation,
+migration seed, and verifier must agree byte for byte.
+
+These seeded rows are versioned application configuration, not results of a
+runtime Role command. The migration history supplies their provenance; it does
+not synthesize `ROLE_CREATION`, permission-grant, or security-event rows.
 
 The complete application-owned permission registry is capped at 128 codes.
 Every permission-adding migration must assert that bound before inserting. It
@@ -882,6 +906,11 @@ bootstrap account was previously claimed, creates Account and
 PasswordAuthenticator, assigns this role, appends the bootstrap security
 event, and marks the singleton claimed in one transaction. It issues no
 session credential.
+
+The authorization and security-event tables currently have no repository,
+authority adapter, Unit of Work, NestJS provider, controller, or route. Their
+presence and seed data grant no runtime authority and do not satisfy the
+Identity delivery gate.
 
 ### Offline administrator credential operations
 
@@ -2141,19 +2170,58 @@ Redis decision latency receive separate metrics and alerts.
 
 ## Security events, privacy, and retention
 
-Identity records closed events such as bootstrap, login accepted/rejected,
-refresh rotation, refresh reuse, logout, family revocation, password
-authenticator disabled/rebound, password replacement, role creation/rename/
-retirement, role grant/revoke, suspension, resumption, and deactivation.
-State-changing events commit with their state. A rejected login admitted by
-Redis may record a bounded event with a nullable account identifier; it never
-records the candidate value.
+`event_type` names a normalized security action rather than embedding its
+result. The initial closed action registry is:
 
-Security records contain no arbitrary metadata JSON, login name, password,
-PHC value, token, digest, cookie, IP, user agent, DTO, or exception text.
-Diagnostic logs use static event names and opaque identifiers only. Identity
-owns the write model; a future Audit query boundary consumes an exported
-application contract rather than reading Identity tables.
+- `ADMINISTRATOR_BOOTSTRAP`, `ACCOUNT_CREATION`, `LOGIN`,
+  `SESSION_REFRESH`, `LOGOUT`, and `SESSION_FAMILY_REVOCATION`;
+- `PASSWORD_AUTHENTICATOR_DISABLE`, `PASSWORD_AUTHENTICATOR_REBIND`, and
+  `PASSWORD_REPLACEMENT`;
+- `ACCOUNT_SUSPENSION`, `ACCOUNT_RESUMPTION`, and `ACCOUNT_DEACTIVATION`;
+- `ROLE_CREATION`, `ROLE_RENAME`, `ROLE_RETIREMENT`,
+  `ROLE_PERMISSION_GRANT`, and `ROLE_PERMISSION_REVOKE`; and
+- `ACCOUNT_ROLE_GRANT` and `ACCOUNT_ROLE_REVOKE`.
+
+The database rejects an action, outcome, and reason combination outside this
+compatibility matrix:
+
+| Action | Outcome and reason |
+| --- | --- |
+| `LOGIN` | `SUCCEEDED` with no reason, or `REJECTED` with exactly one of `INVALID_CREDENTIALS`, `AUTHENTICATOR_COOLDOWN`, `AUTHENTICATOR_REBIND_REQUIRED`, or `ACCOUNT_INACTIVE`. Redis-denied attempts never enter MySQL. |
+| `SESSION_REFRESH` | `SUCCEEDED` with no reason, or `REJECTED` with `REFRESH_REUSE_DETECTED`. |
+| `SESSION_FAMILY_REVOCATION` | `SUCCEEDED` with exactly one of `SESSION_LIMIT_REACHED`, `ACCOUNT_SUSPENDED`, `ACCOUNT_DEACTIVATED`, `PASSWORD_REPLACED`, or `PASSWORD_REBOUND`. |
+| Every other initial action | `SUCCEEDED` with no reason. |
+
+This normalization supports bounded result queries without permitting a
+contradiction such as a rejected Role mutation or a successful login carrying
+a rejection reason. Domain facts still are not durable events; the application
+Unit of Work maps one accepted fact or security decision into this registry.
+State-changing evidence commits with its state. A rejected login may retain a
+nullable known subject account but never the candidate login value.
+
+Security-event context is typed rather than polymorphic JSON:
+
+| Field | Meaning |
+| --- | --- |
+| `actor_account_id` | UUIDv7 account already authorized as the initiator; null for pre-authentication rejection, automatic disablement, and offline control-plane actions. |
+| `subject_account_id` | UUIDv7 affected account when known; it may be null only where the action matrix permits no known account, including an unknown rejected login. |
+| `role_id` | UUIDv7 affected Role for Role and account-role actions. |
+| `session_id` | UUIDv7 SessionFamily for session actions. |
+| `permission_code` | Canonical permission code only for Role permission grant or revoke. |
+| `request_id` | Optional server-owned UUIDv4 HTTP-hop identifier. |
+| `correlation_id` | Optional validated UUIDv4 or UUIDv7 workflow identifier; it is mandatory whenever `request_id` is present. |
+| `operator_reference` | Bounded offline control-plane reference used only by bootstrap or authenticator rebind; it cannot coexist with HTTP request or correlation context. |
+| `occurred_at` | Lossless writer-authoritative `DATETIME(6)` occurrence time. |
+
+Event-specific checks require the meaningful account, role, session,
+permission, and operator fields and reject unrelated context. Evidence IDs and
+permission codes deliberately have no foreign keys: account erasure, Role
+retirement, permission-registry evolution, and session cleanup cannot erase or
+invalidate historical meaning. Security records contain no arbitrary metadata
+JSON, login name, password, PHC value, token, digest, cookie, IP, user agent,
+DTO, or exception text. Diagnostic logs use static event names and opaque
+identifiers only. Identity owns the write model; a future Audit query boundary
+consumes an exported application contract rather than reading Identity tables.
 
 Consumed refresh rows remain through family absolute expiry plus a 24-hour
 incident and clock-skew buffer so reuse detection cannot be deleted early.
@@ -2212,9 +2280,12 @@ The implementation increment is incomplete until tests prove:
   behavior with fake application ports;
 - exact token entropy/encoding/digests, Argon2id verification and upgrade, and
   no secret-bearing error or diagnostic output;
-- real-MySQL schema, collation, checks, indexes, bootstrap race, authority
-  and exact bootstrap grants, attempt-100 disable and rebind races, concurrent
-  five-family enforcement,
+- real-MySQL schema, collation, checks, indexes, exact authorization-registry
+  and system-role seeds, Role lifecycle, mapping uniqueness and `RESTRICT`
+  references, security-action outcome/reason/context compatibility, UUID
+  version distinctions, absence of security-event foreign keys, bootstrap
+  race, authority and exact bootstrap grants, attempt-100 disable and rebind
+  races, concurrent five-family enforcement,
   account-wide revocation, zero-role authenticated projection, role/permission
   bounds, issuance projection rollback, joins, rotation, expired-predecessor
   replay-family revocation, concurrent refresh, writer-time consistency,
@@ -2265,6 +2336,12 @@ The implementation increment is incomplete until tests prove:
 
 This order keeps each commit usable and reviewed while ensuring no partial
 authentication surface becomes public.
+
+The current authorization/security-evidence migration is only an unused
+subset of step 3. It supplies constrained records and deterministic baseline
+policy, but no application port consumes them and no principal can be resolved
+from them until the Unit of Work, stores, authority query, composition, and
+complete gate tests arrive.
 
 ## Why this design
 

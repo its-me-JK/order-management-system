@@ -336,7 +336,12 @@ INNER JOIN `information_schema`.`REFERENTIAL_CONSTRAINTS` AS `rc`
     ON `rc`.`CONSTRAINT_SCHEMA` = `kcu`.`CONSTRAINT_SCHEMA`
    AND `rc`.`CONSTRAINT_NAME` = `kcu`.`CONSTRAINT_NAME`
 WHERE `kcu`.`CONSTRAINT_SCHEMA` = DATABASE()
-  AND `kcu`.`TABLE_NAME` LIKE _ascii'identity\_%'
+  AND `kcu`.`CONSTRAINT_NAME` IN (
+      _ascii'fk_identity_access_credentials_refresh_generation',
+      _ascii'fk_identity_refresh_credentials_family',
+      _ascii'fk_identity_refresh_credentials_successor',
+      _ascii'fk_identity_session_families_account'
+  )
   AND `kcu`.`REFERENCED_TABLE_NAME` IS NOT NULL;
 SQL
 
