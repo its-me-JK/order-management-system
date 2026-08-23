@@ -860,7 +860,7 @@ describe('Node Identity cryptography construction and real provider', (): void =
     }
   });
 
-  it('seals construction, freezes the adapter, and does not widen package exports', (): void => {
+  it('seals construction, freezes the adapter, and keeps cryptography off package exports', (): void => {
     const validPrimitives = primitives(
       (): Promise<unknown> => Promise.resolve(filledBytes(1)),
       sha256Ascii,
@@ -901,7 +901,7 @@ describe('Node Identity cryptography construction and real provider', (): void =
     expect(identityPublicApi).not.toHaveProperty(
       'createNodeIdentitySessionCredentialCryptoWithPrimitives',
     );
-    expect(Reflect.ownKeys(packageManifest['exports'])).toEqual(['.']);
+    expect(Reflect.ownKeys(packageManifest['exports'])).toEqual(['.', './infrastructure/prisma']);
     expect(Object.isFrozen(crypto)).toBe(true);
     expect(Object.isFrozen(Object.getPrototypeOf(crypto))).toBe(true);
     expect(Object.isFrozen(recoveredConstructor)).toBe(true);

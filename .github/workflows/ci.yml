@@ -120,6 +120,9 @@ jobs:
       - name: Verify Identity authorization and security-event migration
         run: pnpm test:integration:identity-authorization
 
+      - name: Test Identity access authority against MySQL
+        run: pnpm test:integration:identity-authority
+
       - name: Test Catalog vertical read slice against MySQL
         run: pnpm test:integration:catalog
 

@@ -64,7 +64,7 @@ the exact wire-to-digest pair, a nominal SecurityEvent identifier, and
 digest-only refresh discovery with authentic one-use tickets. Its internal
 attempt-bound refresh workflow now produces scope- and decision-bound pending
 transaction evidence without claiming commit or credential-delivery authority.
-The unused Identity Prisma slice and reviewed migrations persist Account,
+The uncomposed Identity Prisma slice and reviewed migrations persist Account,
 SessionFamily, retained refresh lineage, generation-bound access records, and
 the first authorization/security-evidence records. The versioned authorization
 registry seeds exactly seven permissions and one explicitly mapped
@@ -77,13 +77,21 @@ and contain neither arbitrary JSON nor retention-coupling foreign keys. Seed
 rows are configuration rather than fabricated runtime events, and append-only
 behavior remains logical under the current shared database role. The future
 Unit of Work must enforce at most 16 total role assignments per Account.
-Identity still exposes no resolver use case or authentication route; no locked
-store, concrete Unit of Work, authority/event adapter, NestJS composition,
-Argon2 adapter, password input policy, or Redis abuse control consumes this
-schema yet. Pricing, inventory, Redis caching, and integration events also
-remain separate later slices.
+Identity now has its first real Prisma read adapter: a package-internal,
+digest-level authority port resolves current Account, SessionFamily, Role, and
+Permission state in one bounded writer-MySQL statement. It distinguishes
+ordinary credential rejection from corrupt issuance evidence, wipes the
+temporary digest copy, deduplicates shared permissions, and fails closed above
+16 active roles, 128 permissions, or 2,048 mapping rows. An isolated MySQL
+suite proves immediate Role/Permission changes, lifecycle rejection, clipped
+access lifetimes, exact bounds, and real outage classification. Identity still
+exposes no Bearer resolver use case or authentication route; no locked store,
+concrete Unit of Work, security-event adapter, NestJS composition, Argon2
+adapter, password input policy, or Redis abuse control completes the runtime
+path yet. Pricing, inventory, Redis caching, and integration events also remain
+separate later slices.
 
-**Overall project progress: 35%.** The fixed, deployment-inclusive scoring
+**Overall project progress: 36%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
 
 ## Planned technology
@@ -249,20 +257,28 @@ pnpm db:migrate:deploy
 pnpm test:integration:database
 pnpm test:integration:identity-refresh-lineage
 pnpm test:integration:identity-authorization
+pnpm test:integration:identity-authority
 pnpm test:integration:catalog
 ```
 
 The database package owns Prisma generation and one ordered forward-only
 migration history. Module-owned Prisma models compose into that schema; the
 reviewed migrations create Catalog Product and SKU records, then safely expand
-their lifecycle invariants, and add the currently unused Identity refresh
-lineage, authorization registry, Role mappings, Account assignments, and
-security evidence. Generated Prisma code is local build output and is not
+their lifecycle invariants, and add uncomposed Identity refresh lineage,
+authorization registry, Role mappings, Account assignments, and security
+evidence. Generated Prisma code is local build output and is not
 committed. The dedicated Identity verifiers apply the complete migration
 history twice in isolated main and shadow databases, prove Prisma has no
 representable schema drift, and adversarially check byte-exact codes, exact
 seed policy, microseconds, UUID versions, foreign keys, event compatibility,
 issuance witness, and the one-active-refresh invariant against pinned MySQL.
+The dedicated Identity authority command creates another exact disposable
+database, deploys migrations twice, and exercises the production Prisma reader
+through the DML-only application principal. Together with the focused adapter
+tests, it proves one-statement writer time, current permission visibility,
+indistinguishable lifecycle rejection, internal corruption handling, exact
+cardinality bounds, digest cleanup, and real connection-outage classification
+before dropping its database and grant.
 The Catalog integration command verifies an initial-schema
 upgrade with legacy rows, rejects ambiguous terminal history before DDL, and
 also creates, migrates twice, and removes an exact fresh
@@ -419,6 +435,8 @@ Useful repository commands:
 | `pnpm test:coverage` | Generate local coverage output |
 | `pnpm test:integration:api` | Verify API health and database-backed readiness against real MySQL |
 | `pnpm test:integration:catalog` | Verify Catalog persistence and the production HTTP composition in an isolated local MySQL database |
+| `pnpm test:integration:identity-authority` | Verify the bounded Identity access-authority reader in an isolated local MySQL database |
+| `pnpm test:integration:identity-authorization` | Verify the Identity authorization registry, Role mappings, security-event schema, and Prisma drift against isolated real MySQL databases |
 | `pnpm test:integration:identity-refresh-lineage` | Verify the Identity lineage migration, invariants, and Prisma drift against isolated real MySQL databases |
 | `pnpm format:check` | Verify formatting without modifying files |
 | `pnpm check` | Run every required quality gate in CI order |

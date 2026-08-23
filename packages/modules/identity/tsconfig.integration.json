@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": ".integration-dist",
+    "rootDir": ".",
+    "sourceMap": false,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "test/**/*.integration-test.ts"],
+  "exclude": [".integration-dist", "dist", "node_modules", "test/**/*.spec.ts"]
+}

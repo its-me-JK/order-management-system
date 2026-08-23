@@ -36,6 +36,7 @@
     "test:integration:api": "pnpm --filter @oms/api run test:integration",
     "test:integration:catalog": "bash packages/modules/catalog/test/run-integration.sh",
     "test:integration:database": "pnpm --filter @oms/database run test:integration",
+    "test:integration:identity-authority": "bash packages/modules/identity/test/run-authority-integration.sh",
     "test:integration:identity-authorization": "pnpm --filter @oms/database run test:migration:identity-authorization",
     "test:integration:identity-refresh-lineage": "pnpm --filter @oms/database run test:migration:identity-refresh-lineage",
     "test:prepare": "pnpm --filter @oms/configuration run build && pnpm --filter @oms/database run build && pnpm --filter @oms/catalog run build",

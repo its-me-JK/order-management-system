@@ -99,13 +99,22 @@ composition root. Delivery belongs under
 `apps/api/src/features/identity/delivery/http`; reusable Bearer extraction and
 request association belong to the API authentication platform adapter.
 
-The future Identity Prisma authority adapter executes the writer-MySQL query,
-performs bounded relational mapping, and calls the package-internal principal
-factory. The API authentication platform adapter only extracts the Bearer
-value, invokes the future root-exported resolver use case, and associates its
-returned immutable principal with the request. A business delivery adapter
-maps that value into its own command context. Catalog never imports an Identity
-repository, role, account, or credential and never queries an Identity table.
+The delivered `IdentityAccessAuthorityReader` is a package-internal,
+digest-level persistence port. Its Prisma adapter executes the writer-MySQL
+query, performs bounded relational mapping, and calls the package-internal
+principal factory. It returns only an exact `resolved` result or one frozen
+`rejected` singleton; unknown credentials and ordinary lifecycle ineligibility
+are intentionally indistinguishable. It is not the future Bearer resolver use
+case. That use case must authenticate the wire value, calculate its digest,
+invoke this port, and become the only root-exported runtime entry point.
+
+The future API authentication platform adapter only extracts the Bearer value,
+invokes that resolver, and associates its returned immutable principal with
+the request. A business delivery adapter maps that value into its own command
+context. Catalog never imports an Identity repository, role, account, or
+credential and never queries an Identity table. The concrete Prisma reader is
+available only from `@oms/identity/infrastructure/prisma`; the package root
+still exports only the principal type.
 
 The principal contains exactly:
 
@@ -151,7 +160,7 @@ Zero roles requires zero permissions; one through 16 active roles may validly
 produce an empty permission set. Actor and session IDs may contain the same
 UUID bytes because they identify different namespaces.
 
-The future authority mapper bounds raw join rows, counts distinct active roles,
+The implemented authority mapper bounds raw join rows, counts distinct active roles,
 deduplicates permission codes legitimately repeated through different roles,
 sorts them in ASCII order, and enforces the 128-distinct-code ceiling before it
 calls the strict factory. The factory rejects duplicate or unsorted values in
@@ -907,10 +916,12 @@ PasswordAuthenticator, assigns this role, appends the bootstrap security
 event, and marks the singleton claimed in one transaction. It issues no
 session credential.
 
-The authorization and security-event tables currently have no repository,
-authority adapter, Unit of Work, NestJS provider, controller, or route. Their
-presence and seed data grant no runtime authority and do not satisfy the
-Identity delivery gate.
+The authorization tables now have the bounded digest-level authority reader
+defined below. The security-event table still has no repository, and neither
+slice has a Unit of Work, NestJS provider, controller, or route. Seed data by
+itself grants no authority: an active Account assignment and a valid resolved
+session are both required. The uncomposed reader does not satisfy the Identity
+delivery gate.
 
 ### Offline administrator credential operations
 
@@ -964,10 +975,14 @@ authenticator is a fixed refusal, never an upsert. The runbook requires a fresh
 login afterward and correlation of the application event with the deployment
 audit record.
 
-The authority query starts from a unique access digest and inner-joins its
-exact `(family_id, sequence)` refresh issuance witness, the unrevoked family
-before its absolute expiry, and the active account. Using the one MySQL
-`CURRENT_TIMESTAMP(6)` value selected in that statement, it requires
+The implemented authority query starts from a unique access digest and
+left-joins its exact `(family_id, sequence)` refresh issuance witness, family,
+and account so a matching credential with corrupt evidence cannot masquerade
+as an unknown credential. Using the one MySQL `CURRENT_TIMESTAMP(6)` value
+selected in that statement, it classifies missing evidence and cross-row
+inconsistency as internal corruption, ordinary revoked, expired, inactive, or
+not-yet-valid state as one rejected result, and only the remaining candidate as
+resolved. Resolved authority requires
 `access.issued_at <= dbNow < access.expires_at`, exact access/refresh issuance
 time equality, `access.expires_at <= family.absolute_expires_at`, and
 `family.created_at <= access.issued_at <= family.last_rotated_at`. Because
@@ -976,8 +991,11 @@ authority already requires an unrevoked family, it also requires
 refresh sequence until terminal revocation. The duration must be at least one
 second and no more than 1,800 seconds. Unless expiry equals the family absolute
 deadline, it must also be an exact whole 300 through 1,800 seconds with matching
-fractional digits. It then left-joins active role assignments and permissions
-in the same bounded statement. The paired refresh row is evidence, not a live
+fractional digits. It then left-joins Account assignments, their loaded Role
+records, active-Role mappings, and registry permissions in the same bounded
+statement. Selecting both sides of each relationship lets the mapper reject an
+orphan or mismatched projection instead of silently treating it as no
+authority. The paired refresh row is evidence, not a live
 authority gate: its consumed time, idle expiry, and credential expiry are
 deliberately not filtered. Any missing witness or cross-row inconsistency fails
 closed rather than returning partial authority. Zero
@@ -991,6 +1009,32 @@ prevents another refresh but does not invalidate an access credential before
 that credential's advertised expiry. One statement avoids combining authority
 observed at different instants. An already authorized in-flight command may
 finish after a later role change; the next request sees the new authority.
+
+The query binds one authenticated 32-byte digest copy and never converts it to
+text. The adapter overwrites that copy after the awaited query on success or
+failure. It uses tagged `$queryRaw`, never an unsafe SQL API, `GROUP_CONCAT`,
+ORM relation hydration, or a JavaScript clock. It requests at most 2,049 rows:
+2,048 is the maximum valid `16 roles × 128 permissions` projection and the
+last row is an overflow sentinel. There is deliberately no SQL sort, allowing
+the indexed join to stop at the sentinel even if stored mappings are corrupt;
+the mapper rejects duplicate role/mapping pairs, deduplicates a permission
+shared by different roles, and ASCII-sorts the bounded final set.
+
+A forged digest fails before persistence. Recognized Prisma connection, pool,
+and timeout failures become fixed, cause-free
+`IdentityAccessAuthorityUnavailableError`; unexpected query failures become
+the fixed, cause-free `IdentityAccessAuthorityPersistenceError`. Malformed,
+inconsistent, or oversized authority evidence becomes the existing fixed
+`InvalidIdentityAuthenticatedPrincipalError`. Only ordinary credential
+ineligibility is `rejected`; dependency failure and corruption can therefore
+never become a credential `401` or partial authority.
+
+This choice spends one indexed writer read on every protected request in
+exchange for next-request revocation and permission visibility. A Redis
+authority cache or signed claims would reduce MySQL traffic, but would require
+coherent invalidation, key rotation, and a defined stale-authority window. They
+remain inappropriate until measured load or service extraction justifies that
+additional consistency machinery.
 
 Cross-table deadlines, the successor relationship, and account-wide
 revocation cannot be fully expressed as MySQL checks. The Unit of Work enforces
@@ -2337,11 +2381,13 @@ The implementation increment is incomplete until tests prove:
 This order keeps each commit usable and reviewed while ensuring no partial
 authentication surface becomes public.
 
-The current authorization/security-evidence migration is only an unused
-subset of step 3. It supplies constrained records and deterministic baseline
-policy, but no application port consumes them and no principal can be resolved
-from them until the Unit of Work, stores, authority query, composition, and
-complete gate tests arrive.
+Step 3 is partially delivered. The constrained Identity records,
+deterministic baseline policy, digest-level authority port, bounded Prisma
+reader, and real-MySQL authority tests exist. The Unit of Work, locked stores,
+security-event writer, cleanup use case, Bearer resolver, NestJS composition,
+and complete delivery-gate tests remain. A principal can be resolved only by
+the internal digest reader in a trusted caller; there is still no credential
+ingress or public authentication surface.
 
 ## Why this design
 
