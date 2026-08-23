@@ -1093,6 +1093,110 @@ restricted `@oms/identity/delivery/session-credentials` subpath with only
 access-for-HTTP and refresh-for-cookie reveal functions; it will export no
 parser, constructor, candidate factory, or generic reveal capability.
 
+### Node session-credential cryptography adapter
+
+The first concrete implementation lives under
+`@oms/identity` infrastructure at
+`src/infrastructure/cryptography/node-identity-session-credential-crypto.ts`.
+Its production construction API is the zero-argument
+`createNodeIdentitySessionCredentialCrypto()` factory, which returns a frozen
+`IdentitySessionCredentialCrypto`. The implementation class is private, and
+its constructor and prototype are frozen with every instance so recovered
+prototype mutation cannot replace a security operation. This increment adds
+no package root export, infrastructure barrel, or package subpath because no
+composed login or refresh use case consumes the adapter yet. When composition
+exists, a reviewed infrastructure subpath may export only the zero-argument
+factory; it will never export the concrete class, test seam, generic
+cryptographic primitives, or credential construction helpers.
+
+Production construction statically binds `node:crypto`; an absent or
+incompatible module is an unsupported deployment and fails module loading or
+bootstrap rather than activating a fallback. Operational RNG or hashing
+failures can still occur during a request and follow the unavailable contract
+below. A direct-file, package-internal deterministic seam accepts exactly two
+copied function references:
+`randomBytes(byteLength: number): Promise<unknown>` and
+`sha256Ascii(wireValue: string): unknown`. It exists only to inject known
+vectors and failures into the same implementation. It is not application
+configuration, not a package export, and not a general crypto provider.
+Prefixes, entropy size, encoding, algorithm, and call count remain fixed
+policy. A future managed or hardware-backed provider implements the application
+port as a separate adapter.
+
+Generation performs this exact provider sequence:
+
+1. Await one access `randomBytes(32)` call, validate and defensively copy its
+   result, Base64url-encode it without padding, then attempt to overwrite the
+   accepted mutable source and owned scratch before awaiting another provider
+   call.
+2. Await one refresh `randomBytes(32)` call and perform the same processing.
+   There is no single 64-byte call, parallel sibling request, redraw, retry, or
+   fallback. Equal encoded payloads fail later at the existing candidate
+   boundary.
+3. Prepend the fixed access and refresh prefixes and pass both complete values
+   through their existing strict application parsers. The adapter duplicates
+   no credential grammar.
+4. Hash the complete 53 ASCII bytes of the access value with SHA-256 and wrap a
+   defensive copy through the access-digest factory; then do the refresh
+   equivalent. Hashing a payload alone, an implicit UTF encoding, or a generic
+   caller-selected algorithm is forbidden.
+5. Pass the four authentic wrappers through the existing paired-candidate
+   factory and return only its complete frozen result.
+
+The two CSPRNG operations are asynchronous and sequential. This keeps rare
+entropy starvation off the event loop and ensures a second operation is never
+left running after a first failure. It costs one extra tiny libuv round trip
+and may contend with future password work; Argon2 concurrency and thread-pool
+delay must therefore be measured together. SHA-256 remains synchronous because
+each fixed 53-byte input is far below a meaningful event-loop work threshold.
+
+Every provider byte result must be a genuine `Uint8Array`-kind view, including
+Buffer, of exactly 32 bytes over an ordinary fixed, non-shared, non-resizable
+`ArrayBuffer`. Validation uses captured intrinsic typed-array facts rather than
+`instanceof` or spoofable properties, accepts an offset view, copies only its
+visible bytes, and rejects a detached, wrong-kind, malformed, shared, or
+resizable result. The provider grants temporary ownership of that visible view,
+which is copied and overwritten before the next provider operation. The
+adapter makes no inference from backing-store identity: Node may legally return
+disjoint pooled views, distinct backing does not prove independent entropy,
+and exact two-call tracing is the auditable draw invariant.
+
+Every provider result must first pass the intrinsic kind, ordinary fixed
+backing, and exact 32-byte length bounds. The adapter immediately registers a
+passing view before any copy, encoding, or wrapping, and registers every
+defensive 32-byte scratch. It uses a captured intrinsic fill operation to
+overwrite each registered view on success and failure, continues cleanup if
+one overwrite fails, and converts a cleanup failure into cryptographic
+unavailability. Cleanup of an accepted entropy source or scratch completes
+before the next RNG call; cleanup of a digest result and scratch completes
+before the next hash. Any cleanup failure aborts further provider calls after
+all already registered bounded views have received an overwrite attempt.
+Wrong-length, shared, resizable, detached, or non-byte values were never
+accepted as bounded exclusively owned storage and have no erasure guarantee;
+this also prevents a faulty provider from turning cleanup into an unbounded
+fill. Byte-view overwriting is defense-in-depth only: V8 strings, encoder
+copies, hash internals, intended WeakMap-held wire/digest values, and the
+runtime itself cannot be proven erased.
+
+Generation maps an entropy error, malformed provider output, encoding/parser
+failure, hash error, invalid digest output, equal entropy, equal digest,
+candidate rejection, or cleanup failure to one fresh, cause-free
+`IdentitySessionCredentialCryptoUnavailableError`. It retains no provider
+exception, code, buffer, or partial candidate and performs no retry. For the
+two presented-credential digest methods, authenticating and serializing the
+target-kind wire wrapper happens before the provider failure boundary. A raw,
+forged, proxied, or cross-kind input therefore retains its fixed target wire
+error and invokes SHA-256 zero times; only failures after authentic input map
+to cryptographic unavailability.
+
+The adapter logs nothing and accepts no logger. A future caller may count a
+closed `identity_session_credential_crypto_unavailable` signal plus the known
+operation name, never exception text or credential material. Tests use
+hard-coded Base64url and SHA-256 vectors, exact provider traces, offset and
+malformed buffers, cleanup observation, fixed-error assertions, and a real
+Node factory smoke test. They prove wiring and invariants, not the statistical
+quality of operating-system entropy.
+
 The transport bounds the submitted password to 256 Unicode code points and
 1,024 UTF-8 bytes before normalization, rejecting invalid Unicode without
 trying to repair it. The password boundary then applies NFC and rechecks the
@@ -1761,15 +1865,16 @@ The implementation increment is incomplete until tests prove:
 2. Scaffold `@oms/identity`; deliver Account values and lifecycle first, then
    PasswordAuthenticator, Role, SessionFamily with RefreshCredential and
    AccessCredential issuance, the authenticated-principal contract, opaque
-   session-credential values and paired crypto port, remaining application
-   ports, outcomes, and tests in bounded commits; expose no route.
+   session-credential values, paired crypto port and Node session-credential
+   adapter, remaining application ports, outcomes, and tests in bounded
+   commits; expose no route.
 3. Add the Identity Prisma fragment, forward migration, Unit of Work,
    repositories, authority read model, bounded cleanup use case, and
    real-MySQL tests.
-4. Add cryptographic adapters and the concurrency-safe offline first-admin and
-   disabled-authenticator rebind commands; prove their TTY/file-descriptor,
-   redaction, operator-boundary, atomic revocation, and race contracts; create
-   no default or showcase credential.
+4. Add the remaining Argon2id cryptographic adapter and the concurrency-safe
+   offline first-admin and disabled-authenticator rebind commands; prove their
+   TTY/file-descriptor, redaction, operator-boundary, atomic revocation, and
+   race contracts; create no default or showcase credential.
 5. Add the technical Redis runtime, Identity abuse adapter, Compose/CI Redis,
    and real-Redis tests.
 6. Compose the bounded Identity cleanup worker, metrics, and retention failure
@@ -1796,6 +1901,9 @@ authentication surface becomes public.
   construction and access/refresh substitution explicit application-boundary
   failures while keeping Node crypto out of policy code. The Unit of Work
   separately makes durable issuance atomic.
+- The private factory-based Node adapter fixes cryptographic policy while
+  permitting deterministic failure injection without exporting a configurable
+  security mechanism or blocking the event loop for entropy.
 - An application-owned Unit of Work keeps security policy out of generic
   repositories and makes atomic event/state invariants testable.
 - Redis contains attack cost across replicas without becoming session state or
@@ -1825,6 +1933,18 @@ authentication surface becomes public.
   in-memory/persistence-bound representation and is dangerously convenient to
   log. Copied opaque bytes map directly to `BINARY(32)` at the cost of explicit
   copy helpers and stricter typed-array validation.
+- Synchronous `randomBytes(32)` avoids libuv scheduling and is usually fast,
+  but even rare entropy starvation would pause the API event loop. Two
+  sequential asynchronous calls add a small round-trip and possible thread-pool
+  contention, but avoid request-path blocking. Sequential rather than parallel
+  ordering makes partial failure and cleanup deterministic at the cost of two
+  worker-pool round trips.
+- One 64-byte CSPRNG request split into two payloads is cryptographically sound
+  with a healthy generator, but obscures the explicit two-draw contract. Two
+  calls cost little on the rate-limited issuance path and are simpler to audit.
+- WebCrypto would improve runtime portability, but Node is the selected backend
+  runtime. A real edge or managed-key requirement should add another adapter
+  rather than a fallback inside this one.
 - A refresh replay grace period improves concurrency UX but weakens theft
   detection or requires recoverable successor storage.
 - Fail-closed Redis protects credential issuance but deliberately reduces auth
@@ -1946,6 +2066,19 @@ authentication surface becomes public.
     are namespace-sensitive authentication material and should not drift into
     logs, JSON, or the wrong persistence table. Separate opaque wrappers also
     force copied byte ownership and make cross-kind mistakes fail at runtime.
+26. **Why is the Node adapter's entropy operation asynchronous while SHA-256 is
+    synchronous?** Entropy can exceptionally wait on operating-system state,
+    so request-path generation must not pause the event loop. Hashing exactly
+    53 bytes is bounded CPU work for which thread-pool scheduling would cost
+    more than the operation.
+27. **Why validate a presented wrapper before catching crypto failures?** A
+    forged or wrong-kind caller value is an application-boundary violation,
+    not provider unavailability. Preserving that error and avoiding any hash
+    call gives stable precedence without exposing provider details.
+28. **Why overwrite temporary Buffers without claiming secret zeroization?** A
+    mutable owned byte region can be shortened in lifetime, which is useful
+    defense-in-depth. Immutable JavaScript strings, V8 copies, and cryptographic
+    internals cannot be reliably erased, so a stronger claim would be false.
 
 ## Future improvements
 
@@ -1966,10 +2099,10 @@ authentication surface becomes public.
   export.
 - Revisit signed, audience-bound access credentials or an Identity network
   service only when an extracted service needs independent validation.
-- Add the Node cryptographic adapter with deterministic SHA-256 vectors,
-  provider-failure injection, entropy-source assertions, and no-partial-pair
-  tests before composing a login or refresh use case; later evaluate an HSM or
-  managed provider without changing the application port.
+- Benchmark libuv delay alongside Argon2id concurrency, add stable
+  crypto-availability metrics, and evaluate FIPS/runtime attestation where a
+  deployment requires it. A future HSM or managed provider remains a separate
+  implementation of the unchanged application port.
 - Add risk signals only after privacy, false-positive, retention, and trusted
   network-source policies are reviewed.
 
