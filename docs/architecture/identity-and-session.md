@@ -87,11 +87,11 @@ flowchart LR
 ```
 
 The business package is `@oms/identity` under `packages/modules/identity`.
-Its root exports application use cases, ports, typed outcomes, and the
-authenticated-principal contract only. Domain types remain package-internal;
-an empty root is preferable to exposing an aggregate before an application
-contract exists. Domain and application code import no NestJS, Prisma, Redis
-client, Node crypto, HTTP, or logging vendor.
+Its root will eventually export only application use cases, ports, typed
+outcomes, and the authenticated-principal contract. Domain types remain
+package-internal; an empty runtime root is preferable to exposing an aggregate
+before a runtime application contract exists. Domain and application code
+import no NestJS, Prisma, Redis client, Node crypto, HTTP, or logging vendor.
 
 Infrastructure adapters use explicit subpaths such as
 `@oms/identity/infrastructure/prisma`. Prisma construction stays in the API
@@ -99,10 +99,13 @@ composition root. Delivery belongs under
 `apps/api/src/features/identity/delivery/http`; reusable Bearer extraction and
 request association belong to the API authentication platform adapter.
 
-The adapter resolves authority and associates an immutable principal with the
-request. A business delivery adapter maps that value into its own command
-context. Catalog never imports an Identity repository, role, account, or
-credential and never queries an Identity table.
+The future Identity Prisma authority adapter executes the writer-MySQL query,
+performs bounded relational mapping, and calls the package-internal principal
+factory. The API authentication platform adapter only extracts the Bearer
+value, invokes the future root-exported resolver use case, and associates its
+returned immutable principal with the request. A business delivery adapter
+maps that value into its own command context. Catalog never imports an Identity
+repository, role, account, or credential and never queries an Identity table.
 
 The principal contains exactly:
 
@@ -115,6 +118,65 @@ credential identifier, raw token, digest, cookie, IP address, or user agent.
 The resolver fails closed if the result exceeds 16 active roles or 128
 distinct permissions; those bounds prevent corrupt configuration from making
 authority an unbounded request input.
+
+### Authenticated principal application contract
+
+`IdentityAuthenticatedPrincipal` is the first public `@oms/identity`
+application contract. Its runtime value has exactly three own enumerable
+members in this order:
+
+| Field | Application rule |
+| --- | --- |
+| `actorId` | Canonical lowercase UUIDv7 for the authenticated account, exposed only as an opaque string. |
+| `sessionId` | Canonical lowercase UUIDv7 for the authoritative SessionFamily, exposed only as an opaque string. |
+| `permissions` | A copied and frozen array of zero through 128 canonical permission codes, already distinct and ASCII-lexicographically sorted. |
+
+The public type carries a non-exported nominal brand that has no runtime
+property. In this increment the package root exports only that type; it exports
+no factory, parser, error, Account/Role/SessionFamily type, credential type,
+fact, or snapshot. This does not make TypeScript a security boundary—a cast can
+always lie—but it prevents ordinary structural assignment from accidentally
+constructing a trusted principal. Runtime trust still comes only from the
+Identity authority resolver and its server-owned request association.
+
+Package-internal
+`createIdentityAuthenticatedPrincipalFromAuthority(value: unknown)` is the
+only production factory. Its authority-evidence input has exactly `actorId`,
+`sessionId`, `activeRoleCount`, and `permissions`; the output deliberately drops
+the role count and has only the three public fields. It validates both
+identifiers with their separate Identity namespaces, requires an integer role
+count from zero through 16, requires a real permission array bounded before
+iteration, and validates every permission with the application-owned grammar.
+Zero roles requires zero permissions; one through 16 active roles may validly
+produce an empty permission set. Actor and session IDs may contain the same
+UUID bytes because they identify different namespaces.
+
+The future authority mapper bounds raw join rows, counts distinct active roles,
+deduplicates permission codes legitimately repeated through different roles,
+sorts them in ASCII order, and enforces the 128-distinct-code ceiling before it
+calls the strict factory. The factory rejects duplicate or unsorted values in
+that already canonical evidence rather than sorting, deduplicating, trimming,
+or otherwise hiding a mapper defect. It copies only validated primitives before
+recursively freezing the permission array and principal record.
+
+Every malformed shape, value, bound violation, or ordering failure, plus any
+exception thrown during bounded reflection or property reads, collapses to the
+fixed, cause-free `InvalidIdentityAuthenticatedPrincipalError`; errors never
+echo an identifier or permission. A Proxy that exposes valid data may be copied
+safely—the contract does not claim JavaScript can identify every Proxy or
+survive non-terminating or process-ending code. Zero roles and permissions is
+valid authentication and leaves later command authorization to return its
+ordinary `403`. Invalid or oversized authoritative evidence later becomes the
+fixed internal authority failure, never credential `401`, permission `403`, or
+partial authority.
+
+The alternative is a public structural interface plus constructor, or passing
+Identity Account/Role records into business modules. A public constructor is
+convenient for fixtures but invites caller-created trust objects; Identity
+records couple every module to authentication persistence and expose data it
+does not need. A type-only nominal contract requires explicit test fixtures at
+the trusted adapter boundary, but preserves the one-way dependency and keeps
+the runtime root surface empty until an actual use case is exported.
 
 ## Domain boundaries and lifecycle
 
@@ -1566,8 +1628,8 @@ The implementation increment is incomplete until tests prove:
 1. Accept this contract and ADR-0017 without runtime code.
 2. Scaffold `@oms/identity`; deliver Account values and lifecycle first, then
    PasswordAuthenticator, Role, SessionFamily with RefreshCredential and
-   AccessCredential issuance, application ports, outcomes, and tests in
-   bounded commits; expose no route.
+   AccessCredential issuance, the authenticated-principal contract,
+   application ports, outcomes, and tests in bounded commits; expose no route.
 3. Add the Identity Prisma fragment, forward migration, Unit of Work,
    repositories, authority read model, bounded cleanup use case, and
    real-MySQL tests.
@@ -1719,6 +1781,11 @@ authentication surface becomes public.
     revocation. Family closure, absolute expiry, Account state, and current
     permissions are the immediate authority controls; requiring an unconsumed
     witness would invalidate the prior access token at every routine refresh.
+22. **Why does the initial package root export only the principal type?** Business
+    modules need a stable trust contract but must not manufacture authenticated
+    state or depend on Identity aggregates. The package-internal factory
+    validates authoritative data, while the type-only root export keeps the
+    runtime construction boundary inside Identity.
 
 ## Future improvements
 
