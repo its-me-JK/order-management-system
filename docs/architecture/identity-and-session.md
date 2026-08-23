@@ -1221,11 +1221,15 @@ wire-value, credential-delivery, or package-export authority.
 This is still not the concrete Unit of Work. The executor can seal and return
 `indeterminate` when its deadline wins while the program Promise is still
 settling. At that instant a refresh command may remain `running`, and the
-existing close transition correctly refuses to retire it concurrently. Before
-the full Unit of Work is safe, the executor needs a trusted post-seal cleanup
-hook or Identity needs a carefully designed abort transition that cannot race
-continued program work. Assuming socket destruction immediately settles the
-program is not commit or credential-lifecycle proof.
+existing close transition correctly refuses to retire it concurrently. The
+executor now supplies the prerequisite notification seam: an optional,
+construction-captured, receiver-free, synchronous
+`observeProgramSettlement(input)` runs exactly once after the actual program
+Promise fulfils or rejects, statement authority is sealed, and the exact tracked
+statement operation has drained, including after the caller has already
+received `indeterminate`. Assuming socket destruction or the observer alone
+settles the command, proves commit, or authorizes credential delivery remains
+forbidden.
 
 Identity uses a hybrid boundary rather than repositories per aggregate. A
 small `IdentitySessionRefreshUnitOfWork` owns transaction completion. Separate purpose-built
@@ -1431,6 +1435,30 @@ registration and remove every unneeded retained reference after confirmed
 commit, confirmed non-commit, or an indeterminate outcome. Both settlement
 transitions are one-shot and non-throwing: an invalid or replayed transition
 produces no completion and never changes a rightful registration.
+
+The future direct-MySQL Unit of Work uses a two-sided rendezvous per admitted
+command. One side records the executor's database outcome. The program side is
+ready either when the Unit of Work's synchronous start marker still proves the
+fixed program was never invoked, or when `observeProgramSettlement(input)`
+reports that an invoked program and its tracked statement have settled and the
+sealed command can be closed without racing either. The reviewed Identity
+program may start no detached non-SQL continuation; the observer cannot discover
+such work in an arbitrary faulty program.
+Confirmed commit may promote only the exact consumed evidence when both sides
+are ready. Proven non-commit or an indeterminate outcome may revoke the exact
+evidence and retire the attempt only when both sides are ready. If the database
+deadline wins first, the caller receives the fixed `indeterminate` result
+immediately; the later observer notification completes safe command closure and
+revocation without changing that returned result.
+
+The observer receives only its original program input. It receives no command
+result or error, transaction outcome, connection, statement context, SQL,
+directive, completion, or candidate pair, and it cannot promote evidence or
+select commit/rollback. Its failure cannot escape the executor or alter an
+already-returned outcome. If the actual program Promise never settles, the
+connection remains quarantined and the attempt remains held rather than being
+retired concurrently; runtime shutdown and deployment termination remain the
+terminal backstops.
 
 The refresh-specific application port fixes `execute(command)` as its only
 operation and accepts no caller callback, scope, query function, or settlement
@@ -1671,11 +1699,13 @@ executor and the direct loader uses only that executor's statement capability.
 Prisma's public interactive transaction client still has no supported
 single-query cancellation or exact pooled-connection quarantine primitive, so
 it remains excluded from the concrete transaction. The remaining lifecycle
-blocker is above the connection: when the executor deadline wins, the program
-Promise may still be settling after the caller has received `indeterminate`.
-The future Unit of Work must add a trusted post-seal cleanup or abort protocol
-and prove that every claimed attempt is eventually retired without racing
-continued program work.
+work is now explicitly composable above the connection: the executor's
+post-seal program-settlement observer supplies one side of the rendezvous even
+when its deadline already returned `indeterminate`. The future Unit of Work
+must implement the Identity-owned other side, map the database outcome, and
+prove that each claimed attempt is promoted or retired only after program work
+can no longer race it. This prerequisite alone performs none of those
+transitions.
 
 The pinned Prisma MariaDB adapter also uses debug namespaces that can render a
 query object with its bound arguments. Production bootstrap must reject or
@@ -1845,9 +1875,10 @@ credential delivery. The concrete Unit of Work must still prove that only its
 real commit acknowledgement can invoke promotion, the later delivery gate must
 prove exact-pair disclosure, and executor tests must prove that caught values
 with hostile getters, Proxies, coercion traps, or secret causes never escape.
-The next direct-MySQL increment must compose the delivered locked loader and
-both writers in the concrete Unit of Work and its cleanup protocol. Together
-they must prove zero
+The settlement observer is only the executor-side prerequisite. The next
+direct-MySQL increment must compose the delivered locked loader and both
+writers in the concrete Unit of Work and implement the Identity side of the
+two-sided cleanup rendezvous. Together they must prove zero
 orchestration before a valid context, one orchestration otherwise, one writer
 time, one connection, operation tracking and bounded drain, DML order,
 affected-row checks, rollback injection after every statement, exact
@@ -1886,8 +1917,8 @@ the scope must be invalid before `COMMIT`, while confirmed commit still needs
 the exact attempt binding for later delivery. That retained registration grants
 neither SQL nor delivery authority. The next improvements are the exact-pair
 delivery gate and an Identity MySQL Unit of Work that composes the delivered
-scoped stores and maps the executor's settlement outcome into completion
-promotion or revocation.
+scoped stores, maps the executor's settlement outcome, and joins it with the
+post-seal program notification before completion promotion or revocation.
 
 ## Credential and password representation
 
@@ -2903,10 +2934,12 @@ command, refresh-specific Unit-of-Work port, dormant commit-completion
 registry, direct reuse writer, shared authority projection mapper, and private
 same-connection rotation-authority statement are also delivered. The private
 direct rotation writer now composes the five graph mutations, authority read,
-and successful event on that connection. The post-deadline command cleanup
-protocol, concrete direct-MySQL Unit of Work, database-gated promotion,
-delivery gate, remaining security-event paths, cleanup use case, NestJS
-composition, and complete delivery-gate tests remain.
+and successful event on that connection. The database executor now also
+delivers the receiver-free post-seal program-settlement observer prerequisite.
+The Identity-owned two-sided command cleanup rendezvous, concrete direct-MySQL
+Unit of Work, database-gated promotion, delivery gate, remaining security-event
+paths, cleanup use case, NestJS composition, and complete delivery-gate tests
+remain.
 A trusted caller can now
 resolve an already-extracted canonical access-wire value, but there is still no
 `Authorization` extraction, request association, credential ingress, route, or
@@ -3204,6 +3237,10 @@ public authentication surface.
     receives `indeterminate` while the refresh command remains `running`, a
     concurrent close cannot safely retire its credential attempt. Connection
     safety and application-capability cleanup therefore need separate proofs.
+    The executor's settlement observer proves only that the top-level program
+    Promise and tracked statement work have ended; the future Unit of Work must
+    prohibit detached continuations and rendezvous that fact with its independent
+    database outcome before it promotes or revokes exact attempt evidence.
 
 ## Future improvements
 
@@ -3237,10 +3274,11 @@ public authentication surface.
   delivery gate. Prove scope escape, rollback injection, competing refresh,
   and ambiguous commit before extending the pattern to login, logout, Account,
   authenticator, or Role workflows; do not generalize it into aggregate CRUD.
-- Extend the sealed executor with a trusted post-seal program-settlement cleanup
-  hook, or add a workflow abort transition with equivalent race safety. Prove
-  attempt retirement after deadline-driven `indeterminate` without weakening
-  connection quarantine or allowing late program work to revive authority.
+- Use the delivered `observeProgramSettlement(input)` prerequisite to implement
+  the Identity-owned two-sided settlement rendezvous. Prove attempt retirement
+  after deadline-driven `indeterminate` without weakening connection
+  quarantine, treating the observer as commit proof, or allowing late program
+  work to revive authority.
 - Reject Prisma driver-adapter debug namespaces and query logging in production
   configuration before public credential ingress, and regression-test that
   bound credential digests cannot bypass the application logger.

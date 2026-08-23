@@ -90,6 +90,13 @@ export type MySqlTransactionProgram<
   failures: readonly Failure[];
   unavailableFailure: Failure;
   defectFailure: Failure;
+  /**
+   * Optional synchronous notification that the exact program Promise settled.
+   * The executor invokes it receiver-free only after sealing statement authority
+   * and draining the exact tracked statement operation, if one existed.
+   * It must return undefined synchronously; any other runtime return is a defect.
+   */
+  observeProgramSettlement?(this: undefined, input: Input): undefined;
   run(
     this: undefined,
     context: MySqlTransactionProgramContext<CommitResult, Failure, Statements>,

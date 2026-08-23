@@ -1,4 +1,5 @@
 import { performance } from 'node:perf_hooks';
+import { isPromise } from 'node:util/types';
 
 import type {
   ManagedMariaDbAllocatedConnection,
@@ -37,6 +38,11 @@ const capturedHasOwn = Object.hasOwn;
 const capturedIsArray = Array.isArray;
 const capturedOwnKeys = Reflect.ownKeys;
 const capturedReflectApply = Reflect.apply;
+const capturedIsPromise = isPromise;
+const capturedPromiseConstructor = Promise;
+const capturedPromisePrototype = Promise.prototype;
+// eslint-disable-next-line @typescript-eslint/unbound-method -- Captured once and invoked only through Reflect.apply.
+const capturedPromiseThen = Promise.prototype.then;
 // eslint-disable-next-line @typescript-eslint/unbound-method -- Captured once and invoked with its authentic receiver.
 const capturedPerformanceNow = performance.now;
 // eslint-disable-next-line @typescript-eslint/unbound-method -- Captured once and invoked only through Reflect.apply.
@@ -57,9 +63,22 @@ const PROGRAM_KEYS = capturedFreeze([
   'failures',
   'unavailableFailure',
   'defectFailure',
+  'observeProgramSettlement',
   'run',
 ] as const);
+const REQUIRED_PROGRAM_KEY_COUNT = PROGRAM_KEYS.length - 1;
 const OPTIONS_KEYS = capturedFreeze(['timeoutMilliseconds'] as const);
+const promiseSpeciesDescriptor = capturedGetOwnPropertyDescriptor(
+  capturedPromiseConstructor,
+  Symbol.species,
+);
+
+if (promiseSpeciesDescriptor?.get === undefined) {
+  throw new TypeError('Expected the intrinsic Promise species getter');
+}
+
+// eslint-disable-next-line @typescript-eslint/unbound-method -- Captured only for descriptor identity comparison.
+const capturedPromiseSpeciesGetter = promiseSpeciesDescriptor.get;
 
 const SET_UTC = "SET SESSION time_zone = '+00:00'";
 const SET_READ_COMMITTED = 'SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED';
@@ -90,6 +109,8 @@ type OperationObservation<Value> =
   | Readonly<{ kind: 'rejected' }>
   | Readonly<{ kind: 'deadline' }>;
 
+type ProgramSettlementObserver<Input> = (this: undefined, input: Input) => unknown;
+
 interface CapturedProgram<
   Input,
   CommitResult,
@@ -98,6 +119,7 @@ interface CapturedProgram<
 > {
   readonly defectFailure: Failure;
   readonly failures: ReadonlySet<Failure>;
+  readonly observeProgramSettlement: ProgramSettlementObserver<Input> | undefined;
   readonly run: MySqlTransactionProgram<Input, CommitResult, Failure, Statements>['run'];
   readonly statements: ReadonlySet<object>;
   readonly unavailableFailure: Failure;
@@ -120,6 +142,8 @@ interface ExecutionState<CommitResult, Failure extends string> {
   failure: Failure | undefined;
   leaseSettled: boolean;
   phase: ControlPhase;
+  programSettlementObservation: Promise<void> | undefined;
+  programSettlementObserved: boolean;
   sessionStatus: SessionStatus;
 }
 
@@ -147,6 +171,8 @@ let constructManagedMySqlTransactionExecutor: ManagedMySqlTransactionExecutorFac
 const DEADLINE_OBSERVATION = capturedFreeze({ kind: 'deadline' as const });
 const REJECTED_OBSERVATION = capturedFreeze({ kind: 'rejected' as const });
 const INDETERMINATE_OUTCOME = capturedFreeze({ kind: 'indeterminate' as const });
+const SETTLED_PROGRAM_OBSERVATION = Promise.resolve();
+const ignorePromiseSettlement = (): undefined => undefined;
 
 class InvalidMySqlTransactionExecutorError extends Error {
   public constructor() {
@@ -270,6 +296,45 @@ function weakMapSet<Key extends object, Value>(
   capturedReflectApply(capturedWeakMapSet, map, [key, value]);
 }
 
+function containOrdinaryPromiseSettlement(value: unknown): void {
+  try {
+    if (
+      !capturedIsPromise(value) ||
+      capturedGetPrototypeOf(value) !== capturedPromisePrototype ||
+      capturedGetOwnPropertyDescriptor(value, 'constructor') !== undefined
+    ) {
+      return;
+    }
+
+    const constructorDescriptor = capturedGetOwnPropertyDescriptor(
+      capturedPromisePrototype,
+      'constructor',
+    );
+    const speciesDescriptor = capturedGetOwnPropertyDescriptor(
+      capturedPromiseConstructor,
+      Symbol.species,
+    );
+
+    if (
+      constructorDescriptor === undefined ||
+      !capturedHasOwn(constructorDescriptor, 'value') ||
+      constructorDescriptor.value !== capturedPromiseConstructor ||
+      speciesDescriptor?.get !== capturedPromiseSpeciesGetter ||
+      speciesDescriptor.set !== undefined ||
+      capturedHasOwn(speciesDescriptor, 'value')
+    ) {
+      return;
+    }
+
+    void capturedReflectApply(capturedPromiseThen, value, [
+      ignorePromiseSettlement,
+      ignorePromiseSettlement,
+    ]);
+  } catch {
+    // A hostile Promise subclass cannot affect the already selected fixed failure.
+  }
+}
+
 function isObject(value: unknown): value is object {
   return (typeof value === 'object' && value !== null) || typeof value === 'function';
 }
@@ -353,7 +418,8 @@ function readProgram<
   const keys = capturedOwnKeys(value);
 
   if (
-    keys.length !== PROGRAM_KEYS.length ||
+    keys.length < REQUIRED_PROGRAM_KEY_COUNT ||
+    keys.length > PROGRAM_KEYS.length ||
     keys.some(
       (key) => typeof key !== 'string' || !PROGRAM_KEYS.some((expected) => expected === key),
     )
@@ -365,6 +431,10 @@ function readProgram<
   const failureValues = readExactArray(ownDataValue(value, 'failures'));
   const unavailableFailure = ownDataValue(value, 'unavailableFailure');
   const defectFailure = ownDataValue(value, 'defectFailure');
+  const hasProgramSettlementObserver = keys.includes('observeProgramSettlement');
+  const observeProgramSettlement = hasProgramSettlementObserver
+    ? ownDataValue(value, 'observeProgramSettlement')
+    : undefined;
   const run = ownDataValue(value, 'run');
 
   if (
@@ -374,6 +444,7 @@ function readProgram<
     typeof unavailableFailure !== 'string' ||
     typeof defectFailure !== 'string' ||
     unavailableFailure === defectFailure ||
+    (hasProgramSettlementObserver && typeof observeProgramSettlement !== 'function') ||
     typeof run !== 'function'
   ) {
     invalidExecutor();
@@ -427,6 +498,8 @@ function readProgram<
   return {
     defectFailure: defectFailure as Failure,
     failures,
+    observeProgramSettlement: observeProgramSettlement as
+      ProgramSettlementObserver<Input> | undefined,
     run: run as MySqlTransactionProgram<Input, CommitResult, Failure, Statements>['run'],
     statements,
     unavailableFailure: unavailableFailure as Failure,
@@ -670,6 +743,8 @@ class ManagedMySqlTransactionExecutor<
       leaseSettled: false,
       owner: this.#owner,
       phase: 'pre-begin',
+      programSettlementObservation: undefined,
+      programSettlementObserved: false,
       sessionStatus: 'not-created',
     };
     const deadline = new TransactionDeadline(this.#timeoutMilliseconds, (): void => {
@@ -774,8 +849,22 @@ class ManagedMySqlTransactionExecutor<
       operation = Promise.reject(new InvalidMySqlTransactionProgramError());
     }
 
-    const programOutcome = await deadline.observe(operation);
-    state.sessionStatus = 'sealed';
+    const settlement = operation.then<
+      OperationObservation<MySqlTransactionDirective<CommitResult, Failure>>,
+      OperationObservation<MySqlTransactionDirective<CommitResult, Failure>>
+    >(
+      (value) => {
+        this.#sealProgramSettlement(state, input);
+        return capturedFreeze({ kind: 'fulfilled' as const, value });
+      },
+      () => {
+        this.#sealProgramSettlement(state, input);
+        return REJECTED_OBSERVATION;
+      },
+    );
+    const observedSettlement = await deadline.observe(settlement);
+    const programOutcome =
+      observedSettlement.kind === 'fulfilled' ? observedSettlement.value : DEADLINE_OBSERVATION;
 
     if (programOutcome.kind === 'deadline') {
       state.phase = 'indeterminate';
@@ -783,15 +872,14 @@ class ManagedMySqlTransactionExecutor<
       return INDETERMINATE_OUTCOME;
     }
 
-    if (state.activeOperation !== undefined) {
-      this.#poison(state, this.#program.defectFailure);
-      const drain = await deadline.observe(state.activeOperation);
+    const programSettlementObservation = state.programSettlementObservation;
 
-      if (drain.kind === 'deadline') {
-        state.phase = 'indeterminate';
-        this.#clearDirective(state);
-        return INDETERMINATE_OUTCOME;
-      }
+    if (programSettlementObservation === undefined) {
+      this.#poison(state, this.#program.defectFailure);
+    } else if ((await deadline.observe(programSettlementObservation)).kind === 'deadline') {
+      state.phase = 'indeterminate';
+      this.#clearDirective(state);
+      return INDETERMINATE_OUTCOME;
     }
 
     let registration: DirectiveRegistration<CommitResult, Failure> | undefined;
@@ -834,6 +922,63 @@ class ManagedMySqlTransactionExecutor<
     return disposition === 'commit'
       ? this.#commit(state, deadline, outcome)
       : this.#rollback(state, deadline, outcome);
+  }
+
+  #sealProgramSettlement(state: ExecutionState<CommitResult, Failure>, input: Input): void {
+    state.sessionStatus = 'sealed';
+    const activeOperation = state.activeOperation;
+
+    if (activeOperation === undefined) {
+      state.programSettlementObservation = SETTLED_PROGRAM_OBSERVATION;
+      this.#observeProgramSettlement(state, input);
+      return;
+    }
+
+    this.#poison(state, this.#program.defectFailure);
+    const notify = (): void => {
+      this.#observeProgramSettlement(state, input);
+    };
+
+    try {
+      const observation: unknown = capturedReflectApply(capturedPromiseThen, activeOperation, [
+        notify,
+        notify,
+      ]);
+
+      if (!capturedIsPromise(observation)) {
+        this.#poison(state, this.#program.defectFailure);
+        return;
+      }
+
+      state.programSettlementObservation = observation as Promise<void>;
+      containOrdinaryPromiseSettlement(observation);
+    } catch {
+      this.#poison(state, this.#program.defectFailure);
+    }
+  }
+
+  #observeProgramSettlement(state: ExecutionState<CommitResult, Failure>, input: Input): void {
+    if (state.programSettlementObserved) {
+      this.#poison(state, this.#program.defectFailure);
+      return;
+    }
+
+    state.programSettlementObserved = true;
+    const observer = this.#program.observeProgramSettlement;
+
+    if (observer === undefined) return;
+
+    try {
+      const result: unknown = capturedReflectApply(observer, undefined, [input]);
+
+      if (result !== undefined) {
+        containOrdinaryPromiseSettlement(result);
+        this.#poison(state, this.#program.defectFailure);
+      }
+    } catch (error: unknown) {
+      containOrdinaryPromiseSettlement(error);
+      this.#poison(state, this.#program.defectFailure);
+    }
   }
 
   #createProgramContext(

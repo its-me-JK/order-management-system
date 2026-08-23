@@ -3,7 +3,7 @@
 - **Overall completion:** 38%
 - **Current milestone:** Identity, catalog, pricing, and inventory
 - **Public demo:** Not deployable yet
-- **Last reviewed:** 2026-08-23
+- **Last reviewed:** 2026-08-24
 
 This score covers the complete portfolio scope, including backend behavior,
 frontend experience, operational hardening, and public deployment. It measures
@@ -49,9 +49,12 @@ capability points and 0.10 testing/security points. It earns no architecture,
 platform, documentation, deployment, or CI/CD points: the private rotated
 terminal branch now performs the exact five graph mutations, same-connection
 authority projection, and successful refresh event through the already-scored
-executor. There is still no concrete Unit of Work, safe post-deadline command
-cleanup, database-gated completion, credential delivery, HTTP composition,
-protected route, release pipeline, or live environment.
+executor. The executor's optional post-seal
+`observeProgramSettlement(input)` notification is a no-point prerequisite: it
+cannot prove a database outcome or perform Identity cleanup. There is still no
+concrete Unit of Work, Identity-owned two-sided post-deadline command cleanup,
+database-gated completion, credential delivery, HTTP composition, protected
+route, release pipeline, or live environment.
 Catalog reads are not an externally usable showcase: the endpoint is
 production-composed locally, but there is still no release pipeline, provider
 resource, live URL, synthetic showcase data, distributed abuse control, or
@@ -117,8 +120,10 @@ live gate proves the complete graph and event, every mapped duplicate
 constraint, and rollback under all three external failure classes. The database
 package owns operation drain, deadline quarantine, and settlement
 classification; the future Identity Unit of Work must compose the delivered
-locked loader and both writers, map those outcomes,
-activate or revoke its exact completion, and safely retire a running command
+locked loader and both writers, map those outcomes, and rendezvous them with the
+executor's receiver-free post-seal program-settlement notification or prove
+that setup never invoked the program. Only after both sides are ready may it
+activate or revoke its exact completion and safely retire a running command
 after a deadline returns `indeterminate`. The
 refresh kernel binds the exact attempt to a private transaction
 scope, one locked load, one opaque decision, kind-matched terminal

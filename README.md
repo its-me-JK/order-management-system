@@ -144,15 +144,25 @@ action and executes predecessor consumption, successor refresh/access
 insertion, predecessor linkage, conditional family advance, bounded
 same-connection authority projection, and the successful refresh event. It
 exposes neither SQL nor credential material and mints only pending workflow
-evidence after all seven operations succeed. There is still no concrete Unit
-of Work, post-deadline command cleanup, database-gated completion activation,
-credential-delivery gate,
+evidence after all seven operations succeed. The database executor now captures
+an optional receiver-free synchronous `observeProgramSettlement(input)` and
+invokes it exactly once after the actual fixed program Promise settles, its
+statement session is sealed, and its tracked statement operation has drained,
+even when `execute` already returned
+`indeterminate`. The observer receives only the original input and no result,
+error, transaction outcome, connection, SQL, or settlement authority. This is
+only the prerequisite for the future Unit of Work's two-sided rendezvous; it is
+not commit proof and cannot alter an already-returned outcome. There is still
+no concrete Unit of Work, Identity-owned post-deadline command cleanup,
+database-gated completion activation, credential-delivery gate,
 remaining security-event adapters, NestJS composition, Argon2 adapter,
 password input policy, or Redis abuse control completing the runtime path. The
 direct executor quarantines its exact connection, but it may return
-`indeterminate` before the program Promise has finished cleanup; the full Unit
-of Work remains blocked until that attempt-retirement race has an explicit
-protocol. Before credential ingress becomes public, production
+`indeterminate` before the program Promise and tracked statement have settled;
+the full Unit of Work must pair the later settlement notification, or proof
+that the program never started, with its independently known database outcome
+before it retires the attempt. Before credential ingress becomes public,
+production
 configuration must disable Prisma driver-adapter debug/query logging because
 those namespaces can emit bound digest arguments. That configuration gate is
 not implemented yet, so public credential ingress remains blocked. Pricing,

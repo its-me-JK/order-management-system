@@ -110,12 +110,14 @@ type ProgramStatement =
   | typeof binaryStatement
   | typeof rejectingDecoderStatement;
 type ProgramContext = MySqlTransactionProgramContext<CommitResult, Failure, ProgramStatement>;
-type ProgramRun = MySqlTransactionProgram<
+type TransactionProgram = MySqlTransactionProgram<
   ProgramInput,
   CommitResult,
   Failure,
   ProgramStatement
->['run'];
+>;
+type ProgramRun = TransactionProgram['run'];
+type ProgramSettlementObserver = NonNullable<TransactionProgram['observeProgramSettlement']>;
 
 function deferred<Value>(): Deferred<Value> {
   let resolvePromise: ((value: Value) => void) | undefined;
@@ -187,8 +189,9 @@ function connectionHarness(
 
 function transactionProgram(
   run: ProgramRun,
-): MySqlTransactionProgram<ProgramInput, CommitResult, Failure, ProgramStatement> {
-  return Object.freeze({
+  observeProgramSettlement?: ProgramSettlementObserver,
+): TransactionProgram {
+  const program = {
     defectFailure: 'defect' as const,
     failures: Object.freeze(['unavailable', 'defect', 'requested', 'collision'] as const),
     run,
@@ -199,7 +202,11 @@ function transactionProgram(
       rejectingDecoderStatement,
     ] as const),
     unavailableFailure: 'unavailable' as const,
-  });
+  };
+
+  return observeProgramSettlement === undefined
+    ? Object.freeze(program)
+    : Object.freeze({ ...program, observeProgramSettlement });
 }
 
 function executorHarness(
@@ -621,6 +628,408 @@ describe('ManagedMySqlTransactionExecutor', (): void => {
     expect(trapCalls).toBe(0);
     expect(sqlTrace(connection).at(-1)).toBe(ROLLBACK);
     expect(connection.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('observes a fulfilled program exactly once, receiver-free, before commit', async (): Promise<void> => {
+    const programGate = deferred<undefined>();
+    const connection = connectionHarness();
+    const input = Object.freeze({ value: 'observed-fulfillment' });
+    let runStarted = false;
+    let observerCalls = 0;
+    let observedInput: ProgramInput | undefined;
+    let receiverWasUndefined = false;
+    let traceAtObservation: readonly string[] | undefined;
+    const program = transactionProgram(
+      async (context, programInput) => {
+        runStarted = true;
+        await programGate.promise;
+        return context.requestCommit(Object.freeze({ value: programInput.value }));
+      },
+      function observeProgramSettlement(this: undefined, programInput): undefined {
+        observerCalls += 1;
+        observedInput = programInput;
+        receiverWasUndefined = (this as unknown) === undefined;
+        traceAtObservation = sqlTrace(connection);
+        return undefined;
+      },
+    );
+    const { executor } = executorHarness(program, [connection]);
+    const execution = executor.execute(input);
+
+    await flushUntil(() => runStarted, 'The fulfilled program did not start');
+    expect(observerCalls).toBe(0);
+
+    programGate.resolve(undefined);
+
+    await expect(execution).resolves.toEqual({
+      kind: 'committed',
+      result: { value: 'observed-fulfillment' },
+    });
+    expect(observerCalls).toBe(1);
+    expect(observedInput).toBe(input);
+    expect(receiverWasUndefined).toBe(true);
+    expect(traceAtObservation).not.toContain(COMMIT);
+    expect(traceAtObservation).not.toContain(ROLLBACK);
+    expect(sqlTrace(connection).at(-1)).toBe(COMMIT);
+  });
+
+  it('captures the optional settlement observer once during construction', async (): Promise<void> => {
+    const connection = connectionHarness();
+    const originalObserver = jest.fn((): undefined => undefined);
+    const replacementObserver = jest.fn((): undefined => undefined);
+    const mutableProgram = {
+      defectFailure: 'defect' as const,
+      failures: Object.freeze(['unavailable', 'defect', 'requested', 'collision'] as const),
+      observeProgramSettlement: originalObserver,
+      run: ((context, input) =>
+        Promise.resolve(
+          context.requestCommit(Object.freeze({ value: input.value })),
+        )) satisfies ProgramRun,
+      statements: Object.freeze([
+        valueStatement,
+        duplicateStatement,
+        binaryStatement,
+        rejectingDecoderStatement,
+      ] as const),
+      unavailableFailure: 'unavailable' as const,
+    };
+    const { executor } = executorHarness(mutableProgram, [connection]);
+
+    mutableProgram.observeProgramSettlement = replacementObserver;
+
+    await expect(executor.execute({ value: 'captured-observer' })).resolves.toEqual({
+      kind: 'committed',
+      result: { value: 'captured-observer' },
+    });
+    expect(originalObserver).toHaveBeenCalledTimes(1);
+    expect(replacementObserver).not.toHaveBeenCalled();
+  });
+
+  it('rejects a present non-function or accessor settlement observer without invocation', (): void => {
+    const run: ProgramRun = (context) => Promise.resolve(context.requestRollback('requested'));
+    const base = transactionProgram(run);
+    const explicitUndefined = {
+      ...base,
+      observeProgramSettlement: undefined,
+    } as unknown as TransactionProgram;
+    let getterCalls = 0;
+    const accessor = { ...base } as unknown as Record<PropertyKey, unknown>;
+
+    Object.defineProperty(accessor, 'observeProgramSettlement', {
+      enumerable: true,
+      get(): never {
+        getterCalls += 1;
+        throw new Error('observer getter secret');
+      },
+    });
+
+    for (const invalidProgram of [explicitUndefined, accessor as TransactionProgram]) {
+      expect(() => executorHarness(invalidProgram, [connectionHarness()])).toThrow(
+        'Invalid MySQL transaction executor configuration',
+      );
+    }
+    expect(getterCalls).toBe(0);
+  });
+
+  it('observes a rejected program exactly once, receiver-free, before rollback', async (): Promise<void> => {
+    const programGate = deferred<MySqlTransactionDirective<CommitResult, Failure>>();
+    let trapCalls = 0;
+    const hostile = new Proxy(new Error('late rejected program secret'), {
+      get(): never {
+        trapCalls += 1;
+        throw new Error('late rejected program secret');
+      },
+    });
+    const connection = connectionHarness();
+    const input = Object.freeze({ value: 'observed-rejection' });
+    let runStarted = false;
+    let observerCalls = 0;
+    let observedInput: ProgramInput | undefined;
+    let receiverWasUndefined = false;
+    let traceAtObservation: readonly string[] | undefined;
+    const program = transactionProgram(
+      () => {
+        runStarted = true;
+        return programGate.promise;
+      },
+      function observeProgramSettlement(this: undefined, programInput): undefined {
+        observerCalls += 1;
+        observedInput = programInput;
+        receiverWasUndefined = (this as unknown) === undefined;
+        traceAtObservation = sqlTrace(connection);
+        return undefined;
+      },
+    );
+    const { executor } = executorHarness(program, [connection]);
+    const execution = executor.execute(input);
+
+    await flushUntil(() => runStarted, 'The rejected program did not start');
+    expect(observerCalls).toBe(0);
+
+    programGate.reject(hostile);
+
+    await expect(execution).resolves.toEqual({
+      kind: 'not-committed',
+      failure: 'defect',
+    });
+    expect(observerCalls).toBe(1);
+    expect(observedInput).toBe(input);
+    expect(receiverWasUndefined).toBe(true);
+    expect(traceAtObservation).not.toContain(COMMIT);
+    expect(traceAtObservation).not.toContain(ROLLBACK);
+    expect(trapCalls).toBe(0);
+    expect(sqlTrace(connection).at(-1)).toBe(ROLLBACK);
+  });
+
+  it('seals statement and directive authority before invoking the settlement observer', async (): Promise<void> => {
+    const connection = connectionHarness();
+    let context: ProgramContext | undefined;
+    let observerCalls = 0;
+    let statementReentryRejected = false;
+    let directiveReentryRejected = false;
+    const program = transactionProgram(
+      (programContext) => {
+        context = programContext;
+        return Promise.resolve(
+          Object.freeze({}) as MySqlTransactionDirective<CommitResult, Failure>,
+        );
+      },
+      (): undefined => {
+        observerCalls += 1;
+
+        if (context === undefined) throw new Error('The program context was not captured');
+
+        try {
+          void context.executeStatement(valueStatement, ['observer-reentry']);
+        } catch {
+          statementReentryRejected = true;
+        }
+
+        try {
+          context.requestCommit(Object.freeze({ value: 'observer-forgery' }));
+        } catch {
+          directiveReentryRejected = true;
+        }
+
+        return undefined;
+      },
+    );
+    const { executor } = executorHarness(program, [connection]);
+
+    await expect(executor.execute({ value: 'must-not-commit' })).resolves.toEqual({
+      kind: 'not-committed',
+      failure: 'defect',
+    });
+    expect(observerCalls).toBe(1);
+    expect(statementReentryRejected).toBe(true);
+    expect(directiveReentryRejected).toBe(true);
+    expect(sqlTrace(connection)).not.toContain(VALUE_SQL);
+    expect(sqlTrace(connection)).not.toContain(COMMIT);
+    expect(sqlTrace(connection).at(-1)).toBe(ROLLBACK);
+  });
+
+  it('contains a thrown settlement observer and denies the program commit', async (): Promise<void> => {
+    let trapCalls = 0;
+    const hostile = new Proxy(new Error('settlement observer secret'), {
+      get(): never {
+        trapCalls += 1;
+        throw new Error('settlement observer secret');
+      },
+    });
+    const connection = connectionHarness();
+    let observerCalls = 0;
+    const program = transactionProgram(
+      (context, input) =>
+        Promise.resolve(context.requestCommit(Object.freeze({ value: input.value }))),
+      (): never => {
+        observerCalls += 1;
+        throw hostile;
+      },
+    );
+    const { executor } = executorHarness(program, [connection]);
+
+    await expect(executor.execute({ value: 'must-not-commit' })).resolves.toEqual({
+      kind: 'not-committed',
+      failure: 'defect',
+    });
+    expect(observerCalls).toBe(1);
+    expect(trapCalls).toBe(0);
+    expect(sqlTrace(connection)).not.toContain(COMMIT);
+    expect(sqlTrace(connection).at(-1)).toBe(ROLLBACK);
+  });
+
+  it('does not let a failing observer overwrite an earlier mapped statement failure', async (): Promise<void> => {
+    const connection = connectionHarness((sql, values) =>
+      normalizeSql(sql) === DUPLICATE_SQL
+        ? Promise.reject(duplicateError())
+        : defaultQueryResult(sql, values),
+    );
+    const program = transactionProgram(
+      async (context) => {
+        try {
+          await context.executeStatement(duplicateStatement, ['sticky-collision']);
+        } catch {
+          // The program cannot select settlement after the statement failure is sticky.
+        }
+
+        return Object.freeze({}) as MySqlTransactionDirective<CommitResult, Failure>;
+      },
+      (): never => {
+        throw new Error('observer defect must not overwrite collision');
+      },
+    );
+    const { executor } = executorHarness(program, [connection]);
+
+    await expect(executor.execute({ value: 'sticky-collision' })).resolves.toEqual({
+      kind: 'not-committed',
+      failure: 'collision',
+    });
+    expect(sqlTrace(connection).at(-1)).toBe(ROLLBACK);
+    expect(sqlTrace(connection)).not.toContain(COMMIT);
+  });
+
+  it('does not assimilate a non-undefined async-like observer result or allow commit', async (): Promise<void> => {
+    let thenTrapCalls = 0;
+    const asyncLike = Object.defineProperty(Object.create(null) as object, 'then', {
+      get(): never {
+        thenTrapCalls += 1;
+        throw new Error('settlement observer thenable secret');
+      },
+    });
+    const connection = connectionHarness();
+    let observerCalls = 0;
+    const nonContractObserver = ((): object => {
+      observerCalls += 1;
+      return asyncLike;
+    }) as unknown as ProgramSettlementObserver;
+    const program = transactionProgram(
+      (context, input) =>
+        Promise.resolve(context.requestCommit(Object.freeze({ value: input.value }))),
+      nonContractObserver,
+    );
+    const { executor } = executorHarness(program, [connection]);
+
+    await expect(executor.execute({ value: 'must-not-commit' })).resolves.toEqual({
+      kind: 'not-committed',
+      failure: 'defect',
+    });
+    expect(observerCalls).toBe(1);
+    expect(thenTrapCalls).toBe(0);
+    expect(sqlTrace(connection)).not.toContain(COMMIT);
+    expect(sqlTrace(connection).at(-1)).toBe(ROLLBACK);
+  });
+
+  it.each(['returns', 'throws'] as const)(
+    'contains a native rejected Promise that the settlement observer %s',
+    async (mode): Promise<void> => {
+      const connection = connectionHarness();
+      const unhandledReasons: unknown[] = [];
+      const onUnhandledRejection = (reason: unknown): void => {
+        unhandledReasons.push(reason);
+      };
+      let observerCalls = 0;
+      const nonContractObserver = ((): Promise<never> => {
+        observerCalls += 1;
+        const rejection = Promise.reject(new Error('async settlement observer secret'));
+
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- Adversarial runtime input may throw any value.
+        if (mode === 'throws') throw rejection;
+        return rejection;
+      }) as unknown as ProgramSettlementObserver;
+      const program = transactionProgram(
+        (context, input) =>
+          Promise.resolve(context.requestCommit(Object.freeze({ value: input.value }))),
+        nonContractObserver,
+      );
+      const { executor } = executorHarness(program, [connection]);
+
+      process.on('unhandledRejection', onUnhandledRejection);
+      try {
+        await expect(executor.execute({ value: 'must-not-commit' })).resolves.toEqual({
+          kind: 'not-committed',
+          failure: 'defect',
+        });
+        await new Promise<void>((resolve): void => {
+          setImmediate(resolve);
+        });
+      } finally {
+        process.off('unhandledRejection', onUnhandledRejection);
+      }
+
+      expect(observerCalls).toBe(1);
+      expect(unhandledReasons).toEqual([]);
+      expect(sqlTrace(connection)).not.toContain(COMMIT);
+      expect(sqlTrace(connection).at(-1)).toBe(ROLLBACK);
+    },
+  );
+
+  it('does not inspect a modified native Promise while denying observer commit', async (): Promise<void> => {
+    let constructorReads = 0;
+    const modifiedPromise = Promise.resolve(undefined);
+
+    void Object.defineProperty(modifiedPromise, 'constructor', {
+      get(): never {
+        constructorReads += 1;
+        throw new Error('modified Promise constructor secret');
+      },
+    });
+
+    const connection = connectionHarness();
+    const nonContractObserver = (() => modifiedPromise) as unknown as ProgramSettlementObserver;
+    const program = transactionProgram(
+      (context, input) =>
+        Promise.resolve(context.requestCommit(Object.freeze({ value: input.value }))),
+      nonContractObserver,
+    );
+    const { executor } = executorHarness(program, [connection]);
+
+    await expect(executor.execute({ value: 'must-not-commit' })).resolves.toEqual({
+      kind: 'not-committed',
+      failure: 'defect',
+    });
+    expect(constructorReads).toBe(0);
+    expect(sqlTrace(connection)).not.toContain(COMMIT);
+    expect(sqlTrace(connection).at(-1)).toBe(ROLLBACK);
+  });
+
+  it('publishes program settlement only after a tracked floated statement drains', async (): Promise<void> => {
+    const pendingStatement = deferred<unknown>();
+    const connection = connectionHarness((sql, values) =>
+      normalizeSql(sql) === VALUE_SQL ? pendingStatement.promise : defaultQueryResult(sql, values),
+    );
+    let observerCalls = 0;
+    const program = transactionProgram(
+      (context) => {
+        void context.executeStatement(valueStatement, ['floated-observer']).catch(() => undefined);
+        return Promise.resolve(
+          Object.freeze({}) as MySqlTransactionDirective<CommitResult, Failure>,
+        );
+      },
+      (): undefined => {
+        observerCalls += 1;
+        return undefined;
+      },
+    );
+    const { executor } = executorHarness(program, [connection]);
+    const execution = executor.execute({ value: 'must-not-commit' });
+
+    await flushUntil(
+      () => sqlTrace(connection).includes(VALUE_SQL),
+      'The floated observer statement did not start',
+    );
+    await Promise.resolve();
+    expect(observerCalls).toBe(0);
+    expect(sqlTrace(connection)).not.toContain(ROLLBACK);
+
+    pendingStatement.resolve([{ value: 'floated-observer' }]);
+
+    await expect(execution).resolves.toEqual({
+      kind: 'not-committed',
+      failure: 'defect',
+    });
+    expect(observerCalls).toBe(1);
+    expect(sqlTrace(connection).at(-1)).toBe(ROLLBACK);
+    expect(sqlTrace(connection)).not.toContain(COMMIT);
   });
 
   it('makes an asynchronous decoder rejection sticky even when the program catches it', async (): Promise<void> => {
@@ -1071,6 +1480,163 @@ describe('ManagedMySqlTransactionExecutor', (): void => {
     expect(sqlTrace(connection)).not.toContain(ROLLBACK);
   });
 
+  it('invokes the settlement observer once when the program fulfills after its deadline outcome', async (): Promise<void> => {
+    jest.useFakeTimers();
+
+    try {
+      const programGate = deferred<undefined>();
+      const connection = connectionHarness();
+      const input = Object.freeze({ value: 'late-fulfillment' });
+      let runStarted = false;
+      let observerCalls = 0;
+      let observedInput: ProgramInput | undefined;
+      let receiverWasUndefined = false;
+      const program = transactionProgram(
+        (context, programInput) => {
+          runStarted = true;
+          const directive = context.requestCommit(Object.freeze({ value: programInput.value }));
+
+          return programGate.promise.then(() => directive);
+        },
+        function observeProgramSettlement(this: undefined, programInput): undefined {
+          observerCalls += 1;
+          observedInput = programInput;
+          receiverWasUndefined = (this as unknown) === undefined;
+          return undefined;
+        },
+      );
+      const { executor } = executorHarness(program, [connection], 1_000);
+      const execution = executor.execute(input);
+
+      await flushUntil(() => runStarted, 'The deadline-bound program did not start');
+      expect(observerCalls).toBe(0);
+
+      await jest.advanceTimersByTimeAsync(1_000);
+
+      await expect(execution).resolves.toEqual({ kind: 'indeterminate' });
+      expect(observerCalls).toBe(0);
+      expect(connection.destroy).toHaveBeenCalledTimes(1);
+      expect(connection.release).not.toHaveBeenCalled();
+      expect(sqlTrace(connection)).not.toContain(COMMIT);
+      expect(sqlTrace(connection)).not.toContain(ROLLBACK);
+
+      programGate.resolve(undefined);
+      await flushUntil(() => observerCalls === 1, 'The late program settlement was not observed');
+      await Promise.resolve();
+
+      expect(observerCalls).toBe(1);
+      expect(observedInput).toBe(input);
+      expect(receiverWasUndefined).toBe(true);
+      expect(sqlTrace(connection)).not.toContain(COMMIT);
+      expect(sqlTrace(connection)).not.toContain(ROLLBACK);
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('contains a rejected async observer after an already-returned deadline outcome', async (): Promise<void> => {
+    jest.useFakeTimers();
+    const unhandledReasons: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown): void => {
+      unhandledReasons.push(reason);
+    };
+
+    process.on('unhandledRejection', onUnhandledRejection);
+    try {
+      const programGate = deferred<undefined>();
+      const connection = connectionHarness();
+      let runStarted = false;
+      let observerCalls = 0;
+      const nonContractObserver = ((): Promise<never> => {
+        observerCalls += 1;
+        return Promise.reject(new Error('late async settlement observer secret'));
+      }) as unknown as ProgramSettlementObserver;
+      const program = transactionProgram(async (context, input) => {
+        runStarted = true;
+        await programGate.promise;
+        return context.requestCommit(Object.freeze({ value: input.value }));
+      }, nonContractObserver);
+      const { executor } = executorHarness(program, [connection], 1_000);
+      const execution = executor.execute({ value: 'late-async-observer' });
+
+      await flushUntil(() => runStarted, 'The late async-observer program did not start');
+      await jest.advanceTimersByTimeAsync(1_000);
+
+      await expect(execution).resolves.toEqual({ kind: 'indeterminate' });
+      expect(observerCalls).toBe(0);
+
+      programGate.resolve(undefined);
+      await flushUntil(() => observerCalls === 1, 'The late async observer was not invoked');
+      await Promise.resolve();
+
+      expect(observerCalls).toBe(1);
+      expect(unhandledReasons).toEqual([]);
+      expect(sqlTrace(connection)).not.toContain(COMMIT);
+      expect(sqlTrace(connection)).not.toContain(ROLLBACK);
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+      jest.useRealTimers();
+    }
+  });
+
+  it('defers a post-deadline observer until the exact floated statement drains', async (): Promise<void> => {
+    jest.useFakeTimers();
+
+    try {
+      const pendingStatement = deferred<unknown>();
+      const connection = connectionHarness((sql, values) =>
+        normalizeSql(sql) === VALUE_SQL
+          ? pendingStatement.promise
+          : defaultQueryResult(sql, values),
+      );
+      let observerCalls = 0;
+      const program = transactionProgram(
+        (context) => {
+          void context
+            .executeStatement(valueStatement, ['post-deadline-floated'])
+            .catch(() => undefined);
+          return Promise.resolve(
+            Object.freeze({}) as MySqlTransactionDirective<CommitResult, Failure>,
+          );
+        },
+        (): undefined => {
+          observerCalls += 1;
+          return undefined;
+        },
+      );
+      const { executor } = executorHarness(program, [connection], 1_000);
+      const execution = executor.execute({ value: 'post-deadline-floated' });
+
+      await flushUntil(
+        () => sqlTrace(connection).includes(VALUE_SQL),
+        'The post-deadline floated statement did not start',
+      );
+      await jest.advanceTimersByTimeAsync(1_000);
+
+      await expect(execution).resolves.toEqual({ kind: 'indeterminate' });
+      expect(observerCalls).toBe(0);
+      expect(connection.destroy).toHaveBeenCalledTimes(1);
+      expect(sqlTrace(connection)).not.toContain(COMMIT);
+      expect(sqlTrace(connection)).not.toContain(ROLLBACK);
+
+      pendingStatement.resolve([{ value: 'post-deadline-floated' }]);
+      await flushUntil(
+        () => observerCalls === 1,
+        'The observer ran before the floated statement drained',
+      );
+      await Promise.resolve();
+
+      expect(observerCalls).toBe(1);
+      expect(sqlTrace(connection)).not.toContain(COMMIT);
+      expect(sqlTrace(connection)).not.toContain(ROLLBACK);
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('returns indeterminate and quarantines floated work at the deadline', async (): Promise<void> => {
     jest.useFakeTimers();
 
@@ -1107,3 +1673,7 @@ describe('ManagedMySqlTransactionExecutor', (): void => {
     }
   });
 });
+
+// @ts-expect-error Program settlement observation must complete synchronously with undefined.
+const _asyncObserver: ProgramSettlementObserver = () => Promise.resolve(undefined);
+void _asyncObserver;
