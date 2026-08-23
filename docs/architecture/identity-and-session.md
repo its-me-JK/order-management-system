@@ -1102,19 +1102,26 @@ Its production construction API is the zero-argument
 `createNodeIdentitySessionCredentialCrypto()` factory, which returns a frozen
 `IdentitySessionCredentialCrypto`. The implementation class is private, and
 its constructor and prototype are frozen with every instance so recovered
-prototype mutation cannot replace a security operation. This increment adds
-no package root export, infrastructure barrel, or package subpath because no
-composed login or refresh use case consumes the adapter yet. When composition
-exists, a reviewed infrastructure subpath may export only the zero-argument
-factory; it will never export the concrete class, test seam, generic
-cryptographic primitives, or credential construction helpers.
+prototype mutation cannot replace a security operation. Construction also
+requires an unexported identity capability held only by the in-module
+production and deterministic factories. Recovering the runtime constructor
+from an instance, invoking it directly or through `Reflect.construct`, and
+supplying otherwise valid primitives must therefore fail with cryptographic
+unavailability; freezing alone is not a construction boundary. This increment
+adds no package root export, infrastructure barrel, or package subpath because
+no composed login or refresh use case consumes the adapter yet. When
+composition exists, a reviewed infrastructure subpath may export only the
+zero-argument factory; it will never export the concrete class, test seam,
+generic cryptographic primitives, or credential construction helpers.
 
-Production construction statically binds `node:crypto`; an absent or
-incompatible module is an unsupported deployment and fails module loading or
-bootstrap rather than activating a fallback. Operational RNG or hashing
-failures can still occur during a request and follow the unavailable contract
-below. A direct-file, package-internal deterministic seam accepts exactly two
-copied function references:
+Production construction snapshots the `node:crypto` RNG and hash function
+references during module evaluation. Later mutation of the CommonJS core-module
+export object cannot replace the fixed provider through a live property lookup.
+An absent or incompatible module is an unsupported deployment and fails module
+loading or bootstrap rather than activating a fallback. Operational RNG or
+hashing failures can still occur during a request and follow the unavailable
+contract below. A direct-file, package-internal deterministic seam accepts
+exactly two copied function references:
 `randomBytes(byteLength: number): Promise<unknown>` and
 `sha256Ascii(wireValue: string): unknown`. It exists only to inject known
 vectors and failures into the same implementation. It is not application
