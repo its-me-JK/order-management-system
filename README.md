@@ -136,11 +136,13 @@ suite proves immediate Role/Permission changes, lifecycle rejection, clipped
 access lifetimes, exact bounds, canonical wire through production SHA-256 to
 real MySQL authority, and public resolver outage classification. Identity
 still has no `Authorization` extraction, request association, authentication
-route, or public credential ingress. The locked loader is deliberately
-load-only: no rotation/reuse writer, concrete Unit of Work, post-deadline
-command cleanup, database-gated completion activation, credential-delivery
-gate, security-event adapter, NestJS composition, Argon2 adapter, password
-input policy, or Redis abuse control completes the runtime path yet. The
+route, or public credential ingress. The locked loader remains deliberately
+load-only; a private direct reuse writer now conditionally revokes the family
+and appends its rejected refresh event on the same transaction connection.
+There is still no rotation writer, concrete Unit of Work, post-deadline command
+cleanup, database-gated completion activation, credential-delivery gate,
+remaining security-event adapters, NestJS composition, Argon2 adapter,
+password input policy, or Redis abuse control completing the runtime path. The
 direct executor quarantines its exact connection, but it may return
 `indeterminate` before the program Promise has finished cleanup; the full Unit
 of Work remains blocked until that attempt-retirement race has an explicit

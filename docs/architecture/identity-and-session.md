@@ -1175,6 +1175,27 @@ becomes an Identity execution defect. The final lock uses an Identity-owned
 digest copy; that copy and the executor's independent parameter copy are each
 overwritten after their own asynchronous operation settles.
 
+The seventh prerequisite increment is the package-internal direct-MySQL reuse
+writer and is delivered. It accepts only the authentic workflow scope, reuse
+decision, and SecurityEvent identifier, then executes exactly two opaque
+prepared statements on the already-active executor connection. The first
+conditionally revokes the open SessionFamily using the complete six-field
+Account, family, and consumed-credential basis. The second appends one rejected
+`SESSION_REFRESH` / `REFRESH_REUSE_DETECTED` event with a null actor and exact
+subject, session, and transaction writer time. It changes no RefreshCredential
+or AccessCredential row and mints pending evidence only after both writes
+succeed.
+
+The direct MariaDB DML contract accepts only the pinned custom-prototype
+`OkPacket` with exact own `affectedRows`, `insertId`, and `warningStatus` data
+fields. A one-row family update continues; zero rows fail the workflow and emit
+one runtime-authentic private conditional-conflict signal for the fixed
+transaction program; every other update count and every non-one event count is
+an execution defect. The event statement has no duplicate mapping, so an event
+identifier collision remains unavailable and rolls back the preceding family
+update. The writer, statements, signal inspector, and context type have no
+Identity barrel or package export.
+
 This is still not the concrete Unit of Work. The executor can seal and return
 `indeterminate` when its deadline wins while the program Promise is still
 settling. At that instant a refresh command may remain `running`, and the
@@ -1725,13 +1746,18 @@ persistence error. This proves causally that Account is the first contended
 lock. Only after the second transaction times out does the test release and
 settle the first transaction.
 
-The same guarded command also runs the private direct loader inside one fixed
-database-executor program. It proves that all three tokens execute through
-server-prepared binding on the exact transaction connection, direct unsigned
-integers map without Prisma normalization, `.123456` instants survive, and a
-post-discovery digest change commits as locked not-found. The direct program is
-read-only; commit in this test proves transaction composition, not refresh
-issuance or completion promotion.
+The same guarded command also runs the private direct loader inside fixed
+database-executor programs. Its read-only cases prove that all three lock
+tokens execute through server-prepared binding on the exact transaction
+connection, direct unsigned integers map without Prisma normalization,
+`.123456` instants survive, and a post-discovery digest change commits as
+locked not-found. Its reuse cases extend that exact connection with the two
+fixed DML tokens. A successful real `OkPacket` transition proves family
+version/revocation persistence, the exact rejected event, and byte-for-byte
+unchanged refresh/access rows. A pre-existing event identifier makes the
+unmapped insert unavailable and proves the earlier family update is rolled
+back. These cases prove the reuse store's atomic DML composition, not the full
+Unit of Work, completion promotion, or credential delivery.
 
 Separately, a loopback TCP listener accepts a connection but never performs the
 MySQL handshake; that loopback TCP accept/handshake stall becomes the fixed
@@ -1740,8 +1766,9 @@ grant, replays migrations, serializes local runs, and verifies database and
 grant cleanup independently. Those Prisma fault cases do not prove
 cancellation of an established connection or in-flight query. The separate
 database-executor suite proves established-query quarantine and replacement
-capacity, while this Identity suite deliberately does not yet claim writer DML,
-rollback injection, commit-acknowledgement loss, or completion promotion.
+capacity, while this Identity suite deliberately does not yet claim rotation
+DML, per-statement rollback injection, commit-acknowledgement loss, or
+completion promotion.
 
 The application increment proves promotion, revocation, final attempt
 retirement, and a dormant exact-attempt binding, but not database settlement or
@@ -1749,8 +1776,8 @@ credential delivery. The concrete Unit of Work must still prove that only its
 real commit acknowledgement can invoke promotion, the later delivery gate must
 prove exact-pair disclosure, and executor tests must prove that caught values
 with hostile getters, Proxies, coercion traps, or secret causes never escape.
-The next direct-MySQL increments must add rotation and reuse writers, then the
-concrete Unit of Work and its cleanup protocol. Together they must prove zero
+The next direct-MySQL increment must add the rotation writer, then the concrete
+Unit of Work and its cleanup protocol. Together they must prove zero
 orchestration before a valid context, one orchestration otherwise, one writer
 time, one connection, operation tracking and bounded drain, DML order,
 affected-row checks, rollback injection after every statement, exact
@@ -1787,10 +1814,9 @@ replay, cross-scope, and wrong-kind writes before SQL. An interview-level
 consequence is that consumed pending evidence must survive program-scope close:
 the scope must be invalid before `COMMIT`, while confirmed commit still needs
 the exact attempt binding for later delivery. That retained registration grants
-neither SQL nor delivery authority. The next improvements are the
-rotation/reuse writer, exact-pair delivery gate, and an Identity MySQL Unit of
-Work that maps the executor's settlement outcome into completion promotion or
-revocation.
+neither SQL nor delivery authority. The next improvements are the rotation
+writer, exact-pair delivery gate, and an Identity MySQL Unit of Work that maps
+the executor's settlement outcome into completion promotion or revocation.
 
 ## Credential and password representation
 
@@ -2802,11 +2828,11 @@ reader, lifecycle-blind Prisma refresh-discovery adapter, root-writer-paired
 Prisma locked-loader proof, direct exact-connection locked loader, isolated
 real-MySQL authority/discovery/locked-load/resolver tests, and root-exported
 framework-independent Bearer principal resolver exist. The closed refresh
-command, refresh-specific Unit-of-Work port, and dormant commit-completion
-registry are also delivered. The rotation/reuse writer, post-deadline command
-cleanup protocol, concrete direct-MySQL Unit of Work, database-gated promotion,
-delivery gate, security-event writer, cleanup use case, NestJS composition, and
-complete delivery-gate tests remain.
+command, refresh-specific Unit-of-Work port, dormant commit-completion
+registry, and direct reuse writer are also delivered. The rotation writer,
+post-deadline command cleanup protocol, concrete direct-MySQL Unit of Work,
+database-gated promotion, delivery gate, remaining security-event paths,
+cleanup use case, NestJS composition, and complete delivery-gate tests remain.
 A trusted caller can now
 resolve an already-extracted canonical access-wire value, but there is still no
 `Authorization` extraction, request association, credential ingress, route, or
@@ -3132,9 +3158,9 @@ public authentication surface.
   crypto-availability metrics, and evaluate FIPS/runtime attestation where a
   deployment requires it. A future HSM or managed provider remains a separate
   implementation of the unchanged application port.
-- Add rotation/reuse writers, the exact-pair delivery gate, and the concrete
-  Identity refresh Unit of Work around the delivered application port and
-  paired locked-loader proof. Prove scope escape, rollback injection, exact constraint
+- Add the rotation writer, the exact-pair delivery gate, and the concrete
+  Identity refresh Unit of Work around the delivered application port, paired
+  locked-loader proof, and reuse writer. Prove scope escape, rollback injection, exact constraint
   classification, competing refresh, and ambiguous commit before extending
   the pattern to login, logout, Account, authenticator, or Role workflows; do
   not generalize it into aggregate CRUD.

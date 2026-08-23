@@ -121,8 +121,13 @@ because those can contain statement details. Only an exact duplicate-key
 identity plus an exact constraint name registered on that exact statement can
 select one of the program's allowlisted
 failures. Every unknown constraint, foreign key, deadlock, lock timeout,
-connection error, malformed driver value, or decoder failure selects the
-program's allowlisted unavailable failure.
+connection error, rejected decoder, or decoder failure selects the program's
+allowlisted unavailable failure. A total statement decoder may instead settle
+normally with a module-owned `malformed` evidence value when a fulfilled driver
+envelope violates that statement's pinned structural contract. The fixed
+program must treat that evidence as its execution defect and request rollback;
+it is not a provider rejection and cannot be reclassified as a business
+conflict.
 
 The executor then discards the vendor value without logging, coercing,
 attaching it as a cause, or retaining it. The fixed statement definition owns
