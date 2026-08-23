@@ -321,6 +321,89 @@ PHC validation where applicable, version capacity, and derived-deadline
 overflow. Rehydration collapses every malformed secret or state cause to one
 fixed, cause-free snapshot error.
 
+### SessionFamily core state contract
+
+SessionFamily owns the durable lifetime and terminal revocation of one login
+session. Expiry is derived from authoritative time and is never persisted as a
+status. The first bounded implementation deliberately excludes refresh
+rotation: rotation lands only with the locked presented-credential and
+successor entities so consuming a predecessor, linking its successor, moving
+the family deadline, and detecting replay cannot become separate partial
+operations.
+
+The family snapshot contains exactly `id`, `accountId`, `version`, `createdAt`,
+`lastRotatedAt`, `refreshIdleExpiresAt`, `refreshAbsoluteExpiresAt`,
+`revokedAt`, and `closedReason`:
+
+| Field | Domain rule |
+| --- | --- |
+| `id` | Externally visible canonical lowercase UUIDv7, branded separately from Account, Role, and credential identifiers. |
+| `accountId` | Canonical owning Account identifier; ownership never changes. |
+| `version` | Positive unsigned 32-bit version. Creation is version 1; every effective rotation or revocation advances it once. |
+| `createdAt`, `lastRotatedAt` | Lossless MySQL-range UTC instants. Creation makes them equal; rotation may use an equal database instant but never an earlier one. |
+| `refreshIdleExpiresAt` | Strictly after `lastRotatedAt`, no more than 24 hours later, and no later than the absolute deadline. It gates refresh only. |
+| `refreshAbsoluteExpiresAt` | Exactly 1 through 30 whole days after creation and immutable for the complete family. It gates refresh and every access credential. |
+| `revokedAt`, `closedReason` | Both null or both present. Revocation time is not before `lastRotatedAt`; the first reason and time are terminal and may be recorded after either deadline. |
+
+The initial refresh-idle lifetime is an integer from 900 through 86,400
+seconds, the absolute lifetime is an integer from 86,400 through 2,592,000
+seconds, and idle cannot exceed absolute. Creation derives both deadlines from
+one database instant with Gregorian, microsecond-preserving arithmetic and no
+JavaScript `Date`. An absolute deadline beyond MySQL year 9999 is a fixed
+overflow failure. Version-1 open families and version-2 families revoked
+without rotation retain `createdAt = lastRotatedAt` and the initial lifetime
+bounds. A retained rotated snapshot has at least one whole second and at most
+24 hours from its last rotation to its idle deadline; equality between idle
+and absolute deadlines is valid.
+
+At one authoritative observation instant, the derived family state is:
+
+1. `REVOKED` when the terminal pair is present;
+2. otherwise `ABSOLUTELY_EXPIRED` when observation is equal to or after the
+   absolute deadline; or
+3. otherwise `AUTHENTICATING`.
+
+Idle expiry is intentionally absent from that state. An access credential may
+remain valid after refresh inactivity until its own expiry or the family
+absolute deadline. Observation before the current mutation high-water mark
+(`revokedAt` when present, otherwise `lastRotatedAt`) is a fixed clock-
+regression failure, not a historical query.
+
+The initial closed-reason registry is exactly `LOGOUT`,
+`SESSION_LIMIT_REACHED`, `ACCOUNT_SUSPENDED`, `ACCOUNT_DEACTIVATED`,
+`PASSWORD_REPLACED`, `PASSWORD_REBOUND`, and `REFRESH_REUSE_DETECTED`. Generic
+revocation accepts every listed reason except `REFRESH_REUSE_DETECTED`; only
+the future consumed-credential branch may establish that security conclusion.
+Generic revocation is server-coordinated from the current locked family and
+therefore takes no client or discovery-time expected version. The first
+effective caller advances the version and emits `SESSION_FAMILY_REVOKED`; a
+later caller reloads the terminal row, returns it unchanged, and cannot replace
+the first reason. Persistence still compares or locks the versioned row.
+
+Creation and effective revocation return a new immutable family and a frozen
+nonempty fact tuple; unchanged revocation returns the original family and an
+empty frozen tuple. Facts contain only type, opaque session and account IDs,
+derived state, resulting version, occurrence time, and the closed reason when
+applicable. Deadlines, raw credentials, digests, credential IDs, sequences,
+cookies, network attributes, and user-agent data are excluded. Rehydration
+requires exact fields and collapses every malformed value, chronology,
+lifetime, and lifecycle cause to one fixed cause-free error.
+
+The alternative is a stored `ACTIVE`/`EXPIRED` flag or a family-only rotation
+method. A stored expiry flag becomes stale without a write at every deadline;
+a partial rotation method could extend a family without consuming the refresh
+row. Deriving expiry and deferring rotation costs one additional domain
+increment, but preserves one authoritative clock and makes the future
+consume/link/extend/replay decision atomic.
+
+The next refresh-entity slice starts sequences at 1 and rehydrates only the
+specific locked predecessor needed by the command. Non-locking digest discovery
+may return identifiers only: the transaction must reload current family and
+credential state. In a two-refresh race, the loser must see the predecessor as
+consumed and revoke the now-newer family; rejecting a stale discovery-time
+version would suppress replay detection. Raw token values and digests never
+enter either aggregate.
+
 An account has at most five authenticating session families, where
 authenticating means unrevoked and before absolute expiry; refresh idle expiry
 does not make a still-valid access credential disappear. Login holds the
@@ -1262,6 +1345,14 @@ authentication surface becomes public.
     aggregate version and one transaction make concurrent grants, revokes, and
     retirement observable, reject lost updates, and produce precise security
     evidence.
+12. **Why is refresh idle expiry not a SessionFamily status?** It stops refresh
+    issuance only. A previously issued access credential may remain valid
+    until its own or the family absolute deadline, so persisting `EXPIRED`
+    would conflate two different authorization decisions.
+13. **Why not carry the family version found during refresh-token lookup?** The
+    lookup is deliberately non-locking. A concurrent winner may consume that
+    credential; the loser must reload locked current state and treat the
+    consumed row as replay instead of stopping at a stale-version mismatch.
 
 ## Future improvements
 
