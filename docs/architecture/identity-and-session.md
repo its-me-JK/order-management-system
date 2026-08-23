@@ -1153,9 +1153,36 @@ authority from the authentic runtime, captures one fixed infrastructure
 program, executes only opaque reviewed statements through server-prepared
 binding, owns a monotonic one-to-ten-second transaction deadline, and returns
 only committed, proven-non-committed, or indeterminate settlement. It does not
-yet implement Identity's direct locked loader, rotation/reuse writers,
-security-event writer, concrete refresh Unit of Work, completion promotion, or
-credential-delivery gate.
+implement Identity policy, rotation/reuse writers, security-event mapping,
+completion promotion, or credential delivery.
+
+The sixth prerequisite increment is the package-internal direct-MySQL locked
+loader and is delivered. It consumes the existing discovery ticket, then uses
+the executor-owned statement capability for three static prepared primary-key
+locks in the exact Account, SessionFamily, presented RefreshCredential order.
+The adapter receives neither a raw connection nor commit, rollback, deadline,
+or writer-time authority. Its statement identities and factory have no Identity
+barrel or package export; the Prisma loader remains only a reference mapping and
+lock-invariant proof.
+
+The direct MariaDB contract is explicit. A SELECT result must be a real array
+with only its indices, `length`, and the connector's own non-enumerable `meta`
+data property. The decoder never reads metadata and returns only frozen
+not-found, found, or malformed evidence. Identity performs strict aggregate
+rehydration after statement execution, so a rejected provider operation remains
+the executor's sticky unavailable failure while malformed persistence evidence
+becomes an Identity execution defect. The final lock uses an Identity-owned
+digest copy; that copy and the executor's independent parameter copy are each
+overwritten after their own asynchronous operation settles.
+
+This is still not the concrete Unit of Work. The executor can seal and return
+`indeterminate` when its deadline wins while the program Promise is still
+settling. At that instant a refresh command may remain `running`, and the
+existing close transition correctly refuses to retire it concurrently. Before
+the full Unit of Work is safe, the executor needs a trusted post-seal cleanup
+hook or Identity needs a carefully designed abort transition that cannot race
+continued program work. Assuming socket destruction immediately settles the
+program is not commit or credential-lifecycle proof.
 
 Identity uses a hybrid boundary rather than repositories per aggregate. A
 small `IdentitySessionRefreshUnitOfWork` owns transaction completion. Separate purpose-built
@@ -1595,15 +1622,16 @@ failures deliberately remain internal values for the future Unit of Work to
 discard or classify; the command is not exported or safe for direct transport
 composition.
 
-The infrastructure blocker is equally deliberate. Prisma's public interactive
-transaction client does not expose a supported primitive to cancel one in-flight
-query or quarantine its exact pooled connection. The future Unit of Work must
-prove synchronous operation leases, bounded drain, transaction timeout,
-rollback completion, and connection non-reuse under stalled-query and
-connection-loss fault injection. If the pinned Prisma adapter cannot prove
-those properties, Identity must use a narrower connection-owning transaction
-executor or mark and recycle the complete database runtime; documentation must
-not claim exact-connection quarantine from an API that does not provide it.
+The prior connection-ownership blocker is now resolved by the database
+executor and the direct loader uses only that executor's statement capability.
+Prisma's public interactive transaction client still has no supported
+single-query cancellation or exact pooled-connection quarantine primitive, so
+it remains excluded from the concrete transaction. The remaining lifecycle
+blocker is above the connection: when the executor deadline wins, the program
+Promise may still be settling after the caller has received `indeterminate`.
+The future Unit of Work must add a trusted post-seal cleanup or abort protocol
+and prove that every claimed attempt is eventually retired without racing
+continued program work.
 
 The pinned Prisma MariaDB adapter also uses debug namespaces that can render a
 query object with its bound arguments. Production bootstrap must reject or
@@ -1670,13 +1698,15 @@ retirement, hostile re-entry resistance, and absence from the supported
 Identity package surface. These tests are application-only; they do not claim
 transaction provenance, DML, rollback, commit, or connection lifecycle.
 
-Focused locked-loader unit tests additionally prove exact construction and
-public shape, same-writer discovery pairing, one-use ticket and scope binding,
-strict row projections and provider types, primary-key lock order, digest
-revalidation and cleanup, six-digit time preservation, lifecycle-blind
-rehydration, active-slot and relationship validation, short-circuit not-found
-behavior, failure precedence, workflow poisoning after an authentic failure,
-fixed cause-free errors, and no Identity barrel or root export.
+Focused Prisma and direct locked-loader unit tests additionally prove exact
+construction and shape, same-writer discovery pairing, one-use ticket and scope
+binding, primary-key lock order, digest revalidation and cleanup, six-digit time
+preservation, lifecycle-blind rehydration, active-slot and relationship
+validation, short-circuit not-found, workflow poisoning, fixed cause-free
+errors, and no Identity barrel or root export. The direct tests also exercise
+the connector's exact non-enumerable `meta` descriptor, sparse/overflow/
+accessor/proxy evidence, post-settlement digest erasure, and statement identity
+without exposing SQL through the loader.
 
 The isolated
 `pnpm test:integration:identity-refresh-locked-loader` real-MySQL gate proves
@@ -1695,14 +1725,23 @@ persistence error. This proves causally that Account is the first contended
 lock. Only after the second transaction times out does the test release and
 settle the first transaction.
 
+The same guarded command also runs the private direct loader inside one fixed
+database-executor program. It proves that all three tokens execute through
+server-prepared binding on the exact transaction connection, direct unsigned
+integers map without Prisma normalization, `.123456` instants survive, and a
+post-discovery digest change commits as locked not-found. The direct program is
+read-only; commit in this test proves transaction composition, not refresh
+issuance or completion promotion.
+
 Separately, a loopback TCP listener accepts a connection but never performs the
 MySQL handshake; that loopback TCP accept/handshake stall becomes the fixed
 cause-free unavailable error. The guarded runner owns a dedicated database and
 grant, replays migrations, serializes local runs, and verifies database and
-grant cleanup independently. This gate does not prove that an arbitrary
-injected transaction client originated from the paired root writer, nor
-cancellation of an established connection or in-flight query,
-exact-connection quarantine, DML, rollback, or commit semantics.
+grant cleanup independently. Those Prisma fault cases do not prove
+cancellation of an established connection or in-flight query. The separate
+database-executor suite proves established-query quarantine and replacement
+capacity, while this Identity suite deliberately does not yet claim writer DML,
+rollback injection, commit-acknowledgement loss, or completion promotion.
 
 The application increment proves promotion, revocation, final attempt
 retirement, and a dormant exact-attempt binding, but not database settlement or
@@ -1710,12 +1749,14 @@ credential delivery. The concrete Unit of Work must still prove that only its
 real commit acknowledgement can invoke promotion, the later delivery gate must
 prove exact-pair disclosure, and executor tests must prove that caught values
 with hostile getters, Proxies, coercion traps, or secret causes never escape.
-The direct-MySQL increment must also add rotation and reuse writers and prove zero orchestration before a
-valid context, one orchestration otherwise, one writer time, one connection,
-operation tracking and bounded drain, DML order, affected-row checks, rollback
-injection after every statement, exact statement-and-constraint allowlisting,
-commit ambiguity, connection quarantine or whole-runtime retirement, no retry,
-escaped-scope rejection, and competing-refresh behavior against real MySQL.
+The next direct-MySQL increments must add rotation and reuse writers, then the
+concrete Unit of Work and its cleanup protocol. Together they must prove zero
+orchestration before a valid context, one orchestration otherwise, one writer
+time, one connection, operation tracking and bounded drain, DML order,
+affected-row checks, rollback injection after every statement, exact
+statement-and-constraint allowlisting, commit ambiguity, post-seal attempt
+retirement, no retry, escaped-scope rejection, and competing-refresh behavior
+against real MySQL.
 
 The rejected alternatives are public aggregate repositories and one Unit of
 Work containing every query and mutation. Repositories make partial refresh
@@ -2758,13 +2799,14 @@ authentication surface becomes public.
 Step 3 is partially delivered. The constrained Identity records,
 deterministic baseline policy, digest-level authority port, bounded Prisma
 reader, lifecycle-blind Prisma refresh-discovery adapter, root-writer-paired
-locked loader, isolated real-MySQL authority/discovery/locked-load/resolver
-tests, and root-exported framework-independent Bearer principal resolver exist.
-The closed refresh command, refresh-specific Unit-of-Work port, and dormant
-commit-completion registry are now delivered. The rotation/reuse writer,
-concrete direct-MySQL Unit of Work, database-gated promotion, delivery gate,
-security-event writer, cleanup use case, NestJS composition, and complete
-delivery-gate tests remain.
+Prisma locked-loader proof, direct exact-connection locked loader, isolated
+real-MySQL authority/discovery/locked-load/resolver tests, and root-exported
+framework-independent Bearer principal resolver exist. The closed refresh
+command, refresh-specific Unit-of-Work port, and dormant commit-completion
+registry are also delivered. The rotation/reuse writer, post-deadline command
+cleanup protocol, concrete direct-MySQL Unit of Work, database-gated promotion,
+delivery gate, security-event writer, cleanup use case, NestJS composition, and
+complete delivery-gate tests remain.
 A trusted caller can now
 resolve an already-extracted canonical access-wire value, but there is still no
 `Authorization` extraction, request association, credential ingress, route, or
@@ -2795,7 +2837,9 @@ public authentication surface.
   bind its minimal ticket to the delivered locked loader without exposing
   credential constructors. Three separate primary-key locking reads make the
   global lock order executable and preserve all six database time digits for
-  the later decision.
+  the later decision. The private direct adapter expresses those reads as
+  opaque prepared statement identities on the quarantinable executor-owned
+  connection; Prisma remains outside the security-critical transaction.
 - An application-owned Unit of Work keeps security policy out of generic
   repositories and makes atomic event/state invariants testable.
 - Redis contains attack cost across replicas without becoming session state or
@@ -3054,6 +3098,12 @@ public authentication surface.
     DML, rollback, commit ambiguity, connection retirement, pending-evidence
     promotion, and exact-pair delivery. Calling a load-only adapter a Unit of
     Work would overstate its security authority.
+38. **Why is exact-connection quarantine insufficient after a transaction
+    deadline?** Destroying the socket prevents that session from being reused,
+    but the JavaScript program Promise may still be settling. If the caller
+    receives `indeterminate` while the refresh command remains `running`, a
+    concurrent close cannot safely retire its credential attempt. Connection
+    safety and application-capability cleanup therefore need separate proofs.
 
 ## Future improvements
 
@@ -3088,10 +3138,10 @@ public authentication surface.
   classification, competing refresh, and ambiguous commit before extending
   the pattern to login, logout, Account, authenticator, or Role workflows; do
   not generalize it into aggregate CRUD.
-- Build the narrow Identity executor over the runtime-owned one-use connection
-  allocator. Prove its absolute deadline, serialized operation drain,
-  transaction settlement classification, scope non-escape, and connection
-  non-reuse without weakening indeterminate-outcome semantics.
+- Extend the sealed executor with a trusted post-seal program-settlement cleanup
+  hook, or add a workflow abort transition with equivalent race safety. Prove
+  attempt retirement after deadline-driven `indeterminate` without weakening
+  connection quarantine or allowing late program work to revive authority.
 - Reject Prisma driver-adapter debug namespaces and query logging in production
   configuration before public credential ingress, and regression-test that
   bound credential digests cannot bypass the application logger.

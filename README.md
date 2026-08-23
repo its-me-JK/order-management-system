@@ -76,7 +76,7 @@ the binary refresh digest. It deliberately searches every retained generation
 without applying consumption, credential-expiry, family-expiry, revocation, or
 Account-status policy, so the locked refresh workflow can still detect replay.
 Its factory privately owns the ticket authority and binds it to the exact root
-writer client. A new package-internal Prisma locked loader consumes that
+writer client. The package-internal Prisma locked loader consumes that
 one-use ticket over an already-active transaction, then issues three separate
 primary-key `FOR UPDATE` reads in the fixed Account, SessionFamily, presented
 RefreshCredential order. Each statement forces `PRIMARY`; the final read also
@@ -84,14 +84,21 @@ revalidates the discovered family, credential ID, and copied digest. Timestamp
 projections remain canonical six-digit UTC strings rather than lossy
 JavaScript `Date` values. The discovery and loader both wipe their temporary
 digest copies and keep exact not-found, expected database unavailability, and
-persistence/integrity failure distinct. The future Unit of Work, not this
-standalone internal factory, must prove that the injected transaction client
-came from that root writer and own its connection lifecycle.
+persistence/integrity failure distinct. That Prisma loader remains a reference
+mapping and lock-invariant proof. A second private loader now executes the same
+three locks as opaque static prepared statements on the database executor's
+exact one-use connection. It strictly recognizes the pinned MariaDB result
+envelope without reading connector metadata, maps domain evidence only after
+statement settlement, and independently wipes its copied digest. No direct
+loader, statement, SQL, or transaction capability is added to an Identity
+package export.
 An isolated real-MySQL gate proves the DML-only application grant, exact
 three-statement trace and `PRIMARY`/`const` plans, retained consumed and expired
 lifecycle loads, six-digit projections, digest-drift not-found, and
 causal shared-Account first-lock contention on separate `READ-COMMITTED`
-transaction connections.
+transaction connections. The same guarded gate now runs the direct loader
+through the fixed executor and proves the real connector's numeric/result
+shape, six-digit rehydration, and digest-drift not-found.
 Its loopback TCP listener accepts a connection but deliberately never performs
 the MySQL handshake; that loopback TCP accept/handshake stall proves fixed,
 cause-free unavailability only. It does not prove cancellation or quarantine
@@ -130,12 +137,14 @@ access lifetimes, exact bounds, canonical wire through production SHA-256 to
 real MySQL authority, and public resolver outage classification. Identity
 still has no `Authorization` extraction, request association, authentication
 route, or public credential ingress. The locked loader is deliberately
-load-only: no rotation/reuse writer, transaction lease tracker, concrete Unit
-of Work, commit/rollback settlement, database-gated completion activation,
-credential-delivery gate, security-event adapter, NestJS composition, Argon2
-adapter, password input policy, or Redis abuse control completes the runtime path yet. Prisma's public
-transaction client also supplies no proven exact-connection cancellation or
-quarantine primitive. Before credential ingress becomes public, production
+load-only: no rotation/reuse writer, concrete Unit of Work, post-deadline
+command cleanup, database-gated completion activation, credential-delivery
+gate, security-event adapter, NestJS composition, Argon2 adapter, password
+input policy, or Redis abuse control completes the runtime path yet. The
+direct executor quarantines its exact connection, but it may return
+`indeterminate` before the program Promise has finished cleanup; the full Unit
+of Work remains blocked until that attempt-retirement race has an explicit
+protocol. Before credential ingress becomes public, production
 configuration must disable Prisma driver-adapter debug/query logging because
 those namespaces can emit bound digest arguments. That configuration gate is
 not implemented yet, so public credential ingress remains blocked. Pricing,
@@ -345,6 +354,14 @@ index use, and loopback TCP accept/handshake stall classification. CI runs this
 command separately because its lifecycle-blind replay semantics are
 intentionally different from the access-authority reader's lifecycle-gated
 semantics.
+The dedicated locked-loader command reuses one guarded disposable database for
+two sequential proofs. The Prisma reference suite establishes the global lock
+order, query plans, retained-lifecycle mapping, and causal Account contention;
+the direct suite executes the same three locks as prepared statement tokens on
+the sealed executor's exact connection and proves the pinned connector result
+shape, numeric mapping, six-digit instants, and digest-drift not-found. The
+runner drops and independently verifies both its database and temporary DML
+grant.
 The Catalog integration command verifies an initial-schema
 upgrade with legacy rows, rejects ambiguous terminal history before DDL, and
 also creates, migrates twice, and removes an exact fresh
@@ -521,7 +538,7 @@ Useful repository commands:
 | `pnpm test:integration:identity-authority` | Verify the bounded Identity access-authority reader in an isolated local MySQL database |
 | `pnpm test:integration:identity-authorization` | Verify the Identity authorization registry, Role mappings, security-event schema, and Prisma drift against isolated real MySQL databases |
 | `pnpm test:integration:identity-refresh-discovery` | Verify lifecycle-blind refresh-digest discovery and its production Prisma query in an isolated local MySQL database |
-| `pnpm test:integration:identity-refresh-locked-loader` | Verify the paired Identity refresh loader's exact primary-key lock order, lossless rehydration, and causal Account-contention contract in an isolated local MySQL database |
+| `pnpm test:integration:identity-refresh-locked-loader` | Verify the Prisma reference lock contract and direct prepared exact-connection loader, including lossless rehydration and causal Account contention, in an isolated local MySQL database |
 | `pnpm test:integration:identity-refresh-lineage` | Verify the Identity lineage migration, invariants, and Prisma drift against isolated real MySQL databases |
 | `pnpm format:check` | Verify formatting without modifying files |
 | `pnpm check` | Run every required quality gate in CI order |
