@@ -14,13 +14,11 @@ import {
   MAX_IDENTITY_AUTHENTICATED_PRINCIPAL_ACTIVE_ROLE_COUNT,
   MAX_IDENTITY_AUTHENTICATED_PRINCIPAL_PERMISSION_COUNT,
 } from '../../application/identity-authenticated-principal';
-import { InvalidIdentityAuthenticatedPrincipalError } from '../../application/identity-authenticated-principal.errors';
 import {
   copyIdentityAccessCredentialDigestBytes,
   type IdentityAccessCredentialDigest,
 } from '../../application/identity-session-credential-digest.values';
-import { parseIdentityPermissionCode } from '../../domain/identity-permission.values';
-import { parseIdentityRoleId } from '../../domain/identity-role.values';
+import { mapIdentityAuthorityProjectionRows } from '../identity-authority-projection.mapper';
 
 const AUTHORITY_STATE_CORRUPT = 'CORRUPT';
 const AUTHORITY_STATE_REJECTED = 'REJECTED';
@@ -30,270 +28,16 @@ const MAX_IDENTITY_ACCESS_AUTHORITY_RAW_MAPPING_ROWS =
   MAX_IDENTITY_AUTHENTICATED_PRINCIPAL_PERMISSION_COUNT;
 const IDENTITY_ACCESS_AUTHORITY_OVERFLOW_PROBE_ROW_COUNT =
   MAX_IDENTITY_ACCESS_AUTHORITY_RAW_MAPPING_ROWS + 1;
-const IDENTITY_ACCESS_AUTHORITY_ROW_KEYS = Object.freeze([
-  'authority_state',
-  'actor_id',
-  'session_id',
-  'assigned_role_id',
-  'loaded_role_id',
-  'role_status',
-  'mapped_permission_code',
-  'permission_code',
-] as const);
 
 export type IdentityAccessAuthorityPrismaClient = Pick<PrismaClient, '$queryRaw'>;
-type UnknownRecord = Readonly<Record<string, unknown>>;
-
-function invalidAuthority(): never {
-  throw new InvalidIdentityAuthenticatedPrincipalError();
-}
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function hasExactAuthorityRowKeys(value: UnknownRecord): boolean {
-  const keys = Reflect.ownKeys(value);
-
-  return (
-    keys.length === IDENTITY_ACCESS_AUTHORITY_ROW_KEYS.length &&
-    keys.every(
-      (key) =>
-        typeof key === 'string' &&
-        IDENTITY_ACCESS_AUTHORITY_ROW_KEYS.some((expectedKey) => expectedKey === key),
-    )
-  );
-}
-
-function requiredString(value: unknown): string {
-  if (typeof value !== 'string') {
-    invalidAuthority();
-  }
-
-  return value;
-}
-
-function isNullProjection(value: UnknownRecord): boolean {
-  return (
-    value['actor_id'] === null &&
-    value['session_id'] === null &&
-    value['assigned_role_id'] === null &&
-    value['loaded_role_id'] === null &&
-    value['role_status'] === null &&
-    value['mapped_permission_code'] === null &&
-    value['permission_code'] === null
-  );
-}
-
-function compareAscii(left: string, right: string): -1 | 0 | 1 {
-  if (left < right) {
-    return -1;
-  }
-
-  if (left > right) {
-    return 1;
-  }
-
-  return 0;
-}
-
-function rowsFromRawResult(value: unknown): readonly unknown[] {
-  if (!Array.isArray(value)) {
-    invalidAuthority();
-  }
-
-  const rowCount = value.length;
-
-  if (
-    !Number.isInteger(rowCount) ||
-    rowCount < 0 ||
-    rowCount > MAX_IDENTITY_ACCESS_AUTHORITY_RAW_MAPPING_ROWS
-  ) {
-    invalidAuthority();
-  }
-
-  for (let index = 0; index < rowCount; index += 1) {
-    if (!Object.hasOwn(value, index)) {
-      invalidAuthority();
-    }
-  }
-
-  return value;
-}
 
 function mapIdentityAccessAuthorityResult(value: unknown): IdentityAccessAuthorityResult {
-  try {
-    const rows = rowsFromRawResult(value);
-    const firstUnknownRow = rows[0];
+  const result = mapIdentityAuthorityProjectionRows(value);
 
-    if (firstUnknownRow === undefined) {
-      return IDENTITY_ACCESS_AUTHORITY_REJECTED;
-    }
+  if (result.kind === 'rejected') return IDENTITY_ACCESS_AUTHORITY_REJECTED;
+  const principal = createIdentityAuthenticatedPrincipalFromAuthority(result.projection);
 
-    if (!isRecord(firstUnknownRow) || !hasExactAuthorityRowKeys(firstUnknownRow)) {
-      invalidAuthority();
-    }
-
-    const authorityState = requiredString(firstUnknownRow['authority_state']);
-
-    if (authorityState === AUTHORITY_STATE_REJECTED) {
-      if (rows.length !== 1 || !isNullProjection(firstUnknownRow)) {
-        invalidAuthority();
-      }
-
-      return IDENTITY_ACCESS_AUTHORITY_REJECTED;
-    }
-
-    if (authorityState === AUTHORITY_STATE_CORRUPT) {
-      invalidAuthority();
-    }
-
-    if (authorityState !== AUTHORITY_STATE_RESOLVED) {
-      invalidAuthority();
-    }
-
-    const actorId = requiredString(firstUnknownRow['actor_id']);
-    const sessionId = requiredString(firstUnknownRow['session_id']);
-    const roleIds = new Set<string>();
-    const roleStatuses = new Map<string, 'ACTIVE' | 'RETIRED'>();
-    const activeRoleProjectionKinds = new Map<string, 'empty' | 'mapped'>();
-    const permissionCodes = new Set<string>();
-    const rolePermissionPairs = new Set<string>();
-    let hasNullRoleProjection = false;
-
-    for (const unknownRow of rows) {
-      if (!isRecord(unknownRow) || !hasExactAuthorityRowKeys(unknownRow)) {
-        invalidAuthority();
-      }
-
-      if (
-        unknownRow['authority_state'] !== AUTHORITY_STATE_RESOLVED ||
-        unknownRow['actor_id'] !== actorId ||
-        unknownRow['session_id'] !== sessionId
-      ) {
-        invalidAuthority();
-      }
-
-      const rawAssignedRoleId = unknownRow['assigned_role_id'];
-      const rawLoadedRoleId = unknownRow['loaded_role_id'];
-      const rawRoleStatus = unknownRow['role_status'];
-      const rawMappedPermissionCode = unknownRow['mapped_permission_code'];
-      const rawPermissionCode = unknownRow['permission_code'];
-
-      if (rawAssignedRoleId === null) {
-        if (
-          rawLoadedRoleId !== null ||
-          rawRoleStatus !== null ||
-          rawMappedPermissionCode !== null ||
-          rawPermissionCode !== null ||
-          rows.length !== 1
-        ) {
-          invalidAuthority();
-        }
-
-        hasNullRoleProjection = true;
-        continue;
-      }
-
-      if (hasNullRoleProjection) {
-        invalidAuthority();
-      }
-
-      const roleId = parseIdentityRoleId(rawAssignedRoleId);
-
-      if (rawLoadedRoleId !== roleId) {
-        invalidAuthority();
-      }
-
-      if (rawRoleStatus !== 'ACTIVE' && rawRoleStatus !== 'RETIRED') {
-        invalidAuthority();
-      }
-
-      const previousRoleStatus = roleStatuses.get(roleId);
-
-      if (previousRoleStatus !== undefined && previousRoleStatus !== rawRoleStatus) {
-        invalidAuthority();
-      }
-
-      if (rawRoleStatus === 'RETIRED') {
-        if (
-          previousRoleStatus !== undefined ||
-          rawMappedPermissionCode !== null ||
-          rawPermissionCode !== null
-        ) {
-          invalidAuthority();
-        }
-
-        roleStatuses.set(roleId, rawRoleStatus);
-        continue;
-      }
-
-      roleStatuses.set(roleId, rawRoleStatus);
-
-      roleIds.add(roleId);
-
-      if (roleIds.size > MAX_IDENTITY_AUTHENTICATED_PRINCIPAL_ACTIVE_ROLE_COUNT) {
-        invalidAuthority();
-      }
-
-      if (rawMappedPermissionCode === null) {
-        if (rawPermissionCode !== null || activeRoleProjectionKinds.has(roleId)) {
-          invalidAuthority();
-        }
-
-        activeRoleProjectionKinds.set(roleId, 'empty');
-        const emptyRolePair = `${roleId}\u0000`;
-
-        if (rolePermissionPairs.has(emptyRolePair)) {
-          invalidAuthority();
-        }
-
-        rolePermissionPairs.add(emptyRolePair);
-        continue;
-      }
-
-      const mappedPermissionCode = parseIdentityPermissionCode(rawMappedPermissionCode);
-
-      if (activeRoleProjectionKinds.get(roleId) === 'empty') {
-        invalidAuthority();
-      }
-
-      activeRoleProjectionKinds.set(roleId, 'mapped');
-
-      if (rawPermissionCode !== mappedPermissionCode) {
-        invalidAuthority();
-      }
-
-      const permissionCode = parseIdentityPermissionCode(rawPermissionCode);
-      const pair = `${roleId}\u0000${permissionCode}`;
-
-      if (rolePermissionPairs.has(pair)) {
-        invalidAuthority();
-      }
-
-      rolePermissionPairs.add(pair);
-      permissionCodes.add(permissionCode);
-
-      if (permissionCodes.size > MAX_IDENTITY_AUTHENTICATED_PRINCIPAL_PERMISSION_COUNT) {
-        invalidAuthority();
-      }
-    }
-
-    const permissions = [...permissionCodes].sort(compareAscii);
-    const principal = createIdentityAuthenticatedPrincipalFromAuthority({
-      actorId,
-      sessionId,
-      activeRoleCount: roleIds.size,
-      permissions,
-    });
-
-    return Object.freeze({
-      kind: 'resolved' as const,
-      principal,
-    });
-  } catch {
-    invalidAuthority();
-  }
+  return Object.freeze({ kind: 'resolved' as const, principal });
 }
 
 function translateQueryError(error: unknown): never {

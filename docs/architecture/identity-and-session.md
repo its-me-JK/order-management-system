@@ -1699,6 +1699,23 @@ one. `persistReuseDetected` conditionally revokes the family and appends only
 the mapped reuse event. State and event writes share the same transaction and
 connection. Projection or event failure rolls back all earlier writes.
 
+The rotation authority portion of that trace is now delivered as a private
+prepared-statement kernel. It is a non-locking read on the executor's exact
+connection after the family update: exact Account identifier, locked Account
+version, active lifecycle, exact SessionFamily identifier, resulting family
+version, and open family lifecycle must all still match. A literal 2,049-row
+probe bounds the result to 2,048 mappings without SQL aggregation. The strict
+MariaDB envelope decoder copies only exact accessor-free rows and delegates to
+the same provider-independent authority mapper used by the Prisma Bearer
+reader. That mapper returns only the frozen actor/session/active-role/permission
+projection; the authenticated refresh workflow remains the sole principal
+factory and rechecks aggregate binding. Zero rows, overflow, malformed joins,
+duplicate mappings, and invalid identifiers are execution defects. The query
+does not lock Role or Permission records, so the accepted `READ COMMITTED`
+policy is a statement-time authority snapshot rather than a wider deadlock
+graph. This kernel does not yet claim the five rotation state mutations, event
+append, or complete `persistRotated` writer.
+
 The current application-contract tests prove exact shapes, nominal identity,
 freezing, one-shot attempt admission and retirement, candidate-attempt
 correlation, mixed-wire/digest rejection and temporary-copy overwrite,
@@ -1758,6 +1775,20 @@ unchanged refresh/access rows. A pre-existing event identifier makes the
 unmapped insert unavailable and proves the earlier family update is rolled
 back. These cases prove the reuse store's atomic DML composition, not the full
 Unit of Work, completion promotion, or credential delivery.
+
+That guarded command now also executes a test-only conditional family-version
+update followed by the production rotation-authority statement in one executor
+program. Because the projection requires the uncommitted resulting version,
+the successful zero-role case proves same-connection read-your-own-write
+behavior. A second real-MySQL case proves shared-permission deduplication,
+ASCII ordering, two active-role counting, and exclusion of one retired Role.
+Four negative transactions prove that a stale Account version, stale resulting
+family version, suspended Account, or revoked and closed family cannot resolve
+authority and that the preceding test-local family update rolls back. Focused
+adversarial tests separately cover the exact MariaDB `meta` envelope,
+descriptors, sparse and extended arrays, Proxies and accessors, post-import
+intrinsic poisoning, semantic corruption, and the 2,049th overflow row. These
+cases prove only the authority prerequisite, not durable credential rotation.
 
 Separately, a loopback TCP listener accepts a connection but never performs the
 MySQL handshake; that loopback TCP accept/handshake stall becomes the fixed
@@ -2829,9 +2860,10 @@ Prisma locked-loader proof, direct exact-connection locked loader, isolated
 real-MySQL authority/discovery/locked-load/resolver tests, and root-exported
 framework-independent Bearer principal resolver exist. The closed refresh
 command, refresh-specific Unit-of-Work port, dormant commit-completion
-registry, and direct reuse writer are also delivered. The rotation writer,
-post-deadline command cleanup protocol, concrete direct-MySQL Unit of Work,
-database-gated promotion, delivery gate, remaining security-event paths,
+registry, direct reuse writer, shared authority projection mapper, and private
+same-connection rotation-authority statement are also delivered. The rotation
+writer, post-deadline command cleanup protocol, concrete direct-MySQL Unit of
+Work, database-gated promotion, delivery gate, remaining security-event paths,
 cleanup use case, NestJS composition, and complete delivery-gate tests remain.
 A trusted caller can now
 resolve an already-extracted canonical access-wire value, but there is still no

@@ -25,7 +25,7 @@
     "build": "tsc --project tsconfig.build.json",
     "test:integration:authority": "pnpm --filter @oms/configuration run build && pnpm --filter @oms/database run build && tsc --project tsconfig.integration.json && node --test --test-concurrency=1 .integration-dist/test/infrastructure/identity-access-authority.integration-test.js",
     "test:integration:refresh-discovery": "pnpm --filter @oms/configuration run build && pnpm --filter @oms/database run build && tsc --project tsconfig.integration.json && node --test --test-concurrency=1 .integration-dist/test/infrastructure/identity-session-refresh-discovery.integration-test.js",
-    "test:integration:refresh-locked-loader": "pnpm --filter @oms/configuration run build && pnpm --filter @oms/database run build && tsc --project tsconfig.integration.json && node --test --test-concurrency=1 .integration-dist/test/infrastructure/identity-session-refresh-locked-loader.integration-test.js .integration-dist/test/infrastructure/identity-session-refresh-direct-locked-loader.integration-test.js",
+    "test:integration:refresh-locked-loader": "pnpm --filter @oms/configuration run build && pnpm --filter @oms/database run build && tsc --project tsconfig.integration.json && node --test --test-concurrency=1 .integration-dist/test/infrastructure/identity-session-refresh-locked-loader.integration-test.js .integration-dist/test/infrastructure/identity-session-refresh-direct-locked-loader.integration-test.js .integration-dist/test/infrastructure/identity-session-refresh-rotation-authority.integration-test.js",
     "typecheck": "tsc --noEmit --project tsconfig.json"
   },
   "dependencies": {
