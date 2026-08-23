@@ -1106,11 +1106,12 @@ package-internal until a composed use case creates a real public consumer.
 Implementation is deliberately staged at the strongest boundary the current
 layer can prove. The first executable increment implements only a
 runtime-authentic, one-load/one-decision workflow and the attempt transitions
-`unclaimed -> claimed -> retired`. It has no application-memory "commit proof",
-committed evidence, or credential-delivery helper. Those capabilities arrive
-with the concrete MySQL Unit of Work, whose real transaction trace can prove
-the writes and `COMMIT`; a caller-selected object or pending workflow result is
-never commit authority. This avoids turning a structurally convincing test
+`unclaimed -> claimed -> retired`. That increment intentionally had no dormant
+completion or credential-delivery helper. A later application increment adds
+the completion state machine without claiming database proof; only the
+concrete MySQL Unit of Work can use its real transaction trace to authorize
+promotion after `COMMIT`. A caller-selected object or pending workflow result
+is never commit authority. This avoids turning a structurally convincing test
 double into a security boundary.
 
 The second executable increment is application-only and delivered. An
@@ -1135,8 +1136,18 @@ terminal branch. It authenticates and consumes the resulting pending evidence
 as the handoff to future commit handling. It accepts no caller callback and
 still grants no commit or credential-delivery authority.
 
+The fourth executable increment is application-only and delivered. It defines
+the refresh-specific `IdentitySessionRefreshUnitOfWork.execute(command)` port,
+the three closed outcome representations, and one fixed execution-defect
+error. Consuming authentic pending evidence pre-creates a dormant committed
+completion. After scope close, one non-throwing transition can promote it or
+revoke it exactly once. Rotation promotion transfers the exact candidate-pair
+binding to that completion; every other outcome retires the attempt. This
+increment supplies no database acknowledgement, concrete Unit of Work, wire
+delivery, route, or public export.
+
 Identity uses a hybrid boundary rather than repositories per aggregate. A
-small `IdentityUnitOfWork` owns transaction completion. Separate purpose-built
+small `IdentitySessionRefreshUnitOfWork` owns transaction completion. Separate purpose-built
 reads operate outside a transaction, while workflow-scoped loaders and writers
 receive an opaque transaction capability. Private Prisma mappers may reuse
 driver-independent mapping code later, but the connection-owning transaction
@@ -1154,7 +1165,7 @@ separately reserved, package-private allocator supplies one-use exact
 connections, and it splits one per-runtime connection budget with Prisma's
 pool.
 
-For this refresh slice, `IdentityUnitOfWork.execute` accepts one authentic
+For this refresh slice, `IdentitySessionRefreshUnitOfWork.execute` accepts one authentic
 closed refresh command as its exact admission and invokes its fixed,
 package-owned asynchronous orchestration at most once. Synchronous command
 admission claims the command's verified credential attempt before the first
@@ -1189,7 +1200,7 @@ using the connection.
 The adapter mints a provisional scope before `BEGIN` solely so a private
 run-controller capability can win the credential-attempt claim. The
 controller, not the callback-visible scope, owns claim inspection, retirement,
-and future commit promotion; neither it nor the provisional scope is exposed to
+and commit-promotion invocation; neither it nor the provisional scope is exposed to
 orchestration before activation. Only confirmed `BEGIN` plus the one valid
 writer time activates the context. A scoped operation synchronously acquires a
 one-shot lease before its first SQL statement, and at most one lease may be
@@ -1290,24 +1301,33 @@ compare-and-set to change it to `claimed` before any asynchronous work and binds
 it to the private run controller, never to the callback-visible scope. Only the
 call that wins `unclaimed -> claimed` owns later lifecycle changes. A concurrent
 or later claim of that same attempt fails before `BEGIN` or SQL without changing
-the winner. The current application module implements only retirement after a
-claim; it deliberately exposes no generic commit or delivery transition.
+the winner. The application module keeps settlement refresh-specific rather
+than exporting a generic attempt commit operation. One dormant completion is
+prepared while authentic pending evidence still owns the exact claim.
+Confirmed rotation commit changes that attempt to `committed` and retains only
+its exact candidate-pair binding for the later delivery gate. Every other
+settlement retires the attempt and releases the pair.
 
-When the concrete adapter arrives, only a confirmed committed `rotated`
-decision promotes a distinct pre-created completion and makes its exact attempt
-eligible for delivery. A committed `rejected` or `reuse-detected` decision,
-known rollback, unavailable, collision, orchestration failure, and
-indeterminate outcome all retire the attempt and its candidates forever. A
-retry therefore requires a newly generated and verified pair, never reuse of a
-candidate from an ambiguous attempt. Pending evidence captured by orchestration
-never changes identity into committed evidence; post-commit promotion is a
-separate synchronous, non-throwing registry transition.
+Every confirmed committed decision promotes its distinct pre-created
+completion, but only `rotated` keeps its exact attempt eligible for the later
+delivery gate. A committed `rejected` or `reuse-detected` decision, known
+rollback, unavailable, collision, orchestration failure, and indeterminate
+outcome all retire the attempt and its candidates forever. A retry therefore
+requires a newly generated and verified pair, never reuse of a candidate from
+an ambiguous attempt. Pending evidence captured by orchestration never changes
+identity into committed evidence; post-commit promotion is a separate
+synchronous, non-throwing registry transition. The delivered application
+transition can be exercised only with an authentic controller and consumed
+evidence after scope close. Its tests prove capability behavior, not a database
+commit; only the future connection-owning adapter may invoke it after a real
+`COMMIT` acknowledgement.
 
 Callback evidence is pending, not delivery authority. Its private registration
 binds the exact scope, registered decision, and, for rotation, the authentic
-credential-attempt identity admitted to that scope. Confirmed
-`COMMIT` atomically marks that evidence committed and registers a distinct
-runtime-authentic completion wrapper; confirmed rollback and every
+credential-attempt identity admitted to that scope. Consuming that evidence
+pre-creates and registers a dormant, distinct
+runtime-authentic completion wrapper. After observing `COMMIT`
+acknowledgement, the concrete adapter synchronously activates it; confirmed rollback and every
 indeterminate path permanently revoke it. A future delivery gate accepts the
 authentic committed completion plus the original candidate pair and verifies
 that it is the exact pair registered to that attempt before exposing either
@@ -1323,11 +1343,15 @@ transaction scope and clears aggregate, decision, and action registrations.
 Unconsumed evidence and every other pre-handoff path retire the claimed
 candidate attempt. Consumed evidence and its exact admitted attempt survive
 scope close only under the private controller while the outer transaction
-outcome is unresolved. The future Unit of Work must promote or revoke that
-registration and remove every retained reference after confirmed commit,
-confirmed non-commit, or an indeterminate outcome.
+outcome is unresolved. The Unit of Work must promote or revoke that
+registration and remove every unneeded retained reference after confirmed
+commit, confirmed non-commit, or an indeterminate outcome. Both settlement
+transitions are one-shot and non-throwing: an invalid or replayed transition
+produces no completion and never changes a rightful registration.
 
-The outer result is one exact frozen completion union:
+The refresh-specific application port fixes `execute(command)` as its only
+operation and accepts no caller callback, scope, query function, or settlement
+method. Its outer result is one exact frozen completion union:
 
 ```text
 { kind: "committed", evidence }
@@ -1335,21 +1359,24 @@ The outer result is one exact frozen completion union:
 { kind: "indeterminate" }
 ```
 
-Only `committed` contains evidence, and the Unit of Work creates and registers
-that wrapper only after confirmed `COMMIT`. `not-committed` is returned only
+Only `committed` contains the distinct runtime-authentic completion prepared
+before settlement. The concrete Unit of Work activates and returns that outer
+wrapper only after confirmed `COMMIT`. `not-committed` is returned only
 when the adapter can prove no commit occurred, including failure before `BEGIN`
 or a confirmed rollback. `indeterminate` covers every path on which transaction
-outcome cannot be proved, whether the callback returned or threw. It contains
+outcome cannot be proved, whether package-owned command orchestration completed
+or failed. It contains
 no reason, evidence, provider code, or rollback claim. Promise rejection is
-reserved for an unexpected callback or contract failure before a commit request
+reserved for an unexpected orchestration or contract failure before a commit request
 and only after all scoped work is quiescent and no `BEGIN` or a confirmed
 rollback proves non-commit. The adapter discards the caught value without
 reading, coercing, stringifying, logging, attaching as `cause`, or retaining it,
 then rejects with a fresh fixed, cause-free
-`IdentityTransactionCallbackFailedError`. After a commit request, ambiguous
+`IdentitySessionRefreshExecutionFailedError`, whose class and message are
+already fixed by the internal port. After a commit request, ambiguous
 rollback, or failed quiescence, even a programmer failure resolves as
 `indeterminate`. Callers never use a rejection as authority to reveal or retry
-a credential. None of these paths invokes the callback again.
+a credential. None of these paths reruns command orchestration.
 
 `credential-collision` requires a confirmed non-commit and an exact statement
 plus named-constraint allowlist match on newly generated credential material:
@@ -1535,11 +1562,15 @@ same change would mix deterministic row mapping with rollback injection,
 constraint allowlisting, ambiguous commit, and secret-delivery authority,
 making failures harder to localize and review.
 
-One application capability remains an explicit blocker. Confirmed commit must
-promote pending evidence into a distinct runtime-authentic completion bound to
-the exact candidate pair;
-pending evidence or a structurally similar object can never reveal either wire
-value.
+The application commit-completion capability is delivered. It pre-registers a
+distinct runtime-authentic completion bound to the exact attempt, promotes only
+consumed evidence after scope close, and supplies the one-shot revocation
+transition required by non-commit and ambiguous paths. The future Unit of Work
+must invoke the correct transition on every real settlement path. Pending
+evidence or a structurally similar object can never become commit proof. The
+concrete direct-MySQL Unit of Work and the rotation-only delivery gate remain
+blockers: these application tests cannot prove that a database actually
+acknowledged `COMMIT`, and no delivered capability reveals either wire value.
 
 The delivered command's transaction-scoped `IdentitySessionRefreshStore`
 surface contains only locked load, rotated persistence, and reuse-detected
@@ -1660,11 +1691,13 @@ injected transaction client originated from the paired root writer, nor
 cancellation of an established connection or in-flight query,
 exact-connection quarantine, DML, rollback, or commit semantics.
 
-The Unit of Work increment must still prove commit promotion and revocation,
-final attempt retirement, exact-pair delivery binding, raw-credential rejection
-at orchestration settlement, and that caught values with hostile getters,
-Proxies, coercion traps, or secret causes never escape. The Prisma increment
-must still add rotation and reuse writers and prove zero orchestration before a
+The application increment proves promotion, revocation, final attempt
+retirement, and a dormant exact-attempt binding, but not database settlement or
+credential delivery. The concrete Unit of Work must still prove that only its
+real commit acknowledgement can invoke promotion, the later delivery gate must
+prove exact-pair disclosure, and executor tests must prove that caught values
+with hostile getters, Proxies, coercion traps, or secret causes never escape.
+The direct-MySQL increment must also add rotation and reuse writers and prove zero orchestration before a
 valid context, one orchestration otherwise, one writer time, one connection,
 operation tracking and bounded drain, DML order, affected-row checks, rollback
 injection after every statement, exact statement-and-constraint allowlisting,
@@ -1693,15 +1726,16 @@ The tempting evidence alternative is `execute<T>(callback): Promise<T>` or a
 plain persistence DTO. It is shorter, but it permits a callback to return a raw
 credential or structurally forged result and cannot prove scope, decision, or
 attempt ownership. Runtime identity registries and the closed terminal state
-machine cost additional code and retain the exact attempt for one bounded
-commit-resolution window; in return they reject replay, cross-scope, and
-wrong-kind writes before SQL. An interview-level consequence is that consumed
+machine cost additional code and retain the exact attempt until settlement;
+the future executor, not the registry alone, must bound that commit-resolution
+window with its transaction deadline. In return they reject replay,
+cross-scope, and wrong-kind writes before SQL. An interview-level consequence is that consumed
 pending evidence must survive callback-scope close: the scope must be invalid
 before `COMMIT`, while confirmed commit still needs the exact attempt binding
 for later delivery. That retained registration grants neither SQL nor delivery
-authority. The next improvements are the rotation/reuse writer, committed
-completion registry and delivery gate, and a connection-owning MySQL Unit of
-Work that alone can settle the command from a real transaction trace.
+authority. The next improvements are the rotation/reuse writer, exact-pair
+delivery gate, and a connection-owning MySQL Unit of Work that alone can invoke
+settlement from a real transaction trace.
 
 ## Credential and password representation
 
@@ -1816,17 +1850,17 @@ a provider error. Promises leave room for a future managed cryptographic
 provider without making the application depend on Node crypto.
 
 Generated raw wrappers stay in the outer application orchestration. Before it
-invokes the closed application-owned `IdentityUnitOfWork`, orchestration
+invokes the closed application-owned `IdentitySessionRefreshUnitOfWork`, orchestration
 re-digests and verifies the pair and receives the opaque credential-attempt
 capability described above. Only a family-creation or `rotated` scoped writer
 receives the attempt's package-private digest view alongside the complete
 domain result; it derives record IDs from that result and receives no duplicate
 caller-supplied IDs, candidate pair, or raw wire value. A `reuse-detected`
 writer receives no credential attempt, and `rejected` invokes no writer. The
-transaction callback returns only non-secret pending issuance evidence. Only
-an authentic completion registered after confirmed `COMMIT` permits a later
+package-owned transaction orchestration returns only non-secret pending issuance evidence. Only
+an authentic completion activated after confirmed `COMMIT` permits a later
 Identity delivery capability to serialize the exact correlated access value
-and set the refresh cookie. The callback cannot mark candidates committed or
+and set the refresh cookie. The orchestration cannot mark candidates committed or
 release them itself.
 
 A rejected transition, replay closure, known rollback, or definite credential
@@ -2712,9 +2746,11 @@ deterministic baseline policy, digest-level authority port, bounded Prisma
 reader, lifecycle-blind Prisma refresh-discovery adapter, root-writer-paired
 locked loader, isolated real-MySQL authority/discovery/locked-load/resolver
 tests, and root-exported framework-independent Bearer principal resolver exist.
-The closed refresh command is now delivered. The rotation/reuse writer, Unit
-of Work, committed completion and delivery gate, security-event writer,
-cleanup use case, NestJS composition, and complete delivery-gate tests remain.
+The closed refresh command, refresh-specific Unit-of-Work port, and dormant
+commit-completion registry are now delivered. The rotation/reuse writer,
+concrete direct-MySQL Unit of Work, database-gated promotion, delivery gate,
+security-event writer, cleanup use case, NestJS composition, and complete
+delivery-gate tests remain.
 A trusted caller can now
 resolve an already-extracted canonical access-wire value, but there is still no
 `Authorization` extraction, request association, credential ingress, route, or
@@ -3032,9 +3068,9 @@ public authentication surface.
   crypto-availability metrics, and evaluate FIPS/runtime attestation where a
   deployment requires it. A future HSM or managed provider remains a separate
   implementation of the unchanged application port.
-- Add rotation/reuse writers, the committed-completion registry and delivery
-  gate, and the Identity Unit of Work around the delivered paired
-  locked loader. Prove scope escape, rollback injection, exact constraint
+- Add rotation/reuse writers, the exact-pair delivery gate, and the concrete
+  Identity refresh Unit of Work around the delivered application port and
+  paired locked-loader proof. Prove scope escape, rollback injection, exact constraint
   classification, competing refresh, and ambiguous commit before extending
   the pattern to login, logout, Account, authenticator, or Role workflows; do
   not generalize it into aggregate CRUD.

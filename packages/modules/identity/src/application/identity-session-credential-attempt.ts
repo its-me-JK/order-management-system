@@ -30,6 +30,10 @@ const capturedIsFrozen = Object.isFrozen;
 const capturedIsArray = Array.isArray;
 const capturedOwnKeys = Reflect.ownKeys;
 const capturedReflectApply = Reflect.apply;
+// eslint-disable-next-line @typescript-eslint/unbound-method
+const capturedWeakMapDelete = WeakMap.prototype.delete;
+// eslint-disable-next-line @typescript-eslint/unbound-method
+const capturedWeakMapGet = WeakMap.prototype.get;
 const CANDIDATE_KEYS = capturedFreeze(['wireValue', 'digest'] as const);
 const CANDIDATES_KEYS = capturedFreeze(['access', 'refresh'] as const);
 const typedArrayPrototype = capturedGetPrototypeOf(Uint8Array.prototype) as object;
@@ -61,7 +65,7 @@ export type IdentitySessionCredentialAttemptDigestView = Readonly<{
   [identitySessionCredentialAttemptDigestViewBrand]: true;
 }>;
 
-type AttemptStatus = 'unclaimed' | 'claimed' | 'retired';
+type AttemptStatus = 'unclaimed' | 'claimed' | 'committed' | 'retired';
 
 interface AttemptState {
   status: AttemptStatus;
@@ -374,7 +378,7 @@ function assertOwner(value: unknown): asserts value is object {
 
 function releaseAttemptReferences(state: AttemptState): void {
   if (state.digestView !== undefined) {
-    digestViewRegistrations.delete(state.digestView);
+    capturedReflectApply(capturedWeakMapDelete, digestViewRegistrations, [state.digestView]);
   }
 
   state.owner = undefined;
@@ -561,12 +565,91 @@ export function inspectIdentitySessionCredentialAttemptDigestView(
 /** Retires a claimed attempt after a proven non-commit or an indeterminate outcome. */
 export function retireIdentitySessionCredentialAttempt(attempt: unknown, owner: object): void {
   assertOwner(owner);
-  const state = stateFor(attempt);
+  stateFor(attempt);
 
-  if (state.status !== 'claimed' || state.owner !== owner) {
+  if (!settleIdentitySessionCredentialAttemptAfterRefreshRevocation(attempt, owner)) {
     invalidCandidates();
   }
+}
 
-  state.status = 'retired';
-  releaseAttemptReferences(state);
+/**
+ * Confirms the exact claimed attempt after an acknowledged refresh commit.
+ *
+ * The transition is intentionally non-throwing because it runs after durable
+ * settlement. It retains only the exact candidate-pair binding required by the
+ * later delivery gate; digest-writer authority is invalidated immediately.
+ *
+ * @internal The refresh completion registry is the only production caller.
+ */
+export function settleIdentitySessionCredentialAttemptAfterRefreshCommit(
+  attemptValue: unknown,
+  currentOwnerValue: unknown,
+  committedOwnerValue: unknown,
+): boolean {
+  if (
+    !isObject(attemptValue) ||
+    !isObject(currentOwnerValue) ||
+    !isObject(committedOwnerValue) ||
+    committedOwnerValue === currentOwnerValue
+  ) {
+    return false;
+  }
+
+  try {
+    const state = capturedReflectApply(capturedWeakMapGet, attemptStates, [attemptValue]) as
+      AttemptState | undefined;
+
+    if (
+      state?.status !== 'claimed' ||
+      state.owner !== currentOwnerValue ||
+      state.candidates === undefined
+    ) {
+      return false;
+    }
+
+    if (state.digestView !== undefined) {
+      capturedReflectApply(capturedWeakMapDelete, digestViewRegistrations, [state.digestView]);
+    }
+
+    state.status = 'committed';
+    state.owner = committedOwnerValue;
+    state.digestView = undefined;
+    state.accessCredentialDigest = undefined;
+    state.refreshCredentialDigest = undefined;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Retires the exact claimed attempt for every non-delivery settlement.
+ *
+ * Invalid, foreign, or replayed values return `false` without observing or
+ * changing a rightful claim.
+ *
+ * @internal The refresh workflow and completion registry are the only callers.
+ */
+export function settleIdentitySessionCredentialAttemptAfterRefreshRevocation(
+  attemptValue: unknown,
+  ownerValue: unknown,
+): boolean {
+  if (!isObject(attemptValue) || !isObject(ownerValue)) {
+    return false;
+  }
+
+  try {
+    const state = capturedReflectApply(capturedWeakMapGet, attemptStates, [attemptValue]) as
+      AttemptState | undefined;
+
+    if (state?.status !== 'claimed' || state.owner !== ownerValue) {
+      return false;
+    }
+
+    releaseAttemptReferences(state);
+    state.status = 'retired';
+    return true;
+  } catch {
+    return false;
+  }
 }

@@ -22,6 +22,7 @@ import {
   inspectIdentitySessionRefreshRotatedPersistence,
   inspectIdentitySessionRefreshRotatedDecision,
   InvalidIdentitySessionRefreshWorkflowError,
+  promoteIdentityTransactionPendingEvidence,
   revokeIdentityTransactionPendingEvidence,
   type IdentitySessionRefreshDecision,
   type IdentitySessionRefreshDecisionInput,
@@ -1470,6 +1471,12 @@ describe('Identity refresh pending transaction evidence', (): void => {
     );
 
     closeIdentitySessionRefreshWorkflow(workflow.boundary.controller);
+    expect(promoteIdentityTransactionPendingEvidence(workflow.boundary.controller, evidence)).toBe(
+      undefined,
+    );
+    expect(revokeIdentityTransactionPendingEvidence(workflow.boundary.controller, evidence)).toBe(
+      false,
+    );
     expectFixedError(() =>
       consumeIdentityTransactionPendingEvidence(workflow.boundary.controller, evidence),
     );
@@ -1500,11 +1507,12 @@ describe('Identity refresh pending transaction evidence', (): void => {
       evidence,
     );
     closeIdentitySessionRefreshWorkflow(workflow.boundary.controller);
-    revokeIdentityTransactionPendingEvidence(workflow.boundary.controller, evidence);
-
-    expectFixedError((): void => {
-      revokeIdentityTransactionPendingEvidence(workflow.boundary.controller, evidence);
-    });
+    expect(revokeIdentityTransactionPendingEvidence(workflow.boundary.controller, evidence)).toBe(
+      true,
+    );
+    expect(revokeIdentityTransactionPendingEvidence(workflow.boundary.controller, evidence)).toBe(
+      false,
+    );
     expectFixedError(
       (): void => {
         retireIdentitySessionCredentialAttempt(workflow.attempt, workflow.boundary.controller);
@@ -1584,5 +1592,9 @@ describe('Identity refresh pending transaction evidence', (): void => {
     );
     expect(identityPublicApi).not.toHaveProperty('consumeIdentityTransactionPendingEvidence');
     expect(identityPublicApi).not.toHaveProperty('revokeIdentityTransactionPendingEvidence');
+    expect(identityPublicApi).not.toHaveProperty('promoteIdentityTransactionPendingEvidence');
+    expect(identityPublicApi).not.toHaveProperty(
+      'inspectIdentitySessionRefreshCommittedCompletion',
+    );
   });
 });

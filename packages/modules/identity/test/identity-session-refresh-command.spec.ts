@@ -47,8 +47,10 @@ import {
   completeIdentitySessionRefreshReusePersistence,
   completeIdentitySessionRefreshRotatedPersistence,
   consumeIdentityTransactionPendingEvidence,
+  inspectIdentitySessionRefreshCommittedCompletion,
   inspectIdentitySessionRefreshRotatedPersistence,
   InvalidIdentitySessionRefreshWorkflowError,
+  promoteIdentityTransactionPendingEvidence,
   revokeIdentityTransactionPendingEvidence,
   type IdentitySessionRefreshRotatedPersistencePlan,
   type IdentitySessionRefreshWorkflowBoundary,
@@ -387,7 +389,9 @@ function closeAndRevokePendingEvidence(
   evidence: IdentityTransactionEvidence,
 ): void {
   closeIdentitySessionRefreshCommand(prepared.boundary.controller);
-  revokeIdentityTransactionPendingEvidence(prepared.boundary.controller, evidence);
+  expect(revokeIdentityTransactionPendingEvidence(prepared.boundary.controller, evidence)).toBe(
+    true,
+  );
 }
 
 describe('Identity session refresh command', (): void => {
@@ -787,9 +791,264 @@ describe('Identity session refresh command', (): void => {
     closeAndRevokePendingEvidence(prepared, evidence);
   });
 
+  it('promotes only consumed evidence after scope close into one distinct committed completion', async (): Promise<void> => {
+    const prepared = await prepareCommand();
+    const transaction = transactionStore(prepared, 'rotated');
+    const evidence = await runIdentitySessionRefreshCommand(
+      prepared.boundary.controller,
+      prepared.context,
+      transaction.store,
+    );
+
+    expect(promoteIdentityTransactionPendingEvidence(prepared.boundary.controller, evidence)).toBe(
+      undefined,
+    );
+    expect(revokeIdentityTransactionPendingEvidence(prepared.boundary.controller, evidence)).toBe(
+      false,
+    );
+
+    closeIdentitySessionRefreshCommand(prepared.boundary.controller);
+    const completion = promoteIdentityTransactionPendingEvidence(
+      prepared.boundary.controller,
+      evidence,
+    );
+
+    expect(completion).toEqual({ kind: 'committed', evidence });
+    expect(completion).not.toBe(evidence);
+    expect(completion?.evidence).toBe(evidence);
+    expect(Reflect.ownKeys(completion ?? {})).toEqual(['kind', 'evidence']);
+    expect(Object.isFrozen(completion)).toBe(true);
+    expect(inspectIdentitySessionRefreshCommittedCompletion(completion)).toBe(completion);
+    expect(promoteIdentityTransactionPendingEvidence(prepared.boundary.controller, evidence)).toBe(
+      undefined,
+    );
+    expect(revokeIdentityTransactionPendingEvidence(prepared.boundary.controller, evidence)).toBe(
+      false,
+    );
+    expect(() => inspectIdentitySessionRefreshCommittedCompletion(evidence)).toThrow(
+      InvalidIdentitySessionRefreshWorkflowError,
+    );
+    expect(() =>
+      inspectIdentitySessionRefreshCommittedCompletion(structuredClone(completion)),
+    ).toThrow(InvalidIdentitySessionRefreshWorkflowError);
+
+    const replayDiscovery = discoveryTicket();
+    const replay = createIdentitySessionRefreshCommand(
+      commandInput(prepared.credentialAttempt.attempt, replayDiscovery.ticket),
+    );
+    expectCommandError(() => admitIdentitySessionRefreshCommand(replay));
+  });
+
+  it('keeps foreign and hostile settlement values non-throwing without sabotaging rightful owners', async (): Promise<void> => {
+    const first = await prepareCommand();
+    const second = await prepareCommand();
+    const firstEvidence = await runIdentitySessionRefreshCommand(
+      first.boundary.controller,
+      first.context,
+      transactionStore(first, 'not-found').store,
+    );
+    const secondEvidence = await runIdentitySessionRefreshCommand(
+      second.boundary.controller,
+      second.context,
+      transactionStore(second, 'not-found').store,
+    );
+    closeIdentitySessionRefreshCommand(first.boundary.controller);
+    closeIdentitySessionRefreshCommand(second.boundary.controller);
+
+    let trapCalls = 0;
+    const hostileEvidence = new Proxy(firstEvidence, {
+      get(): never {
+        trapCalls += 1;
+        throw new Error('hostile-settlement-secret');
+      },
+      ownKeys(): never {
+        trapCalls += 1;
+        throw new Error('hostile-settlement-secret');
+      },
+    });
+    const hostileController = new Proxy(first.boundary.controller, {
+      get(): never {
+        trapCalls += 1;
+        throw new Error('hostile-settlement-secret');
+      },
+      ownKeys(): never {
+        trapCalls += 1;
+        throw new Error('hostile-settlement-secret');
+      },
+    });
+
+    expect(
+      promoteIdentityTransactionPendingEvidence(first.boundary.controller, secondEvidence),
+    ).toBe(undefined);
+    expect(
+      revokeIdentityTransactionPendingEvidence(second.boundary.controller, firstEvidence),
+    ).toBe(false);
+    expect(
+      promoteIdentityTransactionPendingEvidence(first.boundary.controller, hostileEvidence),
+    ).toBe(undefined);
+    expect(
+      revokeIdentityTransactionPendingEvidence(first.boundary.controller, hostileEvidence),
+    ).toBe(false);
+    expect(promoteIdentityTransactionPendingEvidence(hostileController, firstEvidence)).toBe(
+      undefined,
+    );
+    expect(revokeIdentityTransactionPendingEvidence(hostileController, firstEvidence)).toBe(false);
+    expect(trapCalls).toBe(0);
+
+    const completion = promoteIdentityTransactionPendingEvidence(
+      first.boundary.controller,
+      firstEvidence,
+    );
+    expect(completion).toEqual({ kind: 'committed', evidence: firstEvidence });
+    const hostileCompletion = new Proxy(completion ?? Object.freeze({}), {
+      get(): never {
+        trapCalls += 1;
+        throw new Error('hostile-settlement-secret');
+      },
+      ownKeys(): never {
+        trapCalls += 1;
+        throw new Error('hostile-settlement-secret');
+      },
+    });
+    expect(() => inspectIdentitySessionRefreshCommittedCompletion(hostileCompletion)).toThrow(
+      InvalidIdentitySessionRefreshWorkflowError,
+    );
+    expect(trapCalls).toBe(0);
+    expect(
+      revokeIdentityTransactionPendingEvidence(second.boundary.controller, secondEvidence),
+    ).toBe(true);
+  });
+
+  it.each([
+    ['rejected', 'not-found', ROTATED_AT],
+    ['reuse', 'reuse-detected', REUSE_DETECTED_AT],
+  ] as const)(
+    'promotes %s evidence without retaining credential delivery eligibility',
+    async (_branch, mode, dbNow): Promise<void> => {
+      const prepared = await prepareCommand(dbNow);
+      const evidence = await runIdentitySessionRefreshCommand(
+        prepared.boundary.controller,
+        prepared.context,
+        transactionStore(prepared, mode).store,
+      );
+      closeIdentitySessionRefreshCommand(prepared.boundary.controller);
+
+      const completion = promoteIdentityTransactionPendingEvidence(
+        prepared.boundary.controller,
+        evidence,
+      );
+
+      expect(completion).toEqual({ kind: 'committed', evidence });
+      expect(completion?.evidence).toBe(evidence);
+      expect(inspectIdentitySessionRefreshCommittedCompletion(completion)).toBe(completion);
+      expect(inspect(completion, { showHidden: true })).not.toContain(ACCESS_WIRE);
+      expect(inspect(completion, { showHidden: true })).not.toContain(REFRESH_WIRE);
+
+      const retryDiscovery = discoveryTicket();
+      const retry = createIdentitySessionRefreshCommand(
+        commandInput(prepared.credentialAttempt.attempt, retryDiscovery.ticket),
+      );
+      expectCommandError(() => admitIdentitySessionRefreshCommand(retry));
+    },
+  );
+
+  it.each([
+    ['rejected', 'not-found', ROTATED_AT],
+    ['rotated', 'rotated', ROTATED_AT],
+    ['reuse', 'reuse-detected', REUSE_DETECTED_AT],
+  ] as const)(
+    'revokes %s evidence once and never permits later promotion',
+    async (_branch, mode, dbNow): Promise<void> => {
+      const prepared = await prepareCommand(dbNow);
+      const evidence = await runIdentitySessionRefreshCommand(
+        prepared.boundary.controller,
+        prepared.context,
+        transactionStore(prepared, mode).store,
+      );
+      closeIdentitySessionRefreshCommand(prepared.boundary.controller);
+
+      expect(revokeIdentityTransactionPendingEvidence(prepared.boundary.controller, evidence)).toBe(
+        true,
+      );
+      expect(revokeIdentityTransactionPendingEvidence(prepared.boundary.controller, evidence)).toBe(
+        false,
+      );
+      expect(
+        promoteIdentityTransactionPendingEvidence(prepared.boundary.controller, evidence),
+      ).toBe(undefined);
+    },
+  );
+
+  it('settles with the WeakMap intrinsics captured before later prototype mutation', async (): Promise<void> => {
+    const promoted = await prepareCommand();
+    const revoked = await prepareCommand();
+    const promotedEvidence = await runIdentitySessionRefreshCommand(
+      promoted.boundary.controller,
+      promoted.context,
+      transactionStore(promoted, 'rotated').store,
+    );
+    const revokedEvidence = await runIdentitySessionRefreshCommand(
+      revoked.boundary.controller,
+      revoked.context,
+      transactionStore(revoked, 'not-found').store,
+    );
+    closeIdentitySessionRefreshCommand(promoted.boundary.controller);
+    closeIdentitySessionRefreshCommand(revoked.boundary.controller);
+
+    const getDescriptor = Object.getOwnPropertyDescriptor(WeakMap.prototype, 'get');
+    const setDescriptor = Object.getOwnPropertyDescriptor(WeakMap.prototype, 'set');
+    const deleteDescriptor = Object.getOwnPropertyDescriptor(WeakMap.prototype, 'delete');
+
+    if (
+      getDescriptor === undefined ||
+      setDescriptor === undefined ||
+      deleteDescriptor === undefined
+    ) {
+      throw new Error('Expected WeakMap intrinsic descriptors');
+    }
+
+    let mutationCalls = 0;
+    let completion: ReturnType<typeof promoteIdentityTransactionPendingEvidence>;
+    let revokedResult: boolean;
+    const mutatedIntrinsic = (): never => {
+      mutationCalls += 1;
+      throw new Error('mutated-weak-map-intrinsic');
+    };
+
+    try {
+      Object.defineProperties(WeakMap.prototype, {
+        get: { ...getDescriptor, value: mutatedIntrinsic },
+        set: { ...setDescriptor, value: mutatedIntrinsic },
+        delete: { ...deleteDescriptor, value: mutatedIntrinsic },
+      });
+      completion = promoteIdentityTransactionPendingEvidence(
+        promoted.boundary.controller,
+        promotedEvidence,
+      );
+      revokedResult = revokeIdentityTransactionPendingEvidence(
+        revoked.boundary.controller,
+        revokedEvidence,
+      );
+    } finally {
+      Object.defineProperties(WeakMap.prototype, {
+        get: getDescriptor,
+        set: setDescriptor,
+        delete: deleteDescriptor,
+      });
+    }
+
+    expect(completion).toEqual({ kind: 'committed', evidence: promotedEvidence });
+    expect(revokedResult).toBe(true);
+    expect(mutationCalls).toBe(0);
+  });
+
   it('keeps the command and store absent from the supported package surface', (): void => {
     expect(identityPublicApi).not.toHaveProperty('createIdentitySessionRefreshCommand');
     expect(identityPublicApi).not.toHaveProperty('runIdentitySessionRefreshCommand');
     expect(identityPublicApi).not.toHaveProperty('InvalidIdentitySessionRefreshCommandError');
+    expect(identityPublicApi).not.toHaveProperty('promoteIdentityTransactionPendingEvidence');
+    expect(identityPublicApi).not.toHaveProperty(
+      'inspectIdentitySessionRefreshCommittedCompletion',
+    );
   });
 });

@@ -9,6 +9,10 @@ import {
 import type {
   // @ts-expect-error Internal resolver failures are not part of the package root.
   IdentityBearerResolutionError as LeakedIdentityBearerResolutionError,
+  // @ts-expect-error Refresh transaction ports remain package-internal.
+  IdentitySessionRefreshUnitOfWork as LeakedIdentitySessionRefreshUnitOfWork,
+  // @ts-expect-error Committed refresh capabilities remain package-internal.
+  IdentitySessionRefreshCommittedCompletion as LeakedIdentitySessionRefreshCommittedCompletion,
 } from '../src';
 import * as identityPublicSurface from '../src';
 import { createIdentityAuthenticatedPrincipalFromAuthority } from '../src/application/identity-authenticated-principal';
@@ -76,3 +80,6 @@ const _structurallyForgedPrincipal: IdentityAuthenticatedPrincipal = {
 void _structurallyForgedPrincipal;
 
 export type _LeakedIdentityBearerResolutionError = LeakedIdentityBearerResolutionError;
+export type _LeakedIdentitySessionRefreshUnitOfWork = LeakedIdentitySessionRefreshUnitOfWork;
+export type _LeakedIdentitySessionRefreshCommittedCompletion =
+  LeakedIdentitySessionRefreshCommittedCompletion;

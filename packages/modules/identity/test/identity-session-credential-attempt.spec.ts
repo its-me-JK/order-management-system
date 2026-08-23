@@ -5,6 +5,8 @@ import {
   createIdentitySessionCredentialAttempt,
   inspectIdentitySessionCredentialAttemptDigestView,
   retireIdentitySessionCredentialAttempt,
+  settleIdentitySessionCredentialAttemptAfterRefreshCommit,
+  settleIdentitySessionCredentialAttemptAfterRefreshRevocation,
   type IdentitySessionCredentialAttempt,
   type IdentitySessionCredentialAttemptDigestView,
 } from '../src/application/identity-session-credential-attempt';
@@ -554,6 +556,61 @@ describe('Identity session credential attempt lifecycle', (): void => {
       claimIdentitySessionCredentialAttempt(Object.create(prototype), owner),
     );
     expectCandidateThrow(() => new AttemptConstructor(Object.freeze({}), Object.freeze({})));
+  });
+
+  it('transfers a claimed attempt from its exact current owner once', async (): Promise<void> => {
+    const pair = candidates();
+    const attempt = await createIdentitySessionCredentialAttempt(pair, matchingCrypto(pair));
+    const owner = Object.freeze({});
+    const foreignOwner = Object.freeze({});
+    const completion = Object.freeze({});
+    const view = claimIdentitySessionCredentialAttempt(attempt, owner);
+
+    expect(
+      settleIdentitySessionCredentialAttemptAfterRefreshCommit(
+        Object.freeze({}),
+        owner,
+        completion,
+      ),
+    ).toBe(false);
+    expect(settleIdentitySessionCredentialAttemptAfterRefreshCommit(attempt, owner, owner)).toBe(
+      false,
+    );
+    expect(
+      settleIdentitySessionCredentialAttemptAfterRefreshCommit(attempt, foreignOwner, completion),
+    ).toBe(false);
+    expect(inspectIdentitySessionCredentialAttemptDigestView(view, owner)).toBe(view);
+    expect(
+      settleIdentitySessionCredentialAttemptAfterRefreshCommit(attempt, owner, completion),
+    ).toBe(true);
+    expect(
+      settleIdentitySessionCredentialAttemptAfterRefreshCommit(attempt, owner, completion),
+    ).toBe(false);
+    expect(settleIdentitySessionCredentialAttemptAfterRefreshRevocation(attempt, completion)).toBe(
+      false,
+    );
+    expectCandidateThrow(() => inspectIdentitySessionCredentialAttemptDigestView(view, owner));
+    expectCandidateThrow((): void => {
+      retireIdentitySessionCredentialAttempt(attempt, owner);
+    });
+  });
+
+  it('makes refresh revocation one-shot without foreign-call sabotage', async (): Promise<void> => {
+    const pair = candidates();
+    const attempt = await createIdentitySessionCredentialAttempt(pair, matchingCrypto(pair));
+    const owner = Object.freeze({});
+    const foreignOwner = Object.freeze({});
+    const view = claimIdentitySessionCredentialAttempt(attempt, owner);
+
+    expect(
+      settleIdentitySessionCredentialAttemptAfterRefreshRevocation(attempt, foreignOwner),
+    ).toBe(false);
+    expect(inspectIdentitySessionCredentialAttemptDigestView(view, owner)).toBe(view);
+    expect(settleIdentitySessionCredentialAttemptAfterRefreshRevocation(attempt, owner)).toBe(true);
+    expect(settleIdentitySessionCredentialAttemptAfterRefreshRevocation(attempt, owner)).toBe(
+      false,
+    );
+    expectCandidateThrow(() => inspectIdentitySessionCredentialAttemptDigestView(view, owner));
   });
 });
 

@@ -38,7 +38,8 @@ import { InvalidIdentityAuthenticatedPrincipalError } from './identity-authentic
 import {
   claimIdentitySessionCredentialAttempt,
   inspectIdentitySessionCredentialAttemptDigestView,
-  retireIdentitySessionCredentialAttempt,
+  settleIdentitySessionCredentialAttemptAfterRefreshCommit,
+  settleIdentitySessionCredentialAttemptAfterRefreshRevocation,
   type IdentitySessionCredentialAttempt,
   type IdentitySessionCredentialAttemptDigestView,
 } from './identity-session-credential-attempt';
@@ -65,7 +66,17 @@ const capturedIsFrozen = Object.isFrozen;
 const capturedOwnKeys = Reflect.ownKeys;
 const capturedReflectApply = Reflect.apply;
 const capturedReflectGet = Reflect.get;
+// eslint-disable-next-line @typescript-eslint/unbound-method
+const capturedWeakMapDelete = WeakMap.prototype.delete;
+// eslint-disable-next-line @typescript-eslint/unbound-method
+const capturedWeakMapGet = WeakMap.prototype.get;
+// eslint-disable-next-line @typescript-eslint/unbound-method
+const capturedWeakMapSet = WeakMap.prototype.set;
 const createAuthenticatedPrincipal = createIdentityAuthenticatedPrincipalFromAuthority;
+const settleCredentialAttemptAfterRefreshCommit =
+  settleIdentitySessionCredentialAttemptAfterRefreshCommit;
+const settleCredentialAttemptAfterRefreshRevocation =
+  settleIdentitySessionCredentialAttemptAfterRefreshRevocation;
 // Capturing these references prevents later prototype mutation from changing the trust boundary.
 // eslint-disable-next-line @typescript-eslint/unbound-method
 const accountSnapshot = IdentityAccount.prototype.toSnapshot;
@@ -122,6 +133,7 @@ declare const identitySessionRefreshDecisionBrand: unique symbol;
 declare const identitySessionRefreshRotatedPersistenceActionBrand: unique symbol;
 declare const identitySessionRefreshReusePersistenceActionBrand: unique symbol;
 declare const identityTransactionEvidenceBrand: unique symbol;
+declare const identitySessionRefreshCommittedCompletionBrand: unique symbol;
 
 /** Empty callback-visible identity for one future database transaction. */
 export type IdentityTransactionScope = Readonly<{
@@ -244,6 +256,13 @@ export type IdentityTransactionEvidence =
   | IdentityTransactionRefreshReuseDetectedEvidence
   | IdentityTransactionRefreshRotatedEvidence;
 
+/** Distinct authority that a concrete adapter may activate only after commit acknowledgement. */
+export type IdentitySessionRefreshCommittedCompletion = Readonly<{
+  kind: 'committed';
+  evidence: IdentityTransactionEvidence;
+  readonly [identitySessionRefreshCommittedCompletionBrand]: true;
+}>;
+
 export class InvalidIdentitySessionRefreshWorkflowError extends Error {
   public constructor() {
     super('Expected a valid Identity session refresh workflow transition');
@@ -330,7 +349,18 @@ interface EvidenceRegistration {
   readonly decision: IdentitySessionRefreshDecision;
   readonly attempt: IdentitySessionCredentialAttempt;
   readonly kind: IdentityTransactionEvidence['kind'];
+  committedCompletion: IdentitySessionRefreshCommittedCompletion | undefined;
   status: EvidenceStatus;
+}
+
+type CompletionStatus = 'prepared' | 'committed' | 'revoked';
+
+interface CompletionRegistration {
+  state: WorkflowState | undefined;
+  pendingEvidence: IdentityTransactionEvidence | undefined;
+  attempt: IdentitySessionCredentialAttempt | undefined;
+  readonly kind: IdentityTransactionEvidence['kind'];
+  status: CompletionStatus;
 }
 
 const controllerStates = new WeakMap<object, WorkflowState>();
@@ -341,6 +371,7 @@ const loadResultRegistrations = new WeakMap<object, LoadResultRegistration>();
 const decisionRegistrations = new WeakMap<object, DecisionRegistration>();
 const terminalActionRegistrations = new WeakMap<object, TerminalActionRegistration>();
 const evidenceRegistrations = new WeakMap<object, EvidenceRegistration>();
+const completionRegistrations = new WeakMap<object, CompletionRegistration>();
 
 function invalidWorkflow(): never {
   throw new InvalidIdentitySessionRefreshWorkflowError();
@@ -348,6 +379,18 @@ function invalidWorkflow(): never {
 
 function isObject(value: unknown): value is object {
   return (typeof value === 'object' && value !== null) || typeof value === 'function';
+}
+
+function readWeakMap<Value>(map: WeakMap<object, Value>, key: object): Value | undefined {
+  return capturedReflectApply(capturedWeakMapGet, map, [key]) as Value | undefined;
+}
+
+function writeWeakMap<Value>(map: WeakMap<object, Value>, key: object, value: Value): void {
+  capturedReflectApply(capturedWeakMapSet, map, [key, value]);
+}
+
+function deleteWeakMapValue<Value>(map: WeakMap<object, Value>, key: object): boolean {
+  return capturedReflectApply(capturedWeakMapDelete, map, [key]);
 }
 
 function stateForController(value: unknown): WorkflowState {
@@ -430,6 +473,15 @@ function clearWorkflowReferences(state: WorkflowState): void {
   state.decision = undefined;
 }
 
+function createPreparedCommittedCompletion(
+  evidence: IdentityTransactionEvidence,
+): IdentitySessionRefreshCommittedCompletion {
+  return capturedFreeze({
+    kind: 'committed' as const,
+    evidence,
+  }) as IdentitySessionRefreshCommittedCompletion;
+}
+
 function revokePendingEvidence(state: WorkflowState): boolean {
   if (state.evidence === undefined) {
     return true;
@@ -454,13 +506,7 @@ function retireAdmittedAttempt(state: WorkflowState): boolean {
   }
 
   const attempt = state.attempt;
-  let retired = true;
-
-  try {
-    retireIdentitySessionCredentialAttempt(attempt, state.controller);
-  } catch {
-    retired = false;
-  }
+  const retired = settleCredentialAttemptAfterRefreshRevocation(attempt, state.controller);
 
   state.attempt = undefined;
   state.attemptDigestView = undefined;
@@ -1152,13 +1198,13 @@ function registerPendingEvidence<Evidence extends IdentityTransactionEvidence>(
   }
 
   authenticateAdmittedAttempt(state);
-
   const registration: EvidenceRegistration = {
     state,
     scope: state.scope,
     decision,
     attempt: state.attempt,
     kind: evidence.kind,
+    committedCompletion: undefined,
     status: 'pending',
   };
 
@@ -1483,12 +1529,12 @@ export function consumeIdentityTransactionPendingEvidence(
 ): IdentityTransactionEvidence {
   const state = stateForController(controllerValue);
   const registration = isObject(evidenceValue)
-    ? evidenceRegistrations.get(evidenceValue)
+    ? readWeakMap(evidenceRegistrations, evidenceValue)
     : undefined;
 
   if (
     state.phase !== 'terminal' ||
-    scopeStates.get(state.scope) !== state ||
+    readWeakMap(scopeStates, state.scope) !== state ||
     state.evidence !== evidenceValue ||
     registration?.state !== state ||
     registration.scope !== state.scope ||
@@ -1499,40 +1545,192 @@ export function consumeIdentityTransactionPendingEvidence(
     invalidWorkflow();
   }
 
+  let completion: IdentitySessionRefreshCommittedCompletion;
+
+  try {
+    completion = createPreparedCommittedCompletion(evidenceValue);
+    writeWeakMap(completionRegistrations, completion, {
+      state,
+      pendingEvidence: evidenceValue,
+      attempt: registration.attempt,
+      kind: registration.kind,
+      status: 'prepared',
+    });
+  } catch {
+    invalidWorkflow();
+  }
+
+  registration.committedCompletion = completion;
   registration.status = 'consumed';
   return evidenceValue;
+}
+
+function closedEvidenceSettlement(
+  controllerValue: unknown,
+  evidenceValue: unknown,
+): EvidenceRegistration | undefined {
+  if (!isObject(controllerValue) || !isObject(evidenceValue)) {
+    return undefined;
+  }
+
+  const state = readWeakMap(controllerStates, controllerValue);
+  const evidenceRegistration = readWeakMap(evidenceRegistrations, evidenceValue);
+  const completion = evidenceRegistration?.committedCompletion;
+  const completionRegistration =
+    completion === undefined ? undefined : readWeakMap(completionRegistrations, completion);
+
+  if (
+    state?.controller !== controllerValue ||
+    state.phase !== 'closed' ||
+    evidenceRegistration?.state !== state ||
+    evidenceRegistration.scope !== state.scope ||
+    evidenceRegistration.attempt !== state.attempt ||
+    evidenceRegistration.status !== 'consumed' ||
+    completion === undefined ||
+    completionRegistration?.state !== state ||
+    completionRegistration.pendingEvidence !== evidenceValue ||
+    completionRegistration.attempt !== evidenceRegistration.attempt ||
+    completionRegistration.kind !== evidenceRegistration.kind ||
+    completionRegistration.status !== 'prepared'
+  ) {
+    return undefined;
+  }
+
+  return evidenceRegistration;
+}
+
+/**
+ * Promotes consumed evidence after an acknowledged commit and scope close.
+ *
+ * The completion was allocated before settlement, so this transition performs
+ * no extensible call and never throws. Invalid, foreign, or replayed values do
+ * not change a rightful registration.
+ */
+function promoteIdentityTransactionPendingEvidenceInternal(
+  controllerValue: unknown,
+  evidenceValue: unknown,
+): IdentitySessionRefreshCommittedCompletion | undefined {
+  const evidenceRegistration = closedEvidenceSettlement(controllerValue, evidenceValue);
+
+  if (evidenceRegistration === undefined) {
+    return undefined;
+  }
+
+  const state = evidenceRegistration.state;
+  const completion = evidenceRegistration.committedCompletion;
+  const completionRegistration =
+    completion === undefined ? undefined : readWeakMap(completionRegistrations, completion);
+
+  if (completion === undefined || completionRegistration === undefined) {
+    return undefined;
+  }
+
+  const settled =
+    evidenceRegistration.kind === 'rotated'
+      ? settleCredentialAttemptAfterRefreshCommit(
+          evidenceRegistration.attempt,
+          state.controller,
+          completion,
+        )
+      : settleCredentialAttemptAfterRefreshRevocation(
+          evidenceRegistration.attempt,
+          state.controller,
+        );
+
+  if (!settled) {
+    return undefined;
+  }
+
+  completionRegistration.status = 'committed';
+  completionRegistration.state = undefined;
+  completionRegistration.pendingEvidence = undefined;
+  if (evidenceRegistration.kind !== 'rotated') {
+    completionRegistration.attempt = undefined;
+  }
+  deleteWeakMapValue(evidenceRegistrations, completion.evidence);
+  deleteWeakMapValue(controllerStates, state.controller);
+  state.evidence = undefined;
+  state.attempt = undefined;
+  state.attemptDigestView = undefined;
+  return completion;
+}
+
+export function promoteIdentityTransactionPendingEvidence(
+  controllerValue: IdentitySessionRefreshWorkflowController,
+  evidenceValue: IdentityTransactionEvidence,
+): IdentitySessionRefreshCommittedCompletion | undefined {
+  try {
+    return promoteIdentityTransactionPendingEvidenceInternal(controllerValue, evidenceValue);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Authenticates one exact, active committed completion by runtime identity. */
+export function inspectIdentitySessionRefreshCommittedCompletion(
+  completionValue: unknown,
+): IdentitySessionRefreshCommittedCompletion {
+  const registration = isObject(completionValue)
+    ? readWeakMap(completionRegistrations, completionValue)
+    : undefined;
+
+  if (registration?.status !== 'committed') {
+    invalidWorkflow();
+  }
+
+  return completionValue as IdentitySessionRefreshCommittedCompletion;
 }
 
 /**
  * Permanently revokes pending evidence and retires its admitted credential attempt.
  * This is safe for rollback, failure, and indeterminate outcomes; it cannot promote delivery.
  */
+function revokeIdentityTransactionPendingEvidenceInternal(
+  controllerValue: unknown,
+  evidenceValue: unknown,
+): boolean {
+  const evidenceRegistration = closedEvidenceSettlement(controllerValue, evidenceValue);
+
+  if (evidenceRegistration === undefined) {
+    return false;
+  }
+
+  const state = evidenceRegistration.state;
+  const completion = evidenceRegistration.committedCompletion;
+  const completionRegistration =
+    completion === undefined ? undefined : readWeakMap(completionRegistrations, completion);
+
+  if (completion === undefined || completionRegistration === undefined) {
+    return false;
+  }
+
+  if (
+    !settleCredentialAttemptAfterRefreshRevocation(evidenceRegistration.attempt, state.controller)
+  ) {
+    return false;
+  }
+
+  completionRegistration.status = 'revoked';
+  completionRegistration.state = undefined;
+  completionRegistration.pendingEvidence = undefined;
+  completionRegistration.attempt = undefined;
+  deleteWeakMapValue(completionRegistrations, completion);
+  deleteWeakMapValue(evidenceRegistrations, completion.evidence);
+  deleteWeakMapValue(controllerStates, state.controller);
+  state.evidence = undefined;
+  state.attempt = undefined;
+  state.attemptDigestView = undefined;
+  return true;
+}
+
 export function revokeIdentityTransactionPendingEvidence(
   controllerValue: IdentitySessionRefreshWorkflowController,
   evidenceValue: IdentityTransactionEvidence,
-): void {
-  const state = stateForController(controllerValue);
-  const registration = isObject(evidenceValue)
-    ? evidenceRegistrations.get(evidenceValue)
-    : undefined;
-
-  if (
-    (state.phase !== 'terminal' && state.phase !== 'closed') ||
-    registration?.state !== state ||
-    registration.scope !== state.scope ||
-    registration.attempt !== state.attempt ||
-    registration.kind !== evidenceValue.kind
-  ) {
-    invalidWorkflow();
-  }
-
-  const retired = retireAdmittedAttempt(state);
-  evidenceRegistrations.delete(evidenceValue);
-  if (state.evidence === evidenceValue) {
-    state.evidence = undefined;
-  }
-  if (!retired) {
-    invalidWorkflow();
+): boolean {
+  try {
+    return revokeIdentityTransactionPendingEvidenceInternal(controllerValue, evidenceValue);
+  } catch {
+    return false;
   }
 }
 

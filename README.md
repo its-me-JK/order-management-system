@@ -131,9 +131,9 @@ real MySQL authority, and public resolver outage classification. Identity
 still has no `Authorization` extraction, request association, authentication
 route, or public credential ingress. The locked loader is deliberately
 load-only: no rotation/reuse writer, transaction lease tracker, concrete Unit
-of Work, commit/rollback settlement, committed credential completion,
-security-event adapter, NestJS composition, Argon2 adapter, password input
-policy, or Redis abuse control completes the runtime path yet. Prisma's public
+of Work, commit/rollback settlement, database-gated completion activation,
+credential-delivery gate, security-event adapter, NestJS composition, Argon2
+adapter, password input policy, or Redis abuse control completes the runtime path yet. Prisma's public
 transaction client also supplies no proven exact-connection cancellation or
 quarantine primitive. Before credential ingress becomes public, production
 configuration must disable Prisma driver-adapter debug/query logging because
