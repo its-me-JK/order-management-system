@@ -169,6 +169,74 @@ Optimistic version is checked before lifecycle state, mutation time is checked
 after lifecycle state, and version capacity is checked last; this fixes stable
 failure precedence without accepting stale commands or regressing time.
 
+### PasswordAuthenticator state contract
+
+The PasswordAuthenticator snapshot contains exactly `accountId`,
+`passwordPhc`, `status`, `version`, `consecutiveFailureCount`,
+`nextVerificationAt`, `disabledAt`, `createdAt`, `updatedAt`, and
+`passwordChangedAt`. The PHC is held by an immutable redacting value rather
+than a string property; only an explicitly named package-internal serializer
+may reveal it to the future crypto and persistence adapters. Ordinary object
+inspection, interpolation, and JSON serialization cannot reveal the PHC.
+
+| State | Reachable snapshot |
+| --- | --- |
+| Fresh `ACTIVE` | Version 1, count 0, no deadline or disabled time, and `createdAt = updatedAt = passwordChangedAt`. |
+| `ACTIVE`, count 0 through 4 | No deadline or disabled time. A positive count requires version at least `count + 1`. |
+| `ACTIVE`, count 5 through 99 | No disabled time and `nextVerificationAt` equals `updatedAt + min(2^(count - 5), 900) seconds` exactly. A positive count requires version at least `count + 1`. |
+| `REBIND_REQUIRED` | Count exactly 100, no deadline, `disabledAt = updatedAt`, and version at least 101. |
+
+Every state requires `createdAt <= passwordChangedAt <= updatedAt`. Equal
+authoritative database instants are valid because the version orders
+mutations. Cooldown derivation uses lossless Gregorian calendar arithmetic and
+retains all six fractional digits; JavaScript `Date` is never an input. A
+deadline beyond MySQL's maximum instant is a fixed overflow failure and leaves
+the original aggregate unchanged. Attempt 100 performs no deadline
+calculation.
+
+Before Argon2 work, the aggregate returns only one of two frozen plans:
+`VERIFY_PRESENTED_PASSWORD` or `VERIFY_DUMMY_PASSWORD`. Cooling and
+`REBIND_REQUIRED` authenticators use the same dummy plan, so delivery cannot
+infer a reason from the type. A real plan contains a frozen internal
+verification basis with account ID, version, redacting PHC, and current
+deadline. After work completes, the locked aggregate must match that complete
+basis before accepting the result. One fixed snapshot-mismatch failure covers
+version, PHC, deadline, and cross-account races; it never reveals which value
+changed.
+
+An eligible failed verification increments the count and version once.
+Failures 1 through 99 return one `PASSWORD_VERIFICATION_REJECTED` fact. Failure
+100 atomically enters `REBIND_REQUIRED` and returns that fact followed by
+`PASSWORD_AUTHENTICATOR_DISABLED`. Recording a result while cooling or
+disabled is a fixed misuse/race failure, not a no-op; the normal login path did
+dummy work and never calls the mutation.
+
+An eligible successful verification resets any positive count and deadline.
+It may also install a byte-different, already-validated upgraded PHC in the
+same single-version mutation. A verifier upgrade does not change
+`passwordChangedAt`. If there is neither state to reset nor a real upgrade,
+the operation returns the original aggregate unchanged, emits no fact, and
+does not consume version capacity. Changed results emit
+`PASSWORD_AUTHENTICATOR_FAILURES_RESET` then
+`PASSWORD_AUTHENTICATOR_VERIFIER_UPGRADED` for the changes that occurred.
+
+Rebind requires the exact expected version, `REBIND_REQUIRED`, a
+non-regressing database instant, and a byte-different validated PHC. It returns
+the authenticator to `ACTIVE`, clears count/deadline/disabled time, advances
+the version once, sets `updatedAt = passwordChangedAt`, and emits
+`PASSWORD_AUTHENTICATOR_REBOUND`. Active Account validation, session-family
+revocation, and the durable rebind security event remain responsibilities of
+the future application Unit of Work.
+
+All authenticator facts are frozen and contain only type, opaque account ID,
+resulting status, version, and occurrence time. They contain no PHC, password,
+candidate, salt, tag, verifier parameters, count, deadline, or disabled time.
+The stable mutation precedence is verification basis—or expected version for
+rebind—then required lifecycle, occurrence time and cooldown eligibility, new
+PHC validation where applicable, version capacity, and derived-deadline
+overflow. Rehydration collapses every malformed secret or state cause to one
+fixed, cause-free snapshot error.
+
 An account has at most five authenticating session families, where
 authenticating means unrevoked and before absolute expiry; refresh idle expiry
 does not make a still-valid access credential disappear. Login holds the
@@ -212,7 +280,7 @@ otherwise-equal values that differ only in those digits.
 | Table | Required shape and indexes |
 | --- | --- |
 | `identity_accounts` | UUID primary key; nullable-after-erasure canonical `login_name VARCHAR(64)` with ASCII binary unique index and format check; status; unsigned version; created, updated, suspended, and deactivated timestamps with lifecycle checks. |
-| `identity_password_credentials` | `account_id` primary/foreign key; `ACTIVE` or `REBIND_REQUIRED`; Argon2id PHC value; consecutive-failure count from 0 through 100; optional `next_verification_at` and `disabled_at`; unsigned version; created, updated, and password-changed timestamps. `REBIND_REQUIRED` requires count 100, a disabled time, and no verification deadline. The row is the `PasswordAuthenticator` aggregate. The PHC value already contains algorithm, cost, salt, and hash. |
+| `identity_password_credentials` | `account_id` primary/foreign key; `ACTIVE` or `REBIND_REQUIRED`; `password_phc VARCHAR(255)` using ASCII binary comparison; consecutive-failure count from 0 through 100; optional `next_verification_at` and `disabled_at`; unsigned version; created, updated, and password-changed timestamps. `REBIND_REQUIRED` requires count 100, a disabled time, and no verification deadline. The row is the `PasswordAuthenticator` aggregate. The PHC value already contains algorithm, cost, salt, and hash. |
 | `identity_permissions` | Immutable lowercase permission code natural primary key and fixed description; initially seeded with the codes accepted in ADR-0015. |
 | `identity_roles` | UUID primary key; immutable unique ASCII code; display name; status; unsigned version and lifecycle timestamps. |
 | `identity_role_permissions` | Composite primary key `(role_id, permission_code)` plus reverse `(permission_code, role_id)` index. |
@@ -343,13 +411,26 @@ same complete normalized byte sequence. Login follows the same bounded
 normalization path but returns only the fixed authentication failure for an
 in-bound non-matching value.
 
-Argon2id stores a unique salt and parameters in the PHC value. The reviewed
-default is 64 MiB memory, three iterations, one lane, a 16-byte salt, and a
-32-byte output. Configuration cannot go below the current OWASP floor of
-19 MiB, two iterations, and one lane; deployments benchmark upward within
-validated memory and latency bounds. A successful verification may calculate
-an upgraded PHC value outside the transaction and conditionally replace it
-inside the login transaction.
+Argon2id stores a unique salt and parameters in the PHC value. Identity accepts
+only canonical ASCII
+`$argon2id$v=19$m=<memoryKiB>,t=<iterations>,p=<lanes>$<salt>$<tag>` with that
+exact field order, minimally encoded unsigned decimals, standard unpadded
+canonical Base64, no optional PHC fields, a 16-byte salt, and a 32-byte tag.
+Memory is 19,456 through 131,072 KiB, iterations are 2 through 6, and lanes are
+1 through 4. Values outside this compatibility and resource envelope are
+rejected before invoking Argon2. The fixed column remains wider than the first
+format so a future reviewed expansion can migrate safely.
+
+The reviewed generation default is 65,536 KiB memory, three iterations, one
+lane, a unique 16-byte CSPRNG salt, and a 32-byte output. Deployments benchmark
+upward only inside the accepted envelope and the process memory budget. The
+crypto adapter parses and enforces both the domain envelope and its configured
+resource ceiling before calling the provider. A future preferred-cost increase
+does not make an older in-envelope verifier unreadable: successful verification
+may calculate an upgraded PHC outside the transaction and conditionally replace
+it inside the login transaction. Supporting another Argon version, algorithm,
+salt/tag size, or cost envelope requires an explicit compatibility decision;
+the parser never silently accepts it.
 
 An unknown, malformed, suspended, or deactivated login still performs one
 verification against a current-cost dummy PHC value after Redis allows the

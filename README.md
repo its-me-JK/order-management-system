@@ -40,12 +40,16 @@ policy, durable refresh rotation, and fail-closed Redis abuse controls. Its
 first framework-independent package slice now enforces canonical Account
 identity, lossless microsecond time, optimistic versions, immutable lifecycle
 transitions, strict rehydration, retention tombstones, and PII-free domain
-facts. The package deliberately exports no application contract and exposes no
-route yet; password authenticators, roles, sessions, persistence, crypto, and
+facts. Its separate PasswordAuthenticator aggregate now adds a strictly
+bounded, redacting Argon2id PHC value, immutable failure/cooldown state,
+attempt-100 disablement, pre-hash verification-basis race protection,
+conditional verifier upgrade, and offline rebind transition. The package
+deliberately exports no application contract and exposes no route yet; roles,
+sessions, persistence, the actual crypto adapter, password input policy, and
 Redis remain gated later slices. Pricing, inventory, Redis caching, and
 integration events also remain separate later slices.
 
-**Overall project progress: 28%.** The fixed, deployment-inclusive scoring
+**Overall project progress: 29%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
 
 ## Planned technology
