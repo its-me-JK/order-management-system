@@ -13,6 +13,8 @@ import type {
   IdentitySessionRefreshUnitOfWork as LeakedIdentitySessionRefreshUnitOfWork,
   // @ts-expect-error Committed refresh capabilities remain package-internal.
   IdentitySessionRefreshCommittedCompletion as LeakedIdentitySessionRefreshCommittedCompletion,
+  // @ts-expect-error Refresh identifier issuance remains package-internal.
+  IdentitySessionRefreshIdentifierIssuer as LeakedIdentitySessionRefreshIdentifierIssuer,
 } from '../src';
 import * as identityPublicSurface from '../src';
 import { createIdentityAuthenticatedPrincipalFromAuthority } from '../src/application/identity-authenticated-principal';
@@ -42,6 +44,8 @@ describe('@oms/identity public surface', (): void => {
       'parseIdentityAccessCredentialWireValue',
       'createIdentityAccessCredentialDigestFromBytes',
       'createNodeIdentitySessionCredentialCrypto',
+      'createNodeIdentitySessionRefreshIdentifierIssuer',
+      'IdentitySessionRefreshIdentifierIssuanceUnavailableError',
     ]) {
       expect(identityPublicSurface).not.toHaveProperty(internalName);
     }
@@ -83,3 +87,5 @@ export type _LeakedIdentityBearerResolutionError = LeakedIdentityBearerResolutio
 export type _LeakedIdentitySessionRefreshUnitOfWork = LeakedIdentitySessionRefreshUnitOfWork;
 export type _LeakedIdentitySessionRefreshCommittedCompletion =
   LeakedIdentitySessionRefreshCommittedCompletion;
+export type _LeakedIdentitySessionRefreshIdentifierIssuer =
+  LeakedIdentitySessionRefreshIdentifierIssuer;

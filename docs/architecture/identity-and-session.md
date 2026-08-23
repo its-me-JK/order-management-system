@@ -892,6 +892,18 @@ names, credential digests, and PHC values use byte-exact representations.
 Foreign keys use `RESTRICT`; deletion and retention are explicit workflows
 rather than cascades.
 
+The delivered refresh-specific identifier boundary issues one exact frozen
+bundle containing a successor RefreshCredential ID, an issued
+AccessCredential ID, and a SecurityEvent ID. Each member is parsed immediately
+into its separate nominal namespace. Equal UUID bytes across those namespaces
+are valid: the brands prevent cross-kind substitution, while uniqueness is
+enforced independently by each target table. The UUIDv7 timestamp is only
+locality metadata for storage indexes. It is not a business instant, a
+cross-process ordering claim, or an input to expiry, event occurrence,
+rotation, or authorization; those decisions continue to use causal MySQL
+writer time. The issuer promises neither monotonic output within one process
+nor global order across replicas.
+
 Closed-code checks cast their ASCII columns to binary strings before equality
 or membership comparison. MySQL's `ascii_bin` collation still uses PAD SPACE
 comparison semantics, so collation-aware checks alone would incorrectly admit
@@ -1129,6 +1141,27 @@ mints one runtime-authentic pending evidence value. Rotation alone exposes the
 two authenticated digest wrapper identities, while reuse exposes no credential
 material and rejection has no persistence action. The increment adds no
 commit, transaction-outcome, retry, candidate-delivery, or wire-value API.
+
+The refresh-specific identifier prerequisite is delivered. Its package-private
+application port has one synchronous operation that returns the exact frozen
+three-ID bundle required before command admission and `BEGIN`. The production
+adapter captures Node's `randomUUIDv7` once, calls it sequentially for successor
+refresh, access, then security-event identity, and parses each result before
+making the next call. A throw, missing capability, malformed or wrong-version
+result, accessor failure, or parser failure stops further provider calls and
+becomes a fresh fixed, cause-free
+`IdentitySessionRefreshIdentifierIssuanceUnavailableError`. There is no v4,
+home-grown, database, or caller-supplied fallback.
+
+The pinned Node runtime provides `randomUUIDv7`, while the pinned `@types/node`
+release does not yet declare it. The adapter therefore recovers and validates
+the runtime capability through a narrow reflective compatibility boundary
+instead of weakening the compiler with a global declaration merge or cast at
+every caller. Production construction is exported only as
+`createNodeIdentitySessionRefreshIdentifierIssuer` from the restricted
+`@oms/identity/infrastructure/identifiers` subpath. The application port,
+unavailable error, deterministic primitive seam, and generic UUID generation
+remain absent from the package root and public subpath.
 
 The third executable increment is also application-only and delivered. One
 empty, frozen, runtime-authentic `IdentitySessionRefreshCommand` binds the
@@ -3087,8 +3120,11 @@ deterministic baseline policy, digest-level authority port, bounded Prisma
 reader, lifecycle-blind Prisma refresh-discovery adapter, root-writer-paired
 Prisma locked-loader proof, direct exact-connection locked loader, isolated
 real-MySQL authority/discovery/locked-load/resolver tests, and root-exported
-framework-independent Bearer principal resolver exist. The closed refresh
-command, refresh-specific Unit-of-Work port, dormant commit-completion
+framework-independent Bearer principal resolver exist. The package-private
+refresh-specific identifier port and its synchronous Node `randomUUIDv7`
+adapter now issue the exact frozen successor-refresh/access/security-event
+bundle through the restricted identifiers infrastructure subpath. The closed
+refresh command, refresh-specific Unit-of-Work port, dormant commit-completion
 registry, direct reuse writer, shared authority projection mapper, and private
 same-connection rotation-authority statement are also delivered. The private
 direct rotation writer now composes the five graph mutations, authority read,
@@ -3113,7 +3149,11 @@ delivery tests, and those remaining real-MySQL Unit-of-Work proofs remain.
 A trusted caller can now
 resolve an already-extracted canonical access-wire value, but there is still no
 `Authorization` extraction, request association, credential ingress, route, or
-public authentication surface.
+public authentication surface. Identifier issuance does not change that gate:
+public refresh still requires the fail-closed Redis abuse decision,
+channel-specific credential sinks, production Prisma debug/query-logging
+enforcement, and bounded fail-stop-quarantine telemetry with an unhealthy
+process recycle policy.
 
 ## Why this design
 
@@ -3130,6 +3170,11 @@ public authentication surface.
 - The private factory-based Node adapter fixes cryptographic policy while
   permitting deterministic failure injection without exporting a configurable
   security mechanism or blocking the event loop for entropy.
+- A refresh-specific identifier bundle makes the complete pre-transaction ID
+  requirement explicit without granting a generic UUID factory to the package
+  root. Immediate target-kind parsing keeps runtime/provider compatibility out
+  of the domain and makes partial provider failure stop before another ID is
+  requested.
 - One application resolver owns canonical access-wire validation,
   target-kind hashing, and authoritative-principal admission, while HTTP owns
   header grammar and request association. Every trusted delivery path therefore
@@ -3216,6 +3261,13 @@ public authentication surface.
 - WebCrypto would improve runtime portability, but Node is the selected backend
   runtime. A real edge or managed-key requirement should add another adapter
   rather than a fallback inside this one.
+- A generic shared UUIDv7 service would be superficially reusable for future
+  modules, but it would erase the refresh operation's exact three-ID contract
+  and broaden generation authority before another production consumer exists.
+  Three synchronous Node calls add negligible work before the transaction and
+  permit deterministic stop-on-first-failure behavior. In return, the adapter
+  deliberately accepts equal bytes across nominal namespaces and makes no
+  monotonic-order promise; neither property is part of Identity authority.
 - A refresh replay grace period improves concurrency UX but weakens theft
   detection or requires recoverable successor storage.
 - Fail-closed Redis protects credential issuance but deliberately reduces auth
@@ -3427,6 +3479,13 @@ public authentication surface.
     prove a fault after a successful final append or model a server commit whose
     acknowledgement is lost, so those gaps require later program- and
     protocol-level fault proofs.
+40. **Why issue one refresh-specific UUIDv7 bundle instead of exposing a generic
+    generator?** The operation needs exactly three target-branded IDs before
+    `BEGIN`, so one narrow synchronous port makes completeness, validation, and
+    failure precedence reviewable. UUIDv7's embedded timestamp improves index
+    locality but grants no chronology or authorization authority; MySQL writer
+    time remains authoritative, and equal bytes in distinct nominal namespaces
+    remain valid.
 
 ## Future improvements
 
@@ -3464,6 +3523,10 @@ public authentication surface.
   `COMMIT` acknowledgement loss
   before applying the pattern to login, logout, Account, authenticator, or Role
   workflows; do not generalize it into aggregate CRUD.
+- Compose the delivered identifier issuer into the future refresh use case only
+  after Redis admission and before `BEGIN`; keep UUID timestamp/order out of
+  lifecycle decisions, and add a separate adapter rather than widening this
+  subpath if a future runtime cannot provide `randomUUIDv7`.
 - Add a closed-cardinality metric and explicit unhealthy-process recycle policy
   for the Unit of Work's fail-stop cleanup quarantine before public refresh
   ingress; never expose command, attempt, or evidence identity in telemetry.
@@ -3475,6 +3538,7 @@ public authentication surface.
 
 ## References
 
+- [RFC 9562: Universally Unique IDentifiers (UUIDs)](https://www.rfc-editor.org/rfc/rfc9562.html)
 - [RFC 6750: Bearer Token Usage](https://www.rfc-editor.org/rfc/rfc6750.html)
 - [RFC 6749: OAuth 2.0 token error semantics](https://www.rfc-editor.org/rfc/rfc6749.html#section-5.2)
 - [RFC 9700: OAuth 2.0 Security Best Current Practice](https://www.rfc-editor.org/rfc/rfc9700.html)

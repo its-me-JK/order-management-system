@@ -19,6 +19,10 @@
     "./infrastructure/cryptography": {
       "types": "./src/infrastructure/cryptography/index.ts",
       "default": "./dist/infrastructure/cryptography/index.js"
+    },
+    "./infrastructure/identifiers": {
+      "types": "./src/infrastructure/identifiers/index.ts",
+      "default": "./dist/infrastructure/identifiers/index.js"
     }
   },
   "scripts": {

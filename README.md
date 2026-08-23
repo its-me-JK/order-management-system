@@ -190,6 +190,14 @@ a credential. Each candidate pair's attempt admission is one-shot: the first
 admission synchronously takes ownership before digest verification, so a
 concurrent or failed admission burns that pair and a retry must generate fresh
 credentials.
+Identity now also owns the refresh-specific pre-transaction identifier bundle:
+one separately branded successor-refresh ID, issued-access ID, and security-event
+ID. The restricted Node identifiers subpath exposes only a zero-argument
+production issuer backed by the pinned runtime's CSPRNG UUIDv7 primitive. Each
+value is validated immediately. A partial provider failure throws a fresh,
+fixed, cause-free unavailable error, and no generic UUID generator reaches the
+package root. UUID timestamps are index-locality metadata only; they neither
+order business events nor replace the post-lock MySQL clock.
 The frozen capability keeps both correlated wire wrappers, the principal, and
 the committed instants only in private state and redacts string coercion and
 JSON. It exposes no raw serializer, is absent from the package root and every
