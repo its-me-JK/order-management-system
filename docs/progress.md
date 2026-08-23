@@ -14,15 +14,15 @@ accepted outcomes, not lines of code, generated files, commits, or activity.
 | Workstream | Weight | Earned | Current evidence |
 | --- | ---: | ---: | --- |
 | Architecture and contracts | 6% | 6% | Architecture overview, seventeen ADRs, platform contracts, delivered Catalog public reads, accepted Catalog administration contracts, and an exact Identity/session contract now fixing Account, authenticator, Role/Permission, generation-proven AccessCredential and RefreshCredential issuance, the cross-module authenticated-principal boundary, opaque wire/digest/candidate ownership, paired cryptography, the refresh transaction capability/evidence model, confirmed-commit disclosure, atomic rotation/replay, authoritative permission, browser security, and fail-closed abuse boundaries |
-| Platform and persistence | 9% | 8.75% | Workspace, runtime shells, versioned routing, health, validated configuration, structured logging, strict transport boundaries, deterministic OpenAPI, one runtime-owned Prisma client, MySQL, an ordered forward-only migration history, guarded Catalog lifecycle expansion/backfill/contraction, and integration infrastructure |
+| Platform and persistence | 9% | 8.9% | Workspace, runtime shells, versioned routing, health, validated configuration, structured logging, strict transport boundaries, deterministic OpenAPI, one runtime-owned Prisma client, MySQL, an ordered forward-only migration history, guarded Catalog lifecycle expansion/backfill/contraction, an unused four-table Identity refresh-lineage schema with checked lifecycle, generation-witness, and one-active-refresh invariants, and integration infrastructure |
 | Backend business capabilities | 35% | 8.15% | Catalog public reads and Product/SKU aggregates exist. Identity now has separate immutable Account, PasswordAuthenticator, Role, and SessionFamily boundaries plus versionless RefreshCredential and AccessCredential children. Creation and rotation return complete generation-matched issuance bundles; application code owns canonical redacting access/refresh wire values, copied-byte digest values, one exact frozen candidate pair, the narrow cryptography port, a fixed-policy internal Node CSPRNG/SHA-256 adapter, a pre-transaction one-shot credential-attempt verifier, digest-only refresh discovery with authentic one-use tickets, a nominal SecurityEvent identifier, the nominal authenticated-principal contract, and a runtime-authentic attempt-bound refresh workflow with locked load, one decision, kind-matched persistence actions, and explicitly pending transaction evidence. Identity still has no locked refresh store adapter, concrete Unit of Work, committed completion, resolver/login/refresh use case, or route |
 | Redis, RabbitMQ, and workers | 9% | 0% | Architecture only |
-| Testing, security, and resilience | 11% | 6.65% | Strict quality gates, secret-safe configuration/TLS and adversarial HTTP tests, Catalog lifecycle/Unicode tests, exhaustive Identity Account/authenticator/Role tests, adversarial session chronology/generation/expiry/replay tests, authenticated-principal tests, 137 opaque-credential/Node-adapter tests, hardened attempt/discovery/event tests, and 45 workflow tests covering exact wire-to-digest correlation, one-shot ownership, cleanup, ticket forgery, cross-boundary consumption, locked-row relationships, terminal-action provenance, event validation, rotation-only digest access, principal binding, pending-evidence consumption/revocation, hostile re-entrancy, exact result binding, contaminated-error recreation, fixed errors, and package isolation; executable architecture boundaries, real-MySQL migration suites, and a real NestJS-to-Prisma-to-MySQL Catalog contract suite |
+| Testing, security, and resilience | 11% | 6.8% | Strict quality gates, secret-safe configuration/TLS and adversarial HTTP tests, Catalog lifecycle/Unicode tests, exhaustive Identity Account/authenticator/Role tests, adversarial session chronology/generation/expiry/replay tests, authenticated-principal tests, 137 opaque-credential/Node-adapter tests, hardened attempt/discovery/event tests, and 45 workflow tests covering exact wire-to-digest correlation, one-shot ownership, cleanup, ticket forgery, cross-boundary consumption, locked-row relationships, terminal-action provenance, event validation, rotation-only digest access, principal binding, pending-evidence consumption/revocation, hostile re-entrancy, exact result binding, contaminated-error recreation, fixed errors, and package isolation; executable architecture boundaries, real-MySQL Catalog lifecycle/contract suites, and a dedicated Identity lineage suite proving idempotent deployment, Prisma drift absence, byte-exact checks, microseconds, the one-active-refresh constraint, uniqueness, and foreign keys |
 | Frontend showcase | 12% | 0% | Not started |
 | Observability and operations | 5% | 1% | Sanitized liveness, bounded MySQL readiness, server-owned request identity, structured HTTP/Nest logs, redaction, and safe fatal bootstrap reporting exist; metrics and traces remain |
-| CI/CD and public deployment | 8% | 1.75% | CI replays migrations idempotently and validates database, Catalog, and API contracts against real MySQL; no release pipeline or live environment |
+| CI/CD and public deployment | 8% | 1.75% | CI replays migrations idempotently and validates database, Identity-lineage, Catalog, and API contracts against real MySQL; no release pipeline or live environment |
 | Documentation and demo polish | 5% | 2.75% | README, architecture contracts, ADR history, deterministic OpenAPI JSON, and a public read-only local Swagger UI exist; examples and demo guides remain |
-| **Total** | **100%** | **35.05%** | Displayed overall is rounded down |
+| **Total** | **100%** | **35.35%** | Displayed overall is rounded down |
 
 The weights are fixed unless the project scope is formally re-baselined. A
 workstream may use fractional earned points internally, but the displayed
@@ -67,11 +67,16 @@ kind-matched terminal persistence actions, and one exact pending-evidence value
 across rotation, reuse, and rejection. Consuming that evidence is only the
 one-shot handoff to future commit handling; it is neither commit proof nor
 credential-delivery authority. The workflow remains internal and uncomposed
-before a real use case exists. There is still no locked refresh store adapter,
-concrete Unit of Work, committed completion, resolver/login/refresh use case,
-Identity MySQL schema, Argon2
-provider, password-input policy, offline command, session-revocation
-transaction, trusted ingress, CORS/CSRF, Redis abuse control, authentication
-route, or HTTP composition counted as complete.
+before a real use case exists. The ordered Prisma history now contains an
+unused four-table Identity lineage schema for Account, SessionFamily, retained
+refresh generations, and generation-bound access records. Its checked writable
+active slot avoids unsupported generated-column drift while leaving MySQL as
+the one-active-refresh authority. It earns no backend-capability or deployment
+credit because no production path consumes it. There is still no locked refresh
+store adapter, concrete Unit of Work, committed completion,
+resolver/login/refresh use case, authenticator/role/permission/security-event
+persistence, Argon2 provider, password-input policy, offline command,
+session-revocation transaction, trusted ingress, CORS/CSRF, Redis abuse
+control, authentication route, or HTTP composition counted as complete.
 Product eligibility and deterministic Product-first locking for SKU create,
 activate, and resume remain future application-layer work.
