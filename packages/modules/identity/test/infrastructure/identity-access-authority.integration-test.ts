@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { createServer, type AddressInfo, type Server, type Socket } from 'node:net';
 import { dirname, resolve } from 'node:path';
@@ -16,6 +17,10 @@ import {
 import { getPrismaClient, type PrismaClient } from '@oms/database/prisma';
 import { config as loadEnvironment } from 'dotenv';
 
+import {
+  IdentityBearerResolutionUnavailableError,
+  ResolveIdentityBearerPrincipal,
+} from '../../src';
 import { IDENTITY_ACCESS_AUTHORITY_REJECTED } from '../../src/application/identity-access-authority.reader';
 import { IdentityAccessAuthorityUnavailableError } from '../../src/application/identity-access-authority.errors';
 import { InvalidIdentityAuthenticatedPrincipalError } from '../../src/application/identity-authenticated-principal.errors';
@@ -23,6 +28,7 @@ import {
   createIdentityAccessCredentialDigestFromBytes,
   type IdentityAccessCredentialDigest,
 } from '../../src/application/identity-session-credential-digest.values';
+import { createNodeIdentitySessionCredentialCrypto } from '../../src/infrastructure/cryptography';
 import { PrismaIdentityAccessAuthorityReader } from '../../src/infrastructure/prisma';
 
 const AUTHORITY_INTEGRATION_CONFIRMATION_VARIABLE =
@@ -30,6 +36,7 @@ const AUTHORITY_INTEGRATION_CONFIRMATION_VARIABLE =
 const AUTHORITY_INTEGRATION_DATABASE = 'oms_identity_authority_integration';
 const LOOPBACK_DATABASE_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 const SYSTEM_ADMINISTRATOR_ROLE_ID = '01a02f59-a800-7000-8000-000000000001';
+const CANONICAL_INTEGRATION_ACCESS_WIRE = 'oms_at_v1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 const SYSTEM_PERMISSIONS = Object.freeze([
   'audit.records.read',
   'catalog.products.publish',
@@ -42,6 +49,7 @@ const SYSTEM_PERMISSIONS = Object.freeze([
 
 type FixtureOptions = Readonly<{
   absoluteExpiresAtSeconds?: number;
+  accessDigestBytes?: Uint8Array<ArrayBuffer>;
   accessExpiresAtSeconds?: number;
   accessIssuedAtSeconds?: number;
   accountStatus?: 'ACTIVE' | 'SUSPENDED';
@@ -193,7 +201,7 @@ async function createAuthorityFixture(
   const familyId = uuidBytes(fixtureUuid(index, 2));
   const refreshId = uuidBytes(fixtureUuid(index, 3));
   const accessId = uuidBytes(fixtureUuid(index, 4));
-  const rawDigest = digestBytes(index);
+  const rawDigest = options.accessDigestBytes ?? digestBytes(index);
   const accountCreatedAt = atOffset(context.now, -90_000);
   const accountChangedAt = atOffset(context.now, -1);
 
@@ -347,6 +355,10 @@ async function assertRealOutageIsUnavailable(context: IntegrationContext): Promi
     tls: { enabled: false },
   });
   const reader = new PrismaIdentityAccessAuthorityReader(getPrismaClient(runtime));
+  const resolver = new ResolveIdentityBearerPrincipal(
+    createNodeIdentitySessionCredentialCrypto(),
+    reader,
+  );
 
   try {
     await assert.rejects(
@@ -356,6 +368,15 @@ async function assertRealOutageIsUnavailable(context: IntegrationContext): Promi
       (error: unknown): boolean => {
         assert.ok(error instanceof IdentityAccessAuthorityUnavailableError);
         assert.equal(error.message, 'Identity access authority is temporarily unavailable');
+        assert.equal(error.cause, undefined);
+        return true;
+      },
+    );
+    await assert.rejects(
+      resolver.execute(CANONICAL_INTEGRATION_ACCESS_WIRE),
+      (error: unknown): boolean => {
+        assert.ok(error instanceof IdentityBearerResolutionUnavailableError);
+        assert.equal(error.message, 'Identity Bearer resolution is temporarily unavailable');
         assert.equal(error.cause, undefined);
         return true;
       },
@@ -573,6 +594,28 @@ void test('Identity access authority satisfies its real-MySQL contract', async (
         assert.deepEqual(
           await integration.reader.resolveByAccessCredentialDigest(fixture.digest),
           expectedPrincipal([], 13),
+        );
+      },
+    );
+
+    await testContext.test(
+      'composes canonical wire validation, production SHA-256, and real MySQL authority',
+      async () => {
+        const accessDigestBytes = Uint8Array.from(
+          createHash('sha256').update(CANONICAL_INTEGRATION_ACCESS_WIRE, 'ascii').digest(),
+        );
+        const fixture = await createAuthorityFixture(integration, 14, {
+          accessDigestBytes,
+        });
+        await assignRole(integration, fixture.accountId, SYSTEM_ADMINISTRATOR_ROLE_ID);
+        const resolver = new ResolveIdentityBearerPrincipal(
+          createNodeIdentitySessionCredentialCrypto(),
+          integration.reader,
+        );
+
+        assert.deepEqual(
+          await resolver.execute(CANONICAL_INTEGRATION_ACCESS_WIRE),
+          expectedPrincipal(SYSTEM_PERMISSIONS, 14),
         );
       },
     );

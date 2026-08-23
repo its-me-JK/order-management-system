@@ -1,4 +1,15 @@
-import type { IdentityAuthenticatedPrincipal } from '../src';
+import {
+  IdentityBearerResolutionUnavailableError,
+  ResolveIdentityBearerPrincipal,
+  type IdentityAuthenticatedPrincipal,
+  type IdentityBearerPrincipalRejected,
+  type IdentityBearerPrincipalResolution,
+  type IdentityBearerPrincipalResolved,
+} from '../src';
+import type {
+  // @ts-expect-error Internal resolver failures are not part of the package root.
+  IdentityBearerResolutionError as LeakedIdentityBearerResolutionError,
+} from '../src';
 import * as identityPublicSurface from '../src';
 import { createIdentityAuthenticatedPrincipalFromAuthority } from '../src/application/identity-authenticated-principal';
 
@@ -6,11 +17,33 @@ const ACTOR_ID = '01890f3a-8bcd-7def-8abc-0123456789ab';
 const SESSION_ID = '01890f3a-8bcd-7def-9abc-0123456789ab';
 
 describe('@oms/identity public surface', (): void => {
-  it('exports the authenticated-principal contract without a runtime constructor', (): void => {
-    expect(Object.keys(identityPublicSurface)).toEqual([]);
+  it('exports only the Bearer resolver entry point and its public unavailable error', (): void => {
+    expect(Object.keys(identityPublicSurface)).toEqual([
+      'IdentityBearerResolutionUnavailableError',
+      'ResolveIdentityBearerPrincipal',
+    ]);
+    expect(identityPublicSurface.IdentityBearerResolutionUnavailableError).toBe(
+      IdentityBearerResolutionUnavailableError,
+    );
+    expect(identityPublicSurface.ResolveIdentityBearerPrincipal).toBe(
+      ResolveIdentityBearerPrincipal,
+    );
+
+    for (const internalName of [
+      'IdentityBearerResolutionError',
+      'IDENTITY_BEARER_PRINCIPAL_REJECTED',
+      'IDENTITY_ACCESS_AUTHORITY_REJECTED',
+      'IdentityAccessAuthorityReader',
+      'createIdentityAuthenticatedPrincipalFromAuthority',
+      'parseIdentityAccessCredentialWireValue',
+      'createIdentityAccessCredentialDigestFromBytes',
+      'createNodeIdentitySessionCredentialCrypto',
+    ]) {
+      expect(identityPublicSurface).not.toHaveProperty(internalName);
+    }
   });
 
-  it('accepts only the nominal principal produced by the internal authority boundary', (): void => {
+  it('publishes closed resolver outcome types around only an authentic nominal principal', (): void => {
     const principal: IdentityAuthenticatedPrincipal =
       createIdentityAuthenticatedPrincipalFromAuthority({
         actorId: ACTOR_ID,
@@ -18,12 +51,19 @@ describe('@oms/identity public surface', (): void => {
         activeRoleCount: 1,
         permissions: ['catalog.products.read'],
       });
+    const resolved: IdentityBearerPrincipalResolved = {
+      kind: 'resolved',
+      principal,
+    };
+    const rejected: IdentityBearerPrincipalRejected = { kind: 'rejected' };
+    const outcomes: readonly IdentityBearerPrincipalResolution[] = [resolved, rejected];
 
     expect(principal).toEqual({
       actorId: ACTOR_ID,
       sessionId: SESSION_ID,
       permissions: ['catalog.products.read'],
     });
+    expect(outcomes.map((outcome) => outcome.kind)).toEqual(['resolved', 'rejected']);
   });
 });
 
@@ -34,3 +74,5 @@ const _structurallyForgedPrincipal: IdentityAuthenticatedPrincipal = {
   permissions: [],
 };
 void _structurallyForgedPrincipal;
+
+export type _LeakedIdentityBearerResolutionError = LeakedIdentityBearerResolutionError;

@@ -239,6 +239,25 @@ export function createIdentityAccessCredentialDigestFromBytes(
   }
 }
 
+/** @internal Verifies an existing access-digest capability without promoting raw bytes. */
+export function authenticateIdentityAccessCredentialDigest(
+  value: unknown,
+): IdentityAccessCredentialDigest {
+  try {
+    if (
+      typeof value !== 'object' ||
+      value === null ||
+      !identityAccessCredentialDigestBytes.has(value)
+    ) {
+      invalidAccessDigest();
+    }
+
+    return value as IdentityAccessCredentialDigest;
+  } catch {
+    invalidAccessDigest();
+  }
+}
+
 export function createIdentityRefreshCredentialDigestFromBytes(
   value: unknown,
 ): IdentityRefreshCredentialDigest {

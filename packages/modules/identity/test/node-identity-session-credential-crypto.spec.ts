@@ -24,7 +24,14 @@ import {
   type NodeIdentitySessionCredentialCryptoPrimitives,
 } from '../src/infrastructure/cryptography/node-identity-session-credential-crypto';
 import type {
-  // @ts-expect-error The Node production factory is not part of the package root yet.
+  // @ts-expect-error The deterministic primitive seam is not part of the public subpath.
+  createNodeIdentitySessionCredentialCryptoWithPrimitives as LeakedSubpathCryptoFactory,
+  // @ts-expect-error The primitive-provider contract is not part of the public subpath.
+  NodeIdentitySessionCredentialCryptoPrimitives as LeakedSubpathCryptoPrimitives,
+} from '../src/infrastructure/cryptography';
+import * as identityCryptographyPublicApi from '../src/infrastructure/cryptography';
+import type {
+  // @ts-expect-error The Node production factory belongs to its infrastructure subpath.
   createNodeIdentitySessionCredentialCrypto as LeakedRootCryptoFactory,
   // @ts-expect-error The deterministic primitive seam is not part of the package root.
   NodeIdentitySessionCredentialCryptoPrimitives as LeakedRootCryptoPrimitives,
@@ -860,7 +867,7 @@ describe('Node Identity cryptography construction and real provider', (): void =
     }
   });
 
-  it('seals construction, freezes the adapter, and keeps cryptography off package exports', (): void => {
+  it('seals construction and exports only the production factory from its subpath', (): void => {
     const validPrimitives = primitives(
       (): Promise<unknown> => Promise.resolve(filledBytes(1)),
       sha256Ascii,
@@ -896,12 +903,27 @@ describe('Node Identity cryptography construction and real provider', (): void =
       expect((error as Error & { cause?: unknown }).cause).toBeUndefined();
     }
 
-    expect(Object.keys(identityPublicApi)).toEqual([]);
     expect(identityPublicApi).not.toHaveProperty('createNodeIdentitySessionCredentialCrypto');
     expect(identityPublicApi).not.toHaveProperty(
       'createNodeIdentitySessionCredentialCryptoWithPrimitives',
     );
-    expect(Reflect.ownKeys(packageManifest['exports'])).toEqual(['.', './infrastructure/prisma']);
+    expect(Object.keys(identityCryptographyPublicApi)).toEqual([
+      'createNodeIdentitySessionCredentialCrypto',
+    ]);
+    expect(identityCryptographyPublicApi.createNodeIdentitySessionCredentialCrypto).toBe(
+      createNodeIdentitySessionCredentialCrypto,
+    );
+    expect(identityCryptographyPublicApi).not.toHaveProperty(
+      'createNodeIdentitySessionCredentialCryptoWithPrimitives',
+    );
+    expect(identityCryptographyPublicApi).not.toHaveProperty(
+      'NodeIdentitySessionCredentialCryptoPrimitives',
+    );
+    expect(Reflect.ownKeys(packageManifest['exports'])).toEqual([
+      '.',
+      './infrastructure/prisma',
+      './infrastructure/cryptography',
+    ]);
     expect(Object.isFrozen(crypto)).toBe(true);
     expect(Object.isFrozen(Object.getPrototypeOf(crypto))).toBe(true);
     expect(Object.isFrozen(recoveredConstructor)).toBe(true);
@@ -1001,3 +1023,5 @@ describe('Node Identity cryptography construction and real provider', (): void =
 
 export type _LeakedCryptoPrimitives = LeakedRootCryptoPrimitives;
 export type _LeakedCryptoFactory = typeof LeakedRootCryptoFactory;
+export type _LeakedSubpathCryptoPrimitives = LeakedSubpathCryptoPrimitives;
+export type _LeakedSubpathCryptoFactory = typeof LeakedSubpathCryptoFactory;

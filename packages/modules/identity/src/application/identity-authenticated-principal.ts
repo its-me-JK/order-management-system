@@ -14,6 +14,8 @@ const IDENTITY_AUTHENTICATED_PRINCIPAL_AUTHORITY_EVIDENCE_KEYS = Object.freeze([
   'permissions',
 ] as const);
 
+const identityAuthenticatedPrincipals = new WeakSet<object>();
+
 declare const identityAuthenticatedPrincipalBrand: unique symbol;
 
 /** An immutable authority result that only Identity infrastructure may construct. */
@@ -139,12 +141,35 @@ export function createIdentityAuthenticatedPrincipalFromAuthority(
     const activeRoleCount = parseActiveRoleCount(value['activeRoleCount']);
     const permissions = parseCanonicalPermissions(value['permissions'], activeRoleCount);
 
-    return Object.freeze({
+    const principal = Object.freeze({
       actorId,
       sessionId,
       permissions,
     }) as unknown as IdentityAuthenticatedPrincipal;
+
+    identityAuthenticatedPrincipals.add(principal);
+
+    return principal;
   } catch {
     throw new InvalidIdentityAuthenticatedPrincipalError();
+  }
+}
+
+/** @internal Verifies that the value was produced by the trusted authority factory. */
+export function authenticateIdentityAuthenticatedPrincipal(
+  value: unknown,
+): IdentityAuthenticatedPrincipal {
+  try {
+    if (
+      typeof value !== 'object' ||
+      value === null ||
+      !identityAuthenticatedPrincipals.has(value)
+    ) {
+      invalidPrincipal();
+    }
+
+    return value as IdentityAuthenticatedPrincipal;
+  } catch {
+    invalidPrincipal();
   }
 }

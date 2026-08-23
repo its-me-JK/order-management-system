@@ -15,6 +15,10 @@
     "./infrastructure/prisma": {
       "types": "./src/infrastructure/prisma/index.ts",
       "default": "./dist/infrastructure/prisma/index.js"
+    },
+    "./infrastructure/cryptography": {
+      "types": "./src/infrastructure/cryptography/index.ts",
+      "default": "./dist/infrastructure/cryptography/index.js"
     }
   },
   "scripts": {

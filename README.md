@@ -57,8 +57,17 @@ state, and the six-field conditional-write basis remains credential-secret
 free. The package's first public application contract is now a nominal,
 immutable authenticated principal containing only opaque actor/session IDs and
 the bounded current permission set. Its authority factory remains internal and
-validates role-count evidence, so the runtime package root exports no
-constructor. Its internal credential boundary now adds fixed-policy Node
+validates role-count evidence, so the package root exports no principal
+constructor. The root now exposes `ResolveIdentityBearerPrincipal` as its first
+runtime use case: it accepts only an already-extracted primitive token value,
+validates the canonical access-wire namespace, authenticates the resulting
+digest and principal at runtime, and returns one exact frozen resolved or
+rejected outcome. Malformed input and ordinary authority rejection are
+indistinguishable; known cryptography or authority outages become one fixed
+unavailable failure, while every other failure remains internal. The explicit
+Identity cryptography infrastructure subpath exposes only the zero-argument
+production Node factory, never credential constructors or its deterministic
+test seam. Its internal credential boundary also adds fixed-policy Node
 CSPRNG/SHA-256 generation, a pre-transaction one-shot attempt that re-verifies
 the exact wire-to-digest pair, a nominal SecurityEvent identifier, and
 digest-only refresh discovery with authentic one-use tickets. Its internal
@@ -84,12 +93,14 @@ ordinary credential rejection from corrupt issuance evidence, wipes the
 temporary digest copy, deduplicates shared permissions, and fails closed above
 16 active roles, 128 permissions, or 2,048 mapping rows. An isolated MySQL
 suite proves immediate Role/Permission changes, lifecycle rejection, clipped
-access lifetimes, exact bounds, and real outage classification. Identity still
-exposes no Bearer resolver use case or authentication route; no locked store,
-concrete Unit of Work, security-event adapter, NestJS composition, Argon2
-adapter, password input policy, or Redis abuse control completes the runtime
-path yet. Pricing, inventory, Redis caching, and integration events also remain
-separate later slices.
+access lifetimes, exact bounds, canonical wire through production SHA-256 to
+real MySQL authority, and public resolver outage classification. Identity
+still has no `Authorization` extraction, request association, authentication
+route, or public credential ingress; no locked store, concrete Unit of Work,
+security-event adapter, NestJS composition, Argon2 adapter, password input
+policy, or Redis abuse control completes the runtime path yet. Pricing,
+inventory, Redis caching, and integration events also remain separate later
+slices.
 
 **Overall project progress: 36%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
@@ -274,11 +285,14 @@ seed policy, microseconds, UUID versions, foreign keys, event compatibility,
 issuance witness, and the one-active-refresh invariant against pinned MySQL.
 The dedicated Identity authority command creates another exact disposable
 database, deploys migrations twice, and exercises the production Prisma reader
-through the DML-only application principal. Together with the focused adapter
-tests, it proves one-statement writer time, current permission visibility,
-indistinguishable lifecycle rejection, internal corruption handling, exact
-cardinality bounds, digest cleanup, and real connection-outage classification
-before dropping its database and grant.
+through the DML-only application principal. It also composes one canonical wire
+value through the production Node SHA-256 adapter, public resolver, and real
+MySQL authority query, including fixed resolver unavailability during a real
+connection outage. Together with the focused adapter tests, it proves
+one-statement writer time, current permission visibility, indistinguishable
+lifecycle rejection, internal corruption handling, exact cardinality bounds,
+digest cleanup, and real connection-outage classification before dropping its
+database and grant.
 The Catalog integration command verifies an initial-schema
 upgrade with legacy rows, rejects ambiguous terminal history before DDL, and
 also creates, migrates twice, and removes an exact fresh

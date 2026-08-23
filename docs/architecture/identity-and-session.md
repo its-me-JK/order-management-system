@@ -87,15 +87,17 @@ flowchart LR
 ```
 
 The business package is `@oms/identity` under `packages/modules/identity`.
-Its root will eventually export only application use cases, ports, typed
-outcomes, and the authenticated-principal contract. Domain types remain
-package-internal; an empty runtime root is preferable to exposing an aggregate
-before a runtime application contract exists. Domain and application code
-import no NestJS, Prisma, Redis client, Node crypto, HTTP, or logging vendor.
+Its root now exports its first runtime application use case,
+`ResolveIdentityBearerPrincipal`, together with only its caller-facing
+resolution types, `IdentityBearerResolutionUnavailableError`, and the
+authenticated-principal type. Domain types and credential construction remain
+package-internal. Domain and application code import no NestJS, Prisma, Redis
+client, Node crypto, HTTP, or logging vendor.
 
 Infrastructure adapters use explicit subpaths such as
-`@oms/identity/infrastructure/prisma`. Prisma construction stays in the API
-composition root. Delivery belongs under
+`@oms/identity/infrastructure/prisma` and
+`@oms/identity/infrastructure/cryptography`. Prisma construction stays in the
+API composition root. Delivery belongs under
 `apps/api/src/features/identity/delivery/http`; reusable Bearer extraction and
 request association belong to the API authentication platform adapter.
 
@@ -104,17 +106,19 @@ digest-level persistence port. Its Prisma adapter executes the writer-MySQL
 query, performs bounded relational mapping, and calls the package-internal
 principal factory. It returns only an exact `resolved` result or one frozen
 `rejected` singleton; unknown credentials and ordinary lifecycle ineligibility
-are intentionally indistinguishable. It is not the future Bearer resolver use
-case. That use case must authenticate the wire value, calculate its digest,
-invoke this port, and become the only root-exported runtime entry point.
+are intentionally indistinguishable. `ResolveIdentityBearerPrincipal` is now
+the application boundary that authenticates an already-extracted access-wire
+value, calculates and authenticates its digest, invokes this port, and
+runtime-authenticates the returned principal before releasing it.
 
-The future API authentication platform adapter only extracts the Bearer value,
-invokes that resolver, and associates its returned immutable principal with
-the request. A business delivery adapter maps that value into its own command
-context. Catalog never imports an Identity repository, role, account, or
-credential and never queries an Identity table. The concrete Prisma reader is
-available only from `@oms/identity/infrastructure/prisma`; the package root
-still exports only the principal type.
+The future API authentication platform adapter will only extract the Bearer
+value, invoke that resolver, and associate its returned immutable principal
+with the request. A business delivery adapter will map that value into its own
+command context. Catalog never imports an Identity repository, role, account,
+credential, digest, or resolver dependency and never queries an Identity
+table. The concrete Prisma reader remains available only from
+`@oms/identity/infrastructure/prisma`; credential internals remain absent from
+the package root.
 
 The principal contains exactly:
 
@@ -127,6 +131,50 @@ credential identifier, raw token, digest, cookie, IP address, or user agent.
 The resolver fails closed if the result exceeds 16 active roles or 128
 distinct permissions; those bounds prevent corrupt configuration from making
 authority an unbounded request input.
+
+### Bearer principal resolution application contract
+
+`ResolveIdentityBearerPrincipal` accepts only one already-extracted primitive
+token candidate. It does not receive an HTTP request or an `Authorization`
+field, select among repeated fields, parse the `Bearer` scheme, trim input, or
+associate state with a request. A non-string value, an entire
+`Bearer <credential>` field value, or a string that is not the exact canonical
+access-wire representation is malformed.
+
+The resolver returns one of two recursively frozen exact outcomes: a
+`resolved` outcome containing only an authentic
+`IdentityAuthenticatedPrincipal`, or the shared `rejected` outcome containing
+only its discriminator. Malformed access-wire input and ordinary authority
+rejection use that same rejected value. Parsing failure stops before hashing;
+ordinary authority rejection follows exactly one hash and one authority read.
+Neither path reveals whether a credential was malformed, unknown, expired,
+revoked, attached to an inactive Account, or otherwise ineligible.
+
+An authentic wire wrapper is passed to the credential-cryptography port. The
+resolver runtime-authenticates the resulting access-digest wrapper before the
+authority read, then runtime-authenticates a resolved principal rather than
+trusting a structurally convincing object. A known cryptography or authority
+outage becomes the fixed, cause-free
+`IdentityBearerResolutionUnavailableError`. Every other dependency,
+representation, or authority-integrity failure becomes one fixed internal
+failure. Neither failure retains a provider cause or includes the presented
+wire value, digest, SQL, identifier, or permission. An outage is never
+misreported as credential rejection, and corruption is never converted into
+partial authority.
+
+The isolated real-MySQL authority suite composes this use case with the
+production Node SHA-256 factory and Prisma reader. It proves one canonical wire
+through to a current principal and proves that a stalled database becomes the
+public unavailable failure rather than rejection. HTTP remains outside that
+test because no transport is composed yet.
+
+Keeping HTTP extraction outside this use case makes the same application
+policy reusable by a later NestJS adapter or another trusted delivery adapter.
+It also creates a deliberate split: the transport must independently enforce
+the exactly-one-header and scheme grammar before calling the resolver. Passing
+the raw request into Identity would make application policy depend on a
+framework; accepting a digest at the public boundary would let callers bypass
+canonical wire validation and target-kind hashing.
 
 ### Authenticated principal application contract
 
@@ -141,12 +189,13 @@ members in this order:
 | `permissions` | A copied and frozen array of zero through 128 canonical permission codes, already distinct and ASCII-lexicographically sorted. |
 
 The public type carries a non-exported nominal brand that has no runtime
-property. In this increment the package root exports only that type; it exports
-no factory, parser, error, Account/Role/SessionFamily type, credential type,
-fact, or snapshot. This does not make TypeScript a security boundary—a cast can
-always lie—but it prevents ordinary structural assignment from accidentally
-constructing a trusted principal. Runtime trust still comes only from the
-Identity authority resolver and its server-owned request association.
+property. The package root exports no principal factory, credential parser,
+digest constructor, Account/Role/SessionFamily type, fact, or snapshot. This
+does not make TypeScript a security boundary—a cast can always lie—but it
+prevents ordinary structural assignment from accidentally constructing a
+trusted principal. Runtime trust comes only from the Identity authority mapper,
+the resolver's runtime-authentic principal check, and the future server-owned
+request association.
 
 Package-internal
 `createIdentityAuthenticatedPrincipalFromAuthority(value: unknown)` is the
@@ -183,9 +232,9 @@ The alternative is a public structural interface plus constructor, or passing
 Identity Account/Role records into business modules. A public constructor is
 convenient for fixtures but invites caller-created trust objects; Identity
 records couple every module to authentication persistence and expose data it
-does not need. A type-only nominal contract requires explicit test fixtures at
-the trusted adapter boundary, but preserves the one-way dependency and keeps
-the runtime root surface empty until an actual use case is exported.
+does not need. The nominal contract requires explicit trusted test fixtures,
+while the narrow resolver export preserves the one-way dependency without
+exposing a general authority-construction API.
 
 ## Domain boundaries and lifecycle
 
@@ -745,7 +794,8 @@ sequence and exact issuance instant. In both paths expiry is the earlier of
 `issuedAt + access lifetime` and family absolute expiry. If addition would
 exceed MySQL year 9999, the already valid earlier absolute deadline is the cap.
 Refresh idle and refresh-credential expiry never cap access. There is no
-standalone access issue/save operation and the package root remains empty.
+standalone access issue/save operation, and neither the entity nor its factory
+is exported from the package root.
 
 Every durable AccessCredential must have one exact issuance witness:
 
@@ -917,11 +967,12 @@ event, and marks the singleton claimed in one transaction. It issues no
 session credential.
 
 The authorization tables now have the bounded digest-level authority reader
-defined below. The security-event table still has no repository, and neither
-slice has a Unit of Work, NestJS provider, controller, or route. Seed data by
-itself grants no authority: an active Account assignment and a valid resolved
-session are both required. The uncomposed reader does not satisfy the Identity
-delivery gate.
+defined below, and the framework-independent Bearer resolver consumes that
+port. The security-event table still has no repository, and neither slice has a
+Unit of Work, NestJS provider, controller, or route. Seed data by itself grants
+no authority: an active Account assignment and a valid resolved session are
+both required. The resolver without trusted HTTP composition does not satisfy
+the Identity delivery gate.
 
 ### Offline administrator credential operations
 
@@ -1354,7 +1405,7 @@ scope closure. They also prove terminal-action kind and scope binding,
 rotation-only digest access, canonical event IDs, principal-to-aggregate
 binding, exact frozen pending evidence, one-shot consumption, explicit
 revocation, unconsumed-evidence retirement, re-entrant attempt invalidation,
-fixed cause-free errors, and no root export.
+fixed cause-free errors, and no workflow root export.
 
 The Unit of Work increment must still prove commit promotion and revocation,
 final attempt retirement, exact-pair delivery binding, raw-credential rejection
@@ -1530,11 +1581,13 @@ collapses to the fixed, cause-free
 is not retained at this secret boundary. Metrics use a closed failure code,
 never an exception or credential fragment. No parser, serializer, wrapper,
 candidate, digest, error, or crypto port is added to the package root in this
-increment. They remain internal until a reviewed login/refresh use case and
-delivery result create a real consumer. That later delivery boundary may add a
-restricted `@oms/identity/delivery/session-credentials` subpath with only
-access-for-HTTP and refresh-for-cookie reveal functions; it will export no
-parser, constructor, candidate factory, or generic reveal capability.
+credential increment. They remain internal: the Bearer resolver now consumes
+the access parser and digester without re-exporting either, while login and
+refresh still require reviewed use cases and delivery results. That later
+delivery boundary may add a restricted
+`@oms/identity/delivery/session-credentials` subpath with only access-for-HTTP
+and refresh-for-cookie reveal functions; it will export no parser, constructor,
+candidate factory, or generic reveal capability.
 
 ### Node session-credential cryptography adapter
 
@@ -1550,12 +1603,12 @@ requires an unexported identity capability held only by the in-module
 production and deterministic factories. Recovering the runtime constructor
 from an instance, invoking it directly or through `Reflect.construct`, and
 supplying otherwise valid primitives must therefore fail with cryptographic
-unavailability; freezing alone is not a construction boundary. This increment
-adds no package root export, infrastructure barrel, or package subpath because
-no composed login or refresh use case consumes the adapter yet. When
-composition exists, a reviewed infrastructure subpath may export only the
-zero-argument factory; it will never export the concrete class, test seam,
-generic cryptographic primitives, or credential construction helpers.
+unavailability; freezing alone is not a construction boundary. The reviewed
+`@oms/identity/infrastructure/cryptography` subpath now exports only the
+zero-argument factory because the Bearer resolver is its first real application
+consumer. The package root still exports no cryptography capability. The
+subpath never exports the concrete class, deterministic test seam, generic
+cryptographic primitives, or credential construction helpers.
 
 Production construction snapshots the `node:crypto` RNG and hash function
 references during module evaluation. Later mutation of the CommonJS core-module
@@ -1931,6 +1984,14 @@ Protected routes accept an access credential only through exactly one
 syntactically valid access value. Cookie, query, form, and request-body access
 credentials are never accepted. Missing, repeated, comma-combined, malformed,
 wrong-prefix, expired, revoked, or unknown values all produce the fixed `401`.
+
+This header contract is not implemented by the application resolver. The
+future API adapter must validate the field count and scheme, then pass only the
+extracted token string to `ResolveIdentityBearerPrincipal`. Passing the full
+`Bearer <credential>` value is malformed resolver input and produces the same
+rejected outcome without hashing or reading MySQL. Request association and the
+sealed `401` mapper also remain transport responsibilities and are not yet
+composed.
 
 Login, refresh, and logout do not use an `Authorization` value. Any such field
 on those operations is fixed transport `400`; it is never ignored or selected
@@ -2383,11 +2444,13 @@ authentication surface becomes public.
 
 Step 3 is partially delivered. The constrained Identity records,
 deterministic baseline policy, digest-level authority port, bounded Prisma
-reader, and real-MySQL authority tests exist. The Unit of Work, locked stores,
-security-event writer, cleanup use case, Bearer resolver, NestJS composition,
-and complete delivery-gate tests remain. A principal can be resolved only by
-the internal digest reader in a trusted caller; there is still no credential
-ingress or public authentication surface.
+reader, real-MySQL authority/resolver tests, and root-exported
+framework-independent Bearer principal resolver exist. The Unit of Work, locked stores,
+security-event writer, cleanup use case, NestJS composition, and complete
+delivery-gate tests remain. A trusted caller can now resolve an
+already-extracted canonical access-wire value, but there is still no
+`Authorization` extraction, request association, credential ingress, route, or
+public authentication surface.
 
 ## Why this design
 
@@ -2404,6 +2467,10 @@ ingress or public authentication surface.
 - The private factory-based Node adapter fixes cryptographic policy while
   permitting deterministic failure injection without exporting a configurable
   security mechanism or blocking the event loop for entropy.
+- One application resolver owns canonical access-wire validation,
+  target-kind hashing, and authoritative-principal admission, while HTTP owns
+  header grammar and request association. Every trusted delivery path therefore
+  shares the same credential policy without importing Identity internals.
 - An application-owned Unit of Work keeps security policy out of generic
   repositories and makes atomic event/state invariants testable.
 - Redis contains attack cost across replicas without becoming session state or
@@ -2423,6 +2490,13 @@ ingress or public authentication surface.
   boundary and adds a proxy/session layer. Revisit with the actual frontend.
 - Signed JWTs remove the per-request authority query but make revocation and
   permission changes stale unless another version/cache check is added.
+- Accepting a digest directly from delivery would make the call cheaper and
+  easier to fake, but would let each adapter choose its own wire grammar and
+  hashing namespace. Accepting the raw HTTP request would centralize header
+  checks but couple the application layer to transport. The extracted primitive
+  value is the narrower boundary; it costs one bounded SHA-256 operation before
+  each authoritative read and requires the HTTP adapter to prove header
+  uniqueness separately.
 - Returning refresh credentials in JSON makes CLI use easier but exposes the
   long-lived secret to browser JavaScript and accidental client persistence.
 - Separate access and refresh generators are superficially reusable, but permit
@@ -2546,11 +2620,13 @@ ingress or public authentication surface.
     revocation. Family closure, absolute expiry, Account state, and current
     permissions are the immediate authority controls; requiring an unconsumed
     witness would invalidate the prior access token at every routine refresh.
-22. **Why does the initial package root export only the principal type?** Business
-    modules need a stable trust contract but must not manufacture authenticated
-    state or depend on Identity aggregates. The package-internal factory
-    validates authoritative data, while the type-only root export keeps the
-    runtime construction boundary inside Identity.
+22. **Why does the package root export the resolver but not the principal
+    factory or credential parsers?** Delivery needs one supported way to turn an
+    extracted access value into trusted authority. Exporting lower-level
+    constructors would let callers manufacture principals or assemble a
+    different parsing, hashing, and authority sequence; the resolver keeps that
+    sequence inside Identity while business modules depend only on the nominal
+    principal contract.
 23. **Why generate access and refresh credentials as one pair?** Every login and
     successful refresh persists and returns one generation containing both.
     Separate generator calls permit incomplete output, entropy reuse, or
@@ -2601,6 +2677,12 @@ ingress or public authentication surface.
     from two attempts. Two extra bounded SHA-256 operations before `BEGIN`
     create an exact attempt capability, avoid a post-commit crypto failure, and
     are negligible beside a database transaction.
+33. **Why does malformed or unknown authority reject uniformly while an outage
+    stays distinct?** A rejection is a completed authentication decision and
+    must not reveal which credential property failed. An outage means no trusted
+    decision was possible; reporting it as rejection would turn dependency
+    failure into a false security fact and prevent the future HTTP adapter from
+    returning the required retryable `503`.
 
 ## Future improvements
 
@@ -2621,6 +2703,10 @@ ingress or public authentication surface.
   export.
 - Revisit signed, audience-bound access credentials or an Identity network
   service only when an extracted service needs independent validation.
+- Add closed-cardinality resolver metrics for resolved, rejected, unavailable,
+  and internal outcomes, then benchmark writer-MySQL authority latency before
+  considering a bounded authority cache. Metrics must never label a raw wire,
+  digest, Account, session, or permission.
 - Benchmark libuv delay alongside Argon2id concurrency, add stable
   crypto-availability metrics, and evaluate FIPS/runtime attestation where a
   deployment requires it. A future HSM or managed provider remains a separate
