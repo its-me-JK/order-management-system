@@ -1113,8 +1113,8 @@ the writes and `COMMIT`; a caller-selected object or pending workflow result is
 never commit authority. This avoids turning a structurally convincing test
 double into a security boundary.
 
-The second executable increment remains application-only and explicitly
-pending. An attempt-bound workflow claims the verified candidate attempt with
+The second executable increment is application-only and delivered. An
+attempt-bound workflow claims the verified candidate attempt with
 the private controller before activation. It authenticates one matching
 rejected, rotated, or reuse terminal action; validates the canonical security
 event ID before a write action starts; exposes only the exact writer plan; and
@@ -1122,6 +1122,18 @@ mints one runtime-authentic pending evidence value. Rotation alone exposes the
 two authenticated digest wrapper identities, while reuse exposes no credential
 material and rejection has no persistence action. The increment adds no
 commit, transaction-outcome, retry, candidate-delivery, or wire-value API.
+
+The third executable increment is also application-only and delivered. One
+empty, frozen, runtime-authentic `IdentitySessionRefreshCommand` binds the
+authentic discovery-ticket identity, verified credential-attempt identity,
+pre-generated successor and access identifiers, both configured lifetimes,
+and the SecurityEvent identifier. Admission is synchronous and one-shot: it
+consumes the command and claims its attempt before the future Unit of Work may
+perform an asynchronous operation. After activation, fixed package-owned code
+performs exactly one locked load, one decision, and exactly one matching
+terminal branch. It authenticates and consumes the resulting pending evidence
+as the handoff to future commit handling. It accepts no caller callback and
+still grants no commit or credential-delivery authority.
 
 Identity uses a hybrid boundary rather than repositories per aggregate. A
 small `IdentityUnitOfWork` owns transaction completion. Separate purpose-built
@@ -1133,15 +1145,17 @@ ownership and transaction ownership differ here: one refresh decision spans an
 Account, SessionFamily, presented RefreshCredential, optional successor and
 AccessCredential, current authority projection, and a security event.
 
-For this refresh slice, `IdentityUnitOfWork.execute` accepts one verified
-credential attempt as its exact admission and invokes one fixed,
-package-owned asynchronous orchestration at most once. This is not an
+For this refresh slice, `IdentityUnitOfWork.execute` accepts one authentic
+closed refresh command as its exact admission and invokes its fixed,
+package-owned asynchronous orchestration at most once. Synchronous command
+admission claims the command's verified credential attempt before the first
+await; the Unit of Work then begins the transaction, reads writer time,
+activates the admitted command, and runs it once. This is not an
 externally supplied plugin callback: validating its return value could not
 prevent hostile callback code from leaking credentials through side effects.
-The Unit of Work invokes the orchestration exactly once only after atomically
-claiming that attempt, `BEGIN`, a valid writer-owned `dbNow`, and an active
-context have all been established. The orchestration receives one exact frozen
-context containing:
+The Unit of Work invokes database orchestration only after `BEGIN`, a valid
+writer-owned `dbNow`, and an active context have all been established. The
+orchestration receives one exact frozen context containing:
 
 | Field | Contract |
 | --- | --- |
@@ -1509,15 +1523,21 @@ same change would mix deterministic row mapping with rollback injection,
 constraint allowlisting, ambiguous commit, and secret-delivery authority,
 making failures harder to localize and review.
 
-Two application capabilities remain explicit blockers. First, a closed,
-package-owned refresh command must bind the authentic discovery ticket,
-verified credential attempt, generated identifiers, lifetimes, security-event
-identifier, and exact orchestration; `execute<T>(callerCallback)` is not an
-acceptable substitute because side effects can leak candidates before return
-validation. Second, confirmed commit must promote pending evidence into a
-distinct runtime-authentic completion bound to the exact candidate pair;
+One application capability remains an explicit blocker. Confirmed commit must
+promote pending evidence into a distinct runtime-authentic completion bound to
+the exact candidate pair;
 pending evidence or a structurally similar object can never reveal either wire
 value.
+
+The delivered command's transaction-scoped `IdentitySessionRefreshStore`
+surface contains only locked load, rotated persistence, and reuse-detected
+persistence. Rejection has no writer operation. Store calls are sequential,
+the command becomes absorbing before any extensible call, exact activated
+context identity is required before the first store access, and a returned
+pending-evidence value is runtime-authenticated before handoff. Arbitrary store
+failures deliberately remain internal values for the future Unit of Work to
+discard or classify; the command is not exported or safe for direct transport
+composition.
 
 The infrastructure blocker is equally deliberate. Prisma's public interactive
 transaction client does not expose a supported primitive to cancel one in-flight
@@ -1538,7 +1558,7 @@ the application logger. Raw credentials are never bound here, but a refresh
 digest is still secret-derived authentication material and is prohibited from
 logs.
 
-Inside the callback, `IdentitySessionRefreshStore` exposes only three
+Inside the fixed command, `IdentitySessionRefreshStore` exposes only three
 operations:
 
 1. The delivered `loadForUpdate(scope, ticket)` behavior consumes the
@@ -1584,6 +1604,15 @@ rotation-only digest access, canonical event IDs, principal-to-aggregate
 binding, exact frozen pending evidence, one-shot consumption, explicit
 revocation, unconsumed-evidence retirement, re-entrant attempt invalidation,
 fixed cause-free errors, and no workflow root export.
+
+Focused command tests additionally prove its empty frozen public shape,
+strict copied input, synchronous one-shot admission, exact activated-context
+binding, fixed load/decision/terminal sequencing, rejection without a writer,
+rotation/reuse branch isolation, event and digest-plan correlation, forged
+evidence rejection, in-flight close refusal, absorbing failure, attempt
+retirement, hostile re-entry resistance, and absence from the supported
+Identity package surface. These tests are application-only; they do not claim
+transaction provenance, DML, rollback, commit, or connection lifecycle.
 
 Focused locked-loader unit tests additionally prove exact construction and
 public shape, same-writer discovery pairing, one-use ticket and scope binding,
@@ -1658,9 +1687,9 @@ wrong-kind writes before SQL. An interview-level consequence is that consumed
 pending evidence must survive callback-scope close: the scope must be invalid
 before `COMMIT`, while confirmed commit still needs the exact attempt binding
 for later delivery. That retained registration grants neither SQL nor delivery
-authority. The next improvements are the closed refresh command,
-rotation/reuse writer, and concrete MySQL Unit of Work that alone can settle it
-from a real transaction trace.
+authority. The next improvements are the rotation/reuse writer, committed
+completion registry and delivery gate, and a connection-owning MySQL Unit of
+Work that alone can settle the command from a real transaction trace.
 
 ## Credential and password representation
 
@@ -2671,9 +2700,10 @@ deterministic baseline policy, digest-level authority port, bounded Prisma
 reader, lifecycle-blind Prisma refresh-discovery adapter, root-writer-paired
 locked loader, isolated real-MySQL authority/discovery/locked-load/resolver
 tests, and root-exported framework-independent Bearer principal resolver exist.
-The closed refresh command, rotation/reuse writer, Unit of Work, committed
-completion and delivery gate, security-event writer, cleanup use case, NestJS
-composition, and complete delivery-gate tests remain. A trusted caller can now
+The closed refresh command is now delivered. The rotation/reuse writer, Unit
+of Work, committed completion and delivery gate, security-event writer,
+cleanup use case, NestJS composition, and complete delivery-gate tests remain.
+A trusted caller can now
 resolve an already-extracted canonical access-wire value, but there is still no
 `Authorization` extraction, request association, credential ingress, route, or
 public authentication surface.
@@ -2990,8 +3020,8 @@ public authentication surface.
   crypto-availability metrics, and evaluate FIPS/runtime attestation where a
   deployment requires it. A future HSM or managed provider remains a separate
   implementation of the unchanged application port.
-- Complete the closed refresh command, rotation/reuse writers, committed
-  completion registry, and Identity Unit of Work around the delivered paired
+- Add rotation/reuse writers, the committed-completion registry and delivery
+  gate, and the Identity Unit of Work around the delivered paired
   locked loader. Prove scope escape, rollback injection, exact constraint
   classification, competing refresh, and ambiguous commit before extending
   the pattern to login, logout, Account, authenticator, or Role workflows; do

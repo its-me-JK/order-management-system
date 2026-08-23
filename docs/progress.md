@@ -1,6 +1,6 @@
 # Project progress
 
-- **Overall completion:** 36%
+- **Overall completion:** 37%
 - **Current milestone:** Identity, catalog, pricing, and inventory
 - **Public demo:** Not deployable yet
 - **Last reviewed:** 2026-08-23
@@ -15,14 +15,14 @@ accepted outcomes, not lines of code, generated files, commits, or activity.
 | --- | ---: | ---: | --- |
 | Architecture and contracts | 6% | 6% | Architecture overview, seventeen ADRs, platform contracts, delivered Catalog public reads, accepted Catalog administration contracts, and an exact Identity/session contract now fixing Account, authenticator, Role/Permission, generation-proven AccessCredential and RefreshCredential issuance, the cross-module authenticated-principal boundary, opaque wire/digest/candidate ownership, paired cryptography, the refresh transaction capability/evidence model, confirmed-commit disclosure, atomic rotation/replay, authoritative permission, browser security, and fail-closed abuse boundaries |
 | Platform and persistence | 9% | 8.95% | Workspace, runtime shells, versioned routing, health, validated configuration, structured logging, strict transport boundaries, deterministic OpenAPI, one runtime-owned Prisma client, MySQL, an ordered forward-only migration history, guarded Catalog lifecycle expansion/backfill/contraction, an uncomposed four-table Identity refresh-lineage schema with checked lifecycle, generation-witness, and one-active-refresh invariants, plus authorization records with exact policy seeds, Role mappings, Account assignments, and typed retention-independent security evidence |
-| Backend business capabilities | 35% | 8.75% | Catalog public reads and Product/SKU aggregates exist. Identity now has separate immutable Account, PasswordAuthenticator, Role, and SessionFamily boundaries plus versionless RefreshCredential and AccessCredential children. Creation and rotation return complete generation-matched issuance bundles; application code owns canonical redacting access/refresh wire values, copied-byte digest values, one exact frozen candidate pair, the narrow cryptography port, a fixed-policy internal Node CSPRNG/SHA-256 adapter, a pre-transaction one-shot credential-attempt verifier, digest-only refresh discovery with authentic one-use tickets, a concrete non-locking lifecycle-blind writer-MySQL discovery adapter with privately paired ticket authority, and a load-only Prisma adapter whose ticket boundary requires discovery's exact root writer and which consumes one ticket and locks Account, SessionFamily, and the digest-revalidated presented RefreshCredential in deterministic primary-key order without losing microseconds. Identity also has a nominal SecurityEvent identifier, the nominal authenticated-principal contract, a runtime-authentic attempt-bound refresh workflow with one decision, kind-matched persistence actions, and explicitly pending transaction evidence, a bounded writer-MySQL access-authority reader, and the root-exported framework-independent resolver that turns an already-extracted canonical access-wire value into one runtime-authenticated current principal or uniform rejection. Transaction-client provenance remains a future Unit-of-Work responsibility. Identity still has no rotation/reuse store writer, closed refresh command, concrete Unit of Work, committed completion, login/refresh use case, HTTP authentication adapter, or route |
+| Backend business capabilities | 35% | 8.90% | Catalog public reads and Product/SKU aggregates exist. Identity now has separate immutable Account, PasswordAuthenticator, Role, and SessionFamily boundaries plus versionless RefreshCredential and AccessCredential children. Creation and rotation return complete generation-matched issuance bundles; application code owns canonical redacting access/refresh wire values, copied-byte digest values, one exact frozen candidate pair, the narrow cryptography port, a fixed-policy internal Node CSPRNG/SHA-256 adapter, a pre-transaction one-shot credential-attempt verifier, digest-only refresh discovery with authentic one-use tickets, a concrete non-locking lifecycle-blind writer-MySQL discovery adapter with privately paired ticket authority, and a load-only Prisma adapter whose ticket boundary requires discovery's exact root writer and which consumes one ticket and locks Account, SessionFamily, and the digest-revalidated presented RefreshCredential in deterministic primary-key order without losing microseconds. Identity also has a nominal SecurityEvent identifier, the nominal authenticated-principal contract, a runtime-authentic attempt-bound refresh workflow with one decision, kind-matched persistence actions, explicitly pending transaction evidence, and an opaque one-shot closed refresh command whose fixed application orchestration binds the discovery ticket, verified attempt, generated identifiers, lifetimes, and SecurityEvent identifier before it selects exactly one terminal branch. A bounded writer-MySQL access-authority reader and the root-exported framework-independent resolver turn an already-extracted canonical access-wire value into one runtime-authenticated current principal or uniform rejection. Transaction-client provenance remains a future Unit-of-Work responsibility. Identity still has no rotation/reuse store writer, concrete Unit of Work, committed completion, login/refresh use case, HTTP authentication adapter, or route |
 | Redis, RabbitMQ, and workers | 9% | 0% | Architecture only |
-| Testing, security, and resilience | 11% | 7.6% | Strict quality gates, secret-safe configuration/TLS and adversarial HTTP tests, Catalog lifecycle/Unicode tests, exhaustive Identity Account/authenticator/Role tests, adversarial session chronology/generation/expiry/replay tests, authenticated-principal tests, 137 opaque-credential/Node-adapter tests, hardened attempt/discovery/event tests, 45 refresh-workflow tests, 35 authority-adapter tests, adversarial Bearer-resolver tests, focused Prisma refresh-discovery tests, and focused locked-loader tests covering exact discovery-root-writer pairing, exact primary-lock order, strict projections/provider types, six-digit time strings, digest revalidation/cleanup, lifecycle-blind rehydration, short-circuit not-found, workflow poisoning, failure classification, and package-surface isolation; executable architecture boundaries, real-MySQL Catalog lifecycle/contract suites, dedicated Identity lineage and authorization suites, an isolated authority runtime suite proving canonical production wire-to-principal composition and current lifecycle authority, an isolated refresh-discovery suite proving lifecycle-blind retained-generation lookup, exact binary-index use, relationship integrity, not-found behavior, and loopback TCP accept/handshake stall unavailability translation, plus an isolated locked-loader suite proving its DML-only grant, exact three-statement Account-to-family-to-credential `PRIMARY FOR UPDATE` trace and `const` plans, `.123456` retention, current and retained lifecycle loads, digest-drift not-found, causal shared-Account first-lock contention across separate `READ-COMMITTED` connections, cause-free loopback TCP accept/handshake stall unavailability, and guarded cleanup. Those TCP faults do not prove established/in-flight query cancellation; transaction provenance, cancellation, exact-connection quarantine, and full Unit-of-Work fault proofs remain future gates |
+| Testing, security, and resilience | 11% | 7.7% | Strict quality gates, secret-safe configuration/TLS and adversarial HTTP tests, Catalog lifecycle/Unicode tests, exhaustive Identity Account/authenticator/Role tests, adversarial session chronology/generation/expiry/replay tests, authenticated-principal tests, 137 opaque-credential/Node-adapter tests, hardened attempt/discovery/event tests, 45 refresh-workflow tests, focused closed-command tests, 35 authority-adapter tests, adversarial Bearer-resolver tests, focused Prisma refresh-discovery tests, and focused locked-loader tests covering exact discovery-root-writer pairing, exact primary-lock order, strict projections/provider types, six-digit time strings, digest revalidation/cleanup, lifecycle-blind rehydration, short-circuit not-found, workflow poisoning, failure classification, and package-surface isolation; executable architecture boundaries, real-MySQL Catalog lifecycle/contract suites, dedicated Identity lineage and authorization suites, an isolated authority runtime suite proving canonical production wire-to-principal composition and current lifecycle authority, an isolated refresh-discovery suite proving lifecycle-blind retained-generation lookup, exact binary-index use, relationship integrity, not-found behavior, and loopback TCP accept/handshake stall unavailability translation, plus an isolated locked-loader suite proving its DML-only grant, exact three-statement Account-to-family-to-credential `PRIMARY FOR UPDATE` trace and `const` plans, `.123456` retention, current and retained lifecycle loads, digest-drift not-found, causal shared-Account first-lock contention across separate `READ-COMMITTED` connections, cause-free loopback TCP accept/handshake stall unavailability, and guarded cleanup. Those TCP faults do not prove established/in-flight query cancellation; transaction provenance, cancellation, exact-connection quarantine, and full Unit-of-Work fault proofs remain future gates |
 | Frontend showcase | 12% | 0% | Not started |
 | Observability and operations | 5% | 1% | Sanitized liveness, bounded MySQL readiness, server-owned request identity, structured HTTP/Nest logs, redaction, and safe fatal bootstrap reporting exist; metrics and traces remain |
 | CI/CD and public deployment | 8% | 1.75% | CI replays migrations idempotently and validates database, Identity-lineage, Identity-authorization, Identity-authority runtime, Identity refresh-discovery, Identity refresh locked-load, Catalog, and API contracts against real MySQL; no release pipeline or live environment |
 | Documentation and demo polish | 5% | 2.8% | README, architecture contracts including the exact authorization registry and security-evidence matrix, ADR history, deterministic OpenAPI JSON, and a public read-only local Swagger UI exist; examples and demo guides remain |
-| **Total** | **100%** | **36.85%** | Displayed overall is rounded down |
+| **Total** | **100%** | **37.10%** | Displayed overall is rounded down |
 
 The weights are fixed unless the project scope is formally re-baselined. A
 workstream may use fractional earned points internally, but the displayed
@@ -41,14 +41,16 @@ overall percentage is rounded down so progress is never overstated.
 
 ## Current status line
 
-> Overall: 36% · Backend business capabilities: 8.75/35 · Frontend: 0/12 ·
+> Overall: 37% · Backend business capabilities: 8.90/35 · Frontend: 0/12 ·
 > Deployment: 1.75/8 · Public demo: not deployable
 
-The current Prisma locked-loader increment earns 0.10 backend-capability points
-and a conservative 0.10 testing/security points. Its real-MySQL gate expands
-required CI validation but earns no architecture, deployment, or CI/CD points:
-it adds no DML writer, transaction settlement, cancellation/quarantine proof,
-HTTP composition, protected route, release pipeline, or live environment.
+The current closed refresh-command increment earns 0.15 backend-capability
+points and a conservative 0.10 testing/security points. It earns no
+architecture, persistence, deployment, or CI/CD points: it adds no DML writer,
+transaction settlement, cancellation/quarantine proof, HTTP composition,
+protected route, release pipeline, or live environment. The preceding Prisma
+locked-loader increment and its real-MySQL gate remain required evidence but
+are not recounted.
 Catalog reads are not an externally usable showcase: the endpoint is
 production-composed locally, but there is still no release pipeline, provider
 resource, live URL, synthetic showcase data, distributed abuse control, or
@@ -98,12 +100,16 @@ transaction scope, one locked load, one opaque decision, kind-matched terminal
 persistence actions, and one exact pending-evidence value across rotation,
 reuse, and rejection. Consuming that evidence is only the one-shot handoff to
 future commit handling; it is neither commit proof nor credential-delivery
-authority. The workflow and loader remain internal and uncomposed before a real
-use case exists. The ordered Prisma history now contains
-uncomposed Identity persistence for Account, SessionFamily, retained refresh
-generations, generation-bound access, the exact permission registry and system
-role, Role permission mappings, Account role assignments, and typed security
-evidence.
+authority. The new opaque command now synchronously consumes one admission,
+claims its verified attempt, binds the exact activated context, and executes
+the fixed load/decision/rejected-or-rotated-or-reuse sequence once. It
+authenticates pending evidence before returning it but cannot promote commit or
+reveal credentials. The command, workflow, and loader remain internal and
+uncomposed before a real use case exists. The ordered Prisma history now
+contains uncomposed Identity persistence for Account, SessionFamily, retained
+refresh generations, generation-bound access, the exact permission registry
+and system role, Role permission mappings, Account role assignments, and typed
+security evidence.
 Its checked writable refresh active slot avoids unsupported generated-column
 drift while leaving MySQL as the one-active-refresh authority. Its authorization
 seed is explicit, never wildcard, and the event table has closed compatible
@@ -114,7 +120,7 @@ bounded writer statement. It returns only a nominal current principal or one
 uniform rejection, while dependency and integrity failures remain internal.
 It remains package-internal and has no production HTTP composition; the new
 resolver is its only public application consumer. There is still no locked
-rotation/reuse writer, closed refresh command, concrete Unit of Work,
+rotation/reuse writer, concrete Unit of Work,
 transaction operation tracking, cancellation/quarantine proof, committed
 completion, login/refresh use case, password-authenticator or bootstrap-state
 persistence, security-event adapter, Argon2 provider, password-input policy,

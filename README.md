@@ -99,6 +99,13 @@ of an established connection or in-flight query.
 Its internal attempt-bound refresh workflow now produces scope- and
 decision-bound pending transaction evidence without claiming commit or
 credential-delivery authority.
+An opaque, one-shot package-internal refresh command now binds the authentic
+discovery ticket, verified credential attempt, generated credential IDs,
+lifetimes, and SecurityEvent ID before transaction work. Its fixed
+orchestration performs one locked load and decision, reaches only the matching
+rejected, rotated, or reuse branch, and authenticates the pending-evidence
+handoff. It accepts no caller callback and still grants no commit or credential
+delivery authority.
 The uncomposed Identity Prisma slice and reviewed migrations persist Account,
 SessionFamily, retained refresh lineage, generation-bound access records, and
 the first authorization/security-evidence records. The versioned authorization
@@ -134,7 +141,7 @@ those namespaces can emit bound digest arguments. That configuration gate is
 not implemented yet, so public credential ingress remains blocked. Pricing,
 inventory, Redis caching, and integration events remain separate later slices.
 
-**Overall project progress: 36%.** The fixed, deployment-inclusive scoring
+**Overall project progress: 37%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
 
 ## Planned technology
