@@ -44,12 +44,15 @@ facts. Its separate PasswordAuthenticator aggregate now adds a strictly
 bounded, redacting Argon2id PHC value, immutable failure/cooldown state,
 attempt-100 disablement, pre-hash verification-basis race protection,
 conditional verifier upgrade, and offline rebind transition. The package
-deliberately exports no application contract and exposes no route yet; roles,
-sessions, persistence, the actual crypto adapter, password input policy, and
-Redis remain gated later slices. Pricing, inventory, Redis caching, and
-integration events also remain separate later slices.
+now also owns a terminal Role aggregate with immutable authorization codes,
+strict Unicode display labels, canonical bounded Permission sets, explicit
+grant/revoke deltas, and auditable initial mappings. It deliberately exports no
+application contract and exposes no route yet; sessions, Identity persistence,
+the actual crypto adapter, password input policy, and Redis remain gated later
+slices. Pricing, inventory, Redis caching, and integration events also remain
+separate later slices.
 
-**Overall project progress: 29%.** The fixed, deployment-inclusive scoring
+**Overall project progress: 30%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
 
 ## Planned technology

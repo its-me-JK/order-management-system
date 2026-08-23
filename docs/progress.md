@@ -1,6 +1,6 @@
 # Project progress
 
-- **Overall completion:** 29%
+- **Overall completion:** 30%
 - **Current milestone:** Identity, catalog, pricing, and inventory
 - **Public demo:** Not deployable yet
 - **Last reviewed:** 2026-08-23
@@ -13,16 +13,16 @@ accepted outcomes, not lines of code, generated files, commits, or activity.
 
 | Workstream | Weight | Earned | Current evidence |
 | --- | ---: | ---: | --- |
-| Architecture and contracts | 6% | 5.35% | Architecture overview, seventeen ADRs, platform contracts, delivered Catalog public reads, accepted Catalog administration contracts, and an exact Identity/session contract covering account boundaries, opaque credential transport, authoritative permissions, refresh replay, browser security, and fail-closed abuse control; most business contracts remain |
+| Architecture and contracts | 6% | 5.50% | Architecture overview, seventeen ADRs, platform contracts, delivered Catalog public reads, accepted Catalog administration contracts, and an exact Identity/session contract now fixing Account, authenticator, Role/Permission, opaque credential transport, authoritative permission, refresh replay, browser security, and fail-closed abuse boundaries; most business contracts remain |
 | Platform and persistence | 9% | 8.75% | Workspace, runtime shells, versioned routing, health, validated configuration, structured logging, strict transport boundaries, deterministic OpenAPI, one runtime-owned Prisma client, MySQL, an ordered forward-only migration history, guarded Catalog lifecycle expansion/backfill/contraction, and integration infrastructure |
-| Backend business capabilities | 35% | 4.75% | Catalog public reads and Product/SKU aggregates exist. Identity now has encapsulated Account lifecycle plus a separate immutable PasswordAuthenticator enforcing a redacting bounded Argon2id PHC, exact cooldown/failure state, attempt-100 disablement, full pre-hash verification-basis revalidation, reset/upgrade no-op semantics, and offline rebind; it has no application use case or route |
+| Backend business capabilities | 35% | 5.25% | Catalog public reads and Product/SKU aggregates exist. Identity now has separate immutable Account, PasswordAuthenticator, and Role aggregates, including canonical bounded Permission codes, optimistic Role mapping deltas, terminal retirement, and auditable initial grants; it has no application use case or route |
 | Redis, RabbitMQ, and workers | 9% | 0% | Architecture only |
-| Testing, security, and resilience | 11% | 4.75% | Strict quality gates, secret-safe configuration/TLS and adversarial HTTP tests, Catalog lifecycle/Unicode tests, Identity Account tests, exhaustive authenticator state/cooldown/race/overflow tests, adversarial PHC grammar/serialization/Proxy redaction tests, executable architecture boundaries, real-MySQL migration suites, and a real NestJS-to-Prisma-to-MySQL Catalog contract suite |
+| Testing, security, and resilience | 11% | 5.00% | Strict quality gates, secret-safe configuration/TLS and adversarial HTTP tests, Catalog lifecycle/Unicode tests, Identity Account/authenticator tests, adversarial PHC redaction tests, exhaustive Role/Permission grammar, Unicode, corruption, capacity, concurrency-precedence, and immutability tests, executable architecture boundaries, real-MySQL migration suites, and a real NestJS-to-Prisma-to-MySQL Catalog contract suite |
 | Frontend showcase | 12% | 0% | Not started |
 | Observability and operations | 5% | 1% | Sanitized liveness, bounded MySQL readiness, server-owned request identity, structured HTTP/Nest logs, redaction, and safe fatal bootstrap reporting exist; metrics and traces remain |
 | CI/CD and public deployment | 8% | 1.75% | CI replays migrations idempotently and validates database, Catalog, and API contracts against real MySQL; no release pipeline or live environment |
 | Documentation and demo polish | 5% | 2.75% | README, architecture contracts, ADR history, deterministic OpenAPI JSON, and a public read-only local Swagger UI exist; examples and demo guides remain |
-| **Total** | **100%** | **29.10%** | Displayed overall is rounded down |
+| **Total** | **100%** | **30.00%** | Displayed overall is rounded down |
 
 The weights are fixed unless the project scope is formally re-baselined. A
 workstream may use fractional earned points internally, but the displayed
@@ -41,7 +41,7 @@ overall percentage is rounded down so progress is never overstated.
 
 ## Current status line
 
-> Overall: 29% · Backend business capabilities: 4.75/35 · Frontend: 0/12 ·
+> Overall: 30% · Backend business capabilities: 5.25/35 · Frontend: 0/12 ·
 > Deployment: 1.75/8 · Public demo: not deployable
 
 The current increment earns no deployment points. Catalog reads are not an
@@ -51,10 +51,11 @@ showcase data, distributed abuse control, or database-side query deadline.
 The Catalog persistence contract now represents the aggregate lifecycle and
 has a real prior-release upgrade proof, but no administrative route, write use
 case, audit/idempotency storage, or coordinating Unit of Work is counted as
-complete. Identity currently stops at non-exported Account and
-PasswordAuthenticator domain slices: no role/session model, application port,
-MySQL schema, Argon2 provider, password-input policy, offline command, session
-revocation transaction, trusted ingress, CORS/CSRF, Redis abuse control,
-authentication route, or HTTP composition is counted as complete.
+complete. Identity currently stops at non-exported Account,
+PasswordAuthenticator, Role, and PermissionCode domain slices: no session
+model, application port, Identity MySQL schema, Argon2 provider, password-input
+policy, offline command, session revocation transaction, trusted ingress,
+CORS/CSRF, Redis abuse control, authentication route, or HTTP composition is
+counted as complete.
 Product eligibility and deterministic Product-first locking for SKU create,
 activate, and resume remain future application-layer work.
