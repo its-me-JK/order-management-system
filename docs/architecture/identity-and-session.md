@@ -339,7 +339,7 @@ The family snapshot contains exactly `id`, `accountId`, `version`, `createdAt`,
 | --- | --- |
 | `id` | Externally visible canonical lowercase UUIDv7, branded separately from Account, Role, and credential identifiers. |
 | `accountId` | Canonical owning Account identifier; ownership never changes. |
-| `version` | Positive unsigned 32-bit version. Creation is version 1; every effective rotation or revocation advances it once. |
+| `version` | Positive unsigned 32-bit version. Creation is version 1; every effective rotation or revocation advances it once. Open families stop at 4,294,967,294 so the final value remains available for terminal revocation. |
 | `createdAt`, `lastRotatedAt` | Lossless MySQL-range UTC instants. Creation makes them equal; rotation may use an equal database instant but never an earlier one. |
 | `refreshIdleExpiresAt` | Strictly after `lastRotatedAt`, no more than 24 hours later, and no later than the absolute deadline. It gates refresh only. |
 | `refreshAbsoluteExpiresAt` | Exactly 1 through 30 whole days after creation and immutable for the complete family. It gates refresh and every access credential. |
@@ -412,13 +412,210 @@ row. Deriving expiry and deferring rotation costs one additional domain
 increment, but preserves one authoritative clock and makes the future
 consume/link/extend/replay decision atomic.
 
-The next refresh-entity slice starts sequences at 1 and rehydrates only the
-specific locked predecessor needed by the command. Non-locking digest discovery
-may return identifiers only: the transaction must reload current family and
-credential state. In a two-refresh race, the loser must see the predecessor as
-consumed and revoke the now-newer family; rejecting a stale discovery-time
-version would suppress replay detection. Raw token values and digests never
-enter either aggregate.
+### RefreshCredential and atomic presentation contract
+
+RefreshCredential is a versionless child entity of SessionFamily. The family
+version serializes both family lifecycle and child rotation; adding a child
+version or carrying a discovery-time family version could suppress replay
+detection. A refresh command loads only its locked presented child and, on
+success, constructs one successor. It never loads the complete credential
+history.
+
+The exact RefreshCredential snapshot is:
+
+| Field | Domain rule |
+| --- | --- |
+| `id` | Canonical lowercase UUIDv7 branded separately from session, account, role, and future access-credential identifiers. |
+| `sessionId` | Immutable owning SessionFamily identifier; it maps to `family_id` in persistence. |
+| `sequence` | Generation number from 1 through 4,294,967,294. The reserved terminal family version makes the unsigned maximum unreachable; the initial credential is sequence 1 and each successor advances exactly once. |
+| `issuedAt`, `expiresAt` | Lossless UTC instants. Expiry is strictly later by at least one whole second and no more than 24 hours. |
+| `consumedAt`, `successorId` | Both null for the current credential or both present for a consumed predecessor. Consumption never changes again. |
+
+A consumed row requires `issuedAt <= consumedAt < expiresAt`, a successor ID
+different from its own ID, and sequence below 4,294,967,294 because no later
+credential could otherwise exist. Sequence 1 has an exact whole-second
+lifetime from 900 through 86,400 seconds with the same fractional digits as
+issuance. Later credentials may have a shorter or fractionally different
+interval only when the family relationship proves that their expiry is the
+absolute cap. The entity contains no digest, raw value, status, account ID,
+`updatedAt`, IP address, user agent, or cookie data. Rehydration requires exact
+fields, freezes the snapshot, and collapses every malformed value or intrinsic
+lifecycle cause into one fixed cause-free error.
+
+For a locked family, its current credential sequence is the family version
+minus one only when the family is revoked; otherwise it equals the family
+version. Every presented credential must share the family ID, have sequence no
+greater than that current sequence, be issued no earlier than family creation,
+and expire no later than the immutable absolute deadline. Sequence 1 is issued
+exactly at family creation. For sequences 2 through 30, issuance is strictly
+before creation plus `(sequence - 1) * 24 hours`; the 30-day absolute maximum is
+stronger afterward. For consumed sequences 1 through 29, consumption is
+strictly before creation plus `sequence * 24 hours`; the absolute bound is
+stronger afterward.
+
+An unconsumed presented row must be the exact current child: its sequence
+equals the current sequence, its issuance equals `lastRotatedAt`, and its
+expiry equals `refreshIdleExpiresAt`. A consumed row must be historical: its
+sequence is lower than the current sequence and its consumption time is no
+later than `lastRotatedAt`. For a later sequence, an expiry interval below 15
+minutes or with different fractional digits is valid only when expiry equals
+the family absolute deadline. These combined rules detect partial or corrupt
+cross-table state without loading token history.
+
+Family creation now requires one caller-generated candidate
+`initialRefreshCredentialId` in addition to the family/account IDs, lifetimes,
+and occurrence time, and returns the derived sequence-1 RefreshCredential in
+the same frozen result as `initialRefreshCredential`. Its issuance equals
+creation and its expiry equals the initial idle deadline. No standalone
+credential fact is emitted: the existing family-created fact is the business
+occurrence. The future login Unit of Work accepts that complete result and
+cannot persist a family through an independent save operation. Before calling
+creation it holds the owning Account lock, proves the Account is Active, and
+requires the authoritative occurrence time to be no earlier than
+`account.updatedAt`.
+
+Creation parses `occurredAt`, family ID, account ID, initial credential ID,
+idle lifetime, then absolute lifetime in that exact order. The initial
+credential ID may equal the family ID because the branded identifiers occupy
+separate table namespaces; no invariant or lookup relies on global UUID
+uniqueness.
+
+The only refresh presentation operation is
+`SessionFamily.presentRefreshCredential({ account,
+presentedRefreshCredential, occurredAt, successorRefreshCredentialId,
+refreshIdleLifetimeSeconds })`. It receives the locked current Account, the
+locked presented RefreshCredential, one authoritative time, a candidate
+successor ID, and the configured idle lifetime. It receives no raw credential,
+digest, caller-supplied deadline, expected sequence, or family version from
+non-locking lookup. It validates the Account/family ownership relationship and
+requires `account.createdAt <= family.createdAt`. It records the locked account
+version in the write basis; Account itself is never mutated by refresh.
+
+The operation returns one exact frozen union:
+
+- `rotated` contains exact members `kind`, `basis`, `sessionFamily`,
+  `consumedRefreshCredential`, `successorRefreshCredential`, and `facts`;
+- `reuse-detected` contains exact members `kind`, `basis`, `sessionFamily`,
+  `reusedRefreshCredential`, and `facts`; or
+- `rejected` contains exact members `kind`, `sessionFamily`,
+  `presentedRefreshCredential`, and `facts`, with no detailed reason.
+
+The rotated child is a new immutable consumed view of the predecessor; the
+reuse and rejection children are their original object references. The
+Account never appears in a result.
+
+The changed variants' write basis contains exactly `accountId`, locked
+`accountVersion`, `sessionId`, prior `sessionFamilyVersion`,
+`presentedRefreshCredentialId`, and `presentedRefreshCredentialSequence`. It is
+a frozen conditional-write projection, not an aggregate snapshot. It contains
+no Account object, login name, Account status, credential value or digest,
+deadline, consumption time, successor ID, or request data. Rejected results
+carry no write basis because no state may be persisted.
+
+Expected invalid-session conditions use the indistinguishable rejected shape.
+Malformed input, impossible persisted relationships, time regression,
+using the presented credential ID as its own successor, and capacity
+exhaustion are fixed cause-free domain errors. A collision with any other
+stored credential cannot be known by this bounded aggregate and is instead a
+sanitized infrastructure/Unit-of-Work failure. Only the two changed variants
+are accepted by the future write port; there is no independent save-family,
+consume-credential, link-successor, or replay method.
+
+The exact new fixed error taxonomy is
+`InvalidIdentityRefreshCredentialStateError` for strict child rehydration,
+`InvalidIdentitySessionFamilyRefreshStateError` for type, ownership, or
+combined reachability,
+`IdentitySessionFamilyRefreshTimestampRegressionError` for authoritative time
+before `account.updatedAt` or before
+`family.revokedAt ?? family.lastRotatedAt`,
+`IdentitySessionFamilyRefreshSuccessorConflictError` when the candidate equals
+the presented child ID, and
+`IdentitySessionFamilyRefreshCapacityExhaustedError` when rotation would
+consume the reserved terminal version. Credential ID, sequence, and idle
+lifetime parsers retain their own fixed validation errors.
+
+Validation and security precedence is exact:
+
+1. Prove Account/family/credential types, ownership, and combined reachability,
+   then parse authoritative time and reject regression against both locked
+   aggregates.
+2. An already-revoked family or observation equal to or after its absolute
+   deadline returns rejected and never replaces a terminal reason.
+3. Inspect credential consumption before Account activity, family idle expiry,
+   credential expiry, successor input, or idle configuration.
+4. A consumed historical credential while the family is open and absolutely
+   valid closes the family for reuse even when the predecessor or family idle
+   window has expired. An inactive Account with an anomalously open family does
+   not suppress this fail-secure conclusion.
+5. Only an unconsumed branch requires an Active Account, strict future family
+   idle and credential deadlines, and at least one whole second through the
+   absolute deadline. Equality at any expiry is rejected.
+6. Only then parse the successor ID, parse the idle lifetime, reject reuse of
+   the predecessor ID, prove version and sequence capacity, and construct the
+   complete changed bundle, in that exact order.
+
+Successful rotation changes the predecessor only by setting consumption time
+to the transaction instant and linking the candidate successor. The successor
+uses the same family, the next sequence, that instant as issuance, and
+`min(occurredAt + idle lifetime, absolute expiry)` as expiry. The family moves
+`lastRotatedAt` and idle expiry to those same values and advances once. If
+adding the idle lifetime would exceed MySQL year 9999, the valid earlier
+absolute deadline is the cap rather than an overflow failure. The result emits
+one `SESSION_FAMILY_REFRESH_ROTATED` fact containing only session and account
+IDs, `AUTHENTICATING`, resulting family version, and occurrence time. Replay
+uses the existing `SESSION_FAMILY_REVOKED` fact narrowed to
+`REFRESH_REUSE_DETECTED`. Neither fact contains credential IDs, sequences,
+deadlines, tokens, or digests.
+
+An open family at unsigned maximum could no longer record logout, account
+revocation, or replay. Therefore open snapshots at 4,294,967,295 are invalid,
+rotation refuses to advance an open 4,294,967,294 family, and terminal
+revocation may consume the reserved final value. This sacrifices one
+theoretical rotation from a range that operational limits cannot approach and
+preserves fail-secure closure under every reachable state.
+
+Non-locking digest discovery may return identifiers only. The transaction
+reloads Account, current family, and presented credential in global lock order
+and never compares a discovery-time version. In a two-refresh race, the winner
+consumes the predecessor, inserts and links its successor, and advances the
+family. The loser then reloads the newer family plus consumed predecessor and
+closes the family for replay. If the winner rolls back, the loser sees the
+predecessor unconsumed and may rotate; a lost committed response followed by a
+retry intentionally closes the family.
+
+The future MySQL transaction has an important immediate-constraint ordering.
+With both one-unconsumed-slot uniqueness and a self-referencing successor
+foreign key, it must first mark the predecessor consumed, then insert the
+successor, then link the predecessor, and finally update the family plus the
+remaining access/event state. A database check requiring consumption time and
+successor ID to become non-null in the same statement would make every order
+impossible because MySQL cannot defer those constraints. Persistence therefore
+enforces the weaker rule that a successor implies consumption; the domain and
+Unit of Work require the final pair, assert every affected-row count, and roll
+back every intermediate state on failure. Real-MySQL failure-injection and
+two-refresh race tests are mandatory before any use case is exported.
+
+A primary-key, digest, or successor collision during insertion also rolls back
+the complete transaction and discards every raw candidate. The application may
+boundedly regenerate and retry in a new transaction or return one sanitized
+internal failure; it cannot reinterpret an infrastructure collision as a
+completed domain transition.
+
+AccessCredential remains a separate immutable issuance record and is not part
+of the loaded refresh-child boundary. This domain-only increment may defer it
+because the package root and every refresh use case remain absent. The first
+application/persistence refresh increment must atomically add the access
+record and digest, refresh digest, permission projection, and security event to
+the complete rotation transaction; raw candidate values are returned only
+after commit and discarded on rejection or rollback.
+
+The alternative is separate family rotation and credential mutation methods,
+or a grace period that recovers the prior successor. Separate methods admit
+partial in-memory and durable state. Recovery requires retaining or deriving a
+raw successor and creates a theft window. The composite strict transition
+costs legitimate re-login after concurrent refresh or a lost response and
+requires client single-flight coordination, but keeps raw refresh values
+unrecoverable and makes replay handling deterministic.
 
 An account has at most five authenticating session families, where
 authenticating means unrevoked and before absolute expiry; refresh idle expiry
@@ -1375,6 +1572,24 @@ authentication surface becomes public.
     refresh at or beyond its at-most-24-hour idle deadline, that count places a
     strict upper bound on the retained last-rotation time and detects impossible
     persistence state without loading token history.
+15. **Why is RefreshCredential versionless?** Its immutable sequence identifies
+    generation, its one-way consumed pair identifies lifecycle, and the locked
+    SessionFamily version serializes the aggregate. A second optimistic version
+    adds no safety and tempts callers to reject replay using stale discovery
+    state.
+16. **Why inspect consumption before idle and credential expiry?** A retained
+    consumed digest is the replay evidence. Expiry prevents new issuance but
+    does not erase evidence that the same credential was used twice while its
+    family remains unrevoked and before its absolute deadline.
+17. **Why reserve the last family version?** Rotation is useful only while the
+    family remains safely revocable. Stopping one value early guarantees that
+    logout, account changes, or replay can still record terminal closure instead
+    of failing at version capacity.
+18. **Why can MySQL not require the complete consumption pair in one row
+    check?** Immediate active-slot uniqueness requires consuming the predecessor
+    before successor insertion, while the immediate self-FK requires insertion
+    before linking. The transaction and final-state assertions supply the
+    cross-statement invariant that non-deferrable checks cannot express.
 
 ## Future improvements
 
