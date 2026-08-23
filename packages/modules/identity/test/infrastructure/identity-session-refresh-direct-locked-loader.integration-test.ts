@@ -16,6 +16,7 @@ import {
   createMySqlTransactionExecutor,
   type MySqlTransactionOutcome,
   type MySqlTransactionProgram,
+  type MySqlTransactionStatementParameters,
 } from '@oms/database/mysql-transaction';
 import { getPrismaClient, type PrismaClient } from '@oms/database/prisma';
 import { config as loadEnvironment } from 'dotenv';
@@ -71,10 +72,21 @@ import {
 } from '../../src/infrastructure/mysql/identity-session-refresh-locked-load.statements';
 import type { IdentitySessionRefreshMySqlTransactionFailure } from '../../src/infrastructure/mysql/identity-session-refresh-mysql.contract';
 import {
+  IDENTITY_SESSION_REFRESH_INSERT_ACCESS_CREDENTIAL_MYSQL_STATEMENT,
+  IDENTITY_SESSION_REFRESH_INSERT_SUCCESSOR_REFRESH_CREDENTIAL_MYSQL_STATEMENT,
+  IDENTITY_SESSION_REFRESH_LINK_PREDECESSOR_MYSQL_STATEMENT,
+  IDENTITY_SESSION_REFRESH_ROTATION_MYSQL_STATEMENTS,
+  type IdentitySessionRefreshRotationMySqlStatement,
+} from '../../src/infrastructure/mysql/identity-session-refresh-rotation.statements';
+import {
   IDENTITY_SESSION_REFRESH_REUSE_DETECTED_MYSQL_STATEMENTS,
   type IdentitySessionRefreshReuseDetectedMySqlStatement,
 } from '../../src/infrastructure/mysql/identity-session-refresh-reuse-detected.statements';
 import { createMySqlIdentitySessionRefreshLockedLoader } from '../../src/infrastructure/mysql/mysql-identity-session-refresh-locked-loader';
+import {
+  createMySqlIdentitySessionRefreshRotatedWriter,
+  isMySqlIdentitySessionRefreshRotatedConditionalConflict,
+} from '../../src/infrastructure/mysql/mysql-identity-session-refresh-rotated.writer';
 import {
   createMySqlIdentitySessionRefreshReuseDetectedWriter,
   isMySqlIdentitySessionRefreshReuseDetectedConditionalConflict,
@@ -87,7 +99,26 @@ const LOCKED_LOADER_INTEGRATION_DATABASE = 'oms_identity_refresh_locked_loader_i
 const LOOPBACK_DATABASE_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 const TRANSACTION_TIMEOUT_MILLISECONDS = 5_000;
 const INTEGRATION_TEST_TIMEOUT_MILLISECONDS = 60_000;
-const FIXTURE_INDEXES = Object.freeze([81, 82, 83, 84] as const);
+const ROTATION_SUCCESS_FIXTURE_INDEX = 85;
+const ROTATION_CREDENTIAL_COLLISION_FIXTURE_INDEX = 86;
+const ROTATION_CONDITIONAL_COLLISION_FIXTURE_INDEX = 87;
+const ROTATION_EVENT_COLLISION_FIXTURE_INDEX = 88;
+const ROTATION_CONSTRAINT_SOURCE_FIXTURE_INDEX = 89;
+const ROTATION_CONSTRAINT_TARGET_FIXTURE_INDEX = 90;
+const ROTATION_CONSTRAINT_ACCESS_TARGET_FIXTURE_INDEX = 97;
+const FIXTURE_INDEXES = Object.freeze([
+  81,
+  82,
+  83,
+  84,
+  ROTATION_SUCCESS_FIXTURE_INDEX,
+  ROTATION_CREDENTIAL_COLLISION_FIXTURE_INDEX,
+  ROTATION_CONDITIONAL_COLLISION_FIXTURE_INDEX,
+  ROTATION_EVENT_COLLISION_FIXTURE_INDEX,
+  ROTATION_CONSTRAINT_SOURCE_FIXTURE_INDEX,
+  ROTATION_CONSTRAINT_TARGET_FIXTURE_INDEX,
+  ROTATION_CONSTRAINT_ACCESS_TARGET_FIXTURE_INDEX,
+] as const);
 const ACCESS_WIRE_VALUE = parseIdentityAccessCredentialWireValue(`oms_at_v1_${'A'.repeat(42)}E`);
 const REFRESH_WIRE_VALUE = parseIdentityRefreshCredentialWireValue(`oms_rt_v1_${'E'.repeat(42)}M`);
 
@@ -124,6 +155,27 @@ type ReuseDetectedFixture = Readonly<{
   successorCredential: StoredRefreshCredential;
 }>;
 
+type RotationCredentialCandidate<
+  Digest extends IdentityAccessCredentialDigest | IdentityRefreshCredentialDigest,
+> = Readonly<{
+  digest: Digest;
+  digestBytes: Uint8Array<ArrayBuffer>;
+}>;
+
+type RotatedFixture = DirectLockedLoaderFixture &
+  Readonly<{
+    accessCandidate: RotationCredentialCandidate<IdentityAccessCredentialDigest>;
+    decisionAccessCredentialId: string;
+    decisionSuccessorCredentialId: string;
+    eventId: IdentitySecurityEventId;
+    refreshCandidate: RotationCredentialCandidate<IdentityRefreshCredentialDigest>;
+    roleId: string;
+  }>;
+
+type CreateRotatedFixtureOptions = Readonly<{
+  collideRefreshDigest?: boolean;
+}>;
+
 type CredentialPersistenceState = Readonly<{
   access: readonly AccessCredentialPersistenceRow[];
   refresh: readonly RefreshCredentialPersistenceRow[];
@@ -156,6 +208,18 @@ type SessionFamilyPersistenceRow = Readonly<{
   revoked_at: string | null;
   session_id: string;
   version: bigint;
+}>;
+
+type RotatedSessionFamilyPersistenceRow = SessionFamilyPersistenceRow &
+  Readonly<{
+    absolute_expires_at: string;
+    idle_expires_at: string;
+  }>;
+
+type RotatedPersistenceSnapshot = Readonly<{
+  credentials: CredentialPersistenceState;
+  events: readonly SecurityEventPersistenceRow[];
+  family: RotatedSessionFamilyPersistenceRow;
 }>;
 
 type SecurityEventPersistenceRow = Readonly<{
@@ -195,6 +259,69 @@ const IDENTITY_SESSION_REFRESH_REUSE_PROGRAM_MYSQL_STATEMENTS = Object.freeze([
   ...IDENTITY_SESSION_REFRESH_LOCKED_LOAD_MYSQL_STATEMENTS,
   ...IDENTITY_SESSION_REFRESH_REUSE_DETECTED_MYSQL_STATEMENTS,
 ] as const) satisfies readonly ReuseDetectedProgramStatement[];
+
+type RotatedProgramInput = Readonly<{
+  accessCredentialId: string;
+  attempt: IdentitySessionCredentialAttempt;
+  eventId: IdentitySecurityEventId;
+  successorRefreshCredentialId: string;
+  ticket: IdentitySessionRefreshDiscoveryFoundTicket;
+}>;
+
+type RotatedProgramCommit = Readonly<{
+  accessCredentialExpiresAt: IdentityInstant;
+  accessCredentialIssuedAt: IdentityInstant;
+  kind: 'rotated';
+  principal: Readonly<{
+    actorId: string;
+    permissions: readonly string[];
+    sessionId: string;
+  }>;
+  refreshAbsoluteExpiresAt: IdentityInstant;
+  refreshIdleExpiresAt: IdentityInstant;
+  writerTime: IdentityInstant;
+}>;
+
+type RotatedProgramStatement =
+  IdentitySessionRefreshLockedLoadMySqlStatement | IdentitySessionRefreshRotationMySqlStatement;
+
+const IDENTITY_SESSION_REFRESH_ROTATED_PROGRAM_MYSQL_STATEMENTS = Object.freeze([
+  ...IDENTITY_SESSION_REFRESH_LOCKED_LOAD_MYSQL_STATEMENTS,
+  ...IDENTITY_SESSION_REFRESH_ROTATION_MYSQL_STATEMENTS,
+] as const) satisfies readonly RotatedProgramStatement[];
+
+type RotationConstraintClassificationInput =
+  | Readonly<{
+      kind: 'successor';
+      parameters: MySqlTransactionStatementParameters<
+        typeof IDENTITY_SESSION_REFRESH_INSERT_SUCCESSOR_REFRESH_CREDENTIAL_MYSQL_STATEMENT
+      >;
+    }>
+  | Readonly<{
+      kind: 'access';
+      parameters: MySqlTransactionStatementParameters<
+        typeof IDENTITY_SESSION_REFRESH_INSERT_ACCESS_CREDENTIAL_MYSQL_STATEMENT
+      >;
+    }>
+  | Readonly<{
+      kind: 'link';
+      parameters: MySqlTransactionStatementParameters<
+        typeof IDENTITY_SESSION_REFRESH_LINK_PREDECESSOR_MYSQL_STATEMENT
+      >;
+    }>;
+
+type RotationConstraintClassificationStatement =
+  | typeof IDENTITY_SESSION_REFRESH_INSERT_SUCCESSOR_REFRESH_CREDENTIAL_MYSQL_STATEMENT
+  | typeof IDENTITY_SESSION_REFRESH_INSERT_ACCESS_CREDENTIAL_MYSQL_STATEMENT
+  | typeof IDENTITY_SESSION_REFRESH_LINK_PREDECESSOR_MYSQL_STATEMENT;
+
+const ROTATION_CONSTRAINT_CLASSIFICATION_STATEMENTS = Object.freeze([
+  IDENTITY_SESSION_REFRESH_INSERT_SUCCESSOR_REFRESH_CREDENTIAL_MYSQL_STATEMENT,
+  IDENTITY_SESSION_REFRESH_INSERT_ACCESS_CREDENTIAL_MYSQL_STATEMENT,
+  IDENTITY_SESSION_REFRESH_LINK_PREDECESSOR_MYSQL_STATEMENT,
+] as const) satisfies readonly RotationConstraintClassificationStatement[];
+
+type UnexpectedRotationConstraintWrite = Readonly<{ kind: 'unexpected-write' }>;
 
 type LoadedProjection =
   | Readonly<{
@@ -269,6 +396,10 @@ function fixtureUuid(index: number, discriminator: number): string {
 
 function digestBytes(seed: number): Uint8Array<ArrayBuffer> {
   return Uint8Array.from({ length: 32 }, (_value, index): number => (seed * 37 + index * 11) % 256);
+}
+
+function digestHex(value: Uint8Array<ArrayBuffer>): string {
+  return Buffer.from(value).toString('hex');
 }
 
 function withFixtureMicroseconds(value: IdentityInstant): IdentityInstant {
@@ -512,6 +643,7 @@ function storedRefreshCredential(
 async function createActiveFixture(
   context: IntegrationContext,
   index: number,
+  refreshLifetimeSeconds = 3_600,
 ): Promise<DirectLockedLoaderFixture> {
   const accountCreatedAt = offsetInstant(context.fixtureNow, -100_000);
   const account = IdentityAccount.rehydrate({
@@ -532,7 +664,7 @@ async function createActiveFixture(
     version: 7,
     createdAt: familyCreatedAt,
     lastRotatedAt: familyLastRotatedAt,
-    refreshIdleExpiresAt: offsetInstant(context.fixtureNow, 3_480),
+    refreshIdleExpiresAt: offsetInstant(familyLastRotatedAt, refreshLifetimeSeconds),
     refreshAbsoluteExpiresAt: offsetInstant(familyCreatedAt, 86_400),
     revokedAt: null,
     closedReason: null,
@@ -553,6 +685,104 @@ async function createActiveFixture(
   await insertRefreshCredential(context, credential);
 
   return Object.freeze({ account, credential, sessionFamily });
+}
+
+async function assignRotationAuthority(
+  context: IntegrationContext,
+  fixture: DirectLockedLoaderFixture,
+  roleId: string,
+  index: number,
+): Promise<void> {
+  const affectedRoles = await context.client.$executeRaw`
+    INSERT INTO identity_roles (
+      id,
+      code,
+      display_name,
+      status,
+      version,
+      created_at,
+      updated_at,
+      retired_at
+    ) VALUES (
+      UUID_TO_BIN(${roleId}, 0),
+      ${`IT_REFRESH_ROTATE_${String(index)}`},
+      ${`Integration refresh rotation ${String(index)}`},
+      'ACTIVE',
+      1,
+      CAST(${toMySqlDateTime6(fixture.account.createdAt)} AS DATETIME(6)),
+      CAST(${toMySqlDateTime6(fixture.account.createdAt)} AS DATETIME(6)),
+      NULL
+    )
+  `;
+  const affectedPermissions = await context.client.$executeRaw`
+    INSERT INTO identity_role_permissions (role_id, permission_code)
+    VALUES (UUID_TO_BIN(${roleId}, 0), 'catalog.products.read')
+  `;
+  const affectedAssignments = await context.client.$executeRaw`
+    INSERT INTO identity_account_roles (account_id, role_id)
+    VALUES (
+      UUID_TO_BIN(${fixture.account.id}, 0),
+      UUID_TO_BIN(${roleId}, 0)
+    )
+  `;
+
+  assert.equal(affectedRoles, 1);
+  assert.equal(affectedPermissions, 1);
+  assert.equal(affectedAssignments, 1);
+}
+
+async function createRotatedFixture(
+  context: IntegrationContext,
+  index: number,
+  options: CreateRotatedFixtureOptions = {},
+): Promise<RotatedFixture> {
+  const fixture = await createActiveFixture(context, index);
+  const roleId = fixtureUuid(index, 11);
+  const accessDigestBytes = digestBytes(index + 100);
+  const refreshDigestBytes = options.collideRefreshDigest
+    ? fixture.credential.digestBytes
+    : digestBytes(index + 150);
+
+  await assignRotationAuthority(context, fixture, roleId, index);
+
+  return Object.freeze({
+    ...fixture,
+    accessCandidate: Object.freeze({
+      digest: createIdentityAccessCredentialDigestFromBytes(accessDigestBytes),
+      digestBytes: accessDigestBytes,
+    }),
+    decisionAccessCredentialId: fixtureUuid(index, 8),
+    decisionSuccessorCredentialId: fixtureUuid(index, 7),
+    eventId: parseIdentitySecurityEventId(fixtureUuid(index, 6)),
+    refreshCandidate: Object.freeze({
+      digest: createIdentityRefreshCredentialDigestFromBytes(refreshDigestBytes),
+      digestBytes: refreshDigestBytes,
+    }),
+    roleId,
+  });
+}
+
+async function insertRotationFamilySequenceCollision(
+  context: IntegrationContext,
+  fixture: RotatedFixture,
+  index: number,
+): Promise<StoredRefreshCredential> {
+  const collision = storedRefreshCredential(
+    IdentityRefreshCredential.rehydrate({
+      id: fixtureUuid(index, 9),
+      sessionId: fixture.sessionFamily.id,
+      sequence: fixture.credential.snapshot.sequence + 1,
+      issuedAt: offsetInstant(context.fixtureNow, -60),
+      expiresAt: fixture.sessionFamily.refreshIdleExpiresAt,
+      consumedAt: offsetInstant(context.fixtureNow, -30),
+      successorId: fixture.credential.snapshot.id,
+    }).toSnapshot(),
+    digestBytes(index + 40),
+  );
+
+  await insertConsumedRefreshCredentialWithoutSuccessor(context, collision);
+  await linkRefreshCredentialSuccessor(context, collision);
+  return collision;
 }
 
 async function createReuseDetectedFixture(
@@ -680,6 +910,34 @@ async function credentialAttempt(
   return createIdentitySessionCredentialAttempt(candidates, crypto);
 }
 
+async function rotatedCredentialAttempt(
+  fixture: RotatedFixture,
+): Promise<IdentitySessionCredentialAttempt> {
+  const candidates = createIdentitySessionCredentialCandidates({
+    access: {
+      wireValue: ACCESS_WIRE_VALUE,
+      digest: fixture.accessCandidate.digest,
+    },
+    refresh: {
+      wireValue: REFRESH_WIRE_VALUE,
+      digest: fixture.refreshCandidate.digest,
+    },
+  });
+  const crypto: IdentitySessionCredentialCrypto = Object.freeze({
+    generateSessionCredentialCandidates(): Promise<IdentitySessionCredentialCandidates> {
+      return Promise.resolve(candidates);
+    },
+    digestAccessCredential(): Promise<IdentityAccessCredentialDigest> {
+      return Promise.resolve(fixture.accessCandidate.digest);
+    },
+    digestRefreshCredential(): Promise<IdentityRefreshCredentialDigest> {
+      return Promise.resolve(fixture.refreshCandidate.digest);
+    },
+  });
+
+  return createIdentitySessionCredentialAttempt(candidates, crypto);
+}
+
 async function readCredentialPersistenceState(
   context: IntegrationContext,
   sessionId: string,
@@ -738,6 +996,31 @@ async function readSessionFamilyPersistence(
   return row;
 }
 
+async function readRotatedSessionFamilyPersistence(
+  context: IntegrationContext,
+  sessionId: string,
+): Promise<RotatedSessionFamilyPersistenceRow> {
+  const rows = await context.client.$queryRaw<readonly RotatedSessionFamilyPersistenceRow[]>`
+    SELECT
+      LOWER(BIN_TO_UUID(id, 0)) AS session_id,
+      version,
+      DATE_FORMAT(last_rotated_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS last_rotated_at,
+      DATE_FORMAT(idle_expires_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS idle_expires_at,
+      DATE_FORMAT(absolute_expires_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS absolute_expires_at,
+      DATE_FORMAT(revoked_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS revoked_at,
+      closed_reason
+    FROM identity_session_families
+    WHERE id = UUID_TO_BIN(${sessionId}, 0)
+  `;
+  const row = rows[0];
+
+  if (row === undefined || rows.length !== 1) {
+    throw new Error('Expected one rotation integration session family');
+  }
+
+  return row;
+}
+
 async function readSecurityEvents(
   context: IntegrationContext,
   sessionId: string,
@@ -766,6 +1049,45 @@ async function readSecurityEvents(
 async function insertPreexistingReuseSecurityEvent(
   context: IntegrationContext,
   fixture: ReuseDetectedFixture,
+): Promise<void> {
+  const affectedRows = await context.client.$executeRaw`
+    INSERT INTO identity_security_events (
+      id,
+      event_type,
+      outcome,
+      reason_code,
+      actor_account_id,
+      subject_account_id,
+      role_id,
+      session_id,
+      permission_code,
+      request_id,
+      correlation_id,
+      operator_reference,
+      occurred_at
+    ) VALUES (
+      UUID_TO_BIN(${fixture.eventId}, 0),
+      'SESSION_REFRESH',
+      'REJECTED',
+      'REFRESH_REUSE_DETECTED',
+      NULL,
+      UUID_TO_BIN(${fixture.account.id}, 0),
+      NULL,
+      UUID_TO_BIN(${fixture.sessionFamily.id}, 0),
+      NULL,
+      NULL,
+      NULL,
+      NULL,
+      CAST(${toMySqlDateTime6(context.fixtureNow)} AS DATETIME(6))
+    )
+  `;
+
+  assert.equal(affectedRows, 1);
+}
+
+async function insertPreexistingRotationSecurityEvent(
+  context: IntegrationContext,
+  fixture: RotatedFixture,
 ): Promise<void> {
   const affectedRows = await context.client.$executeRaw`
     INSERT INTO identity_security_events (
@@ -981,11 +1303,200 @@ async function executeReuseDetected(
   );
 }
 
+function createRotatedProgram(
+  client: PrismaClient,
+  discovery: IdentitySessionRefreshDiscovery,
+): MySqlTransactionProgram<
+  RotatedProgramInput,
+  RotatedProgramCommit,
+  IdentitySessionRefreshMySqlTransactionFailure,
+  RotatedProgramStatement
+> {
+  return Object.freeze({
+    defectFailure: 'execution-defect' as const,
+    failures: Object.freeze([
+      'credential-collision',
+      'conditional-conflict',
+      'unavailable',
+      'execution-defect',
+    ] as const),
+    async run(context, input) {
+      const workflow = createIdentitySessionRefreshAttemptBoundWorkflow(input.attempt);
+
+      try {
+        const transaction = activateIdentitySessionRefreshWorkflow(
+          workflow.controller,
+          context.writerTime,
+        );
+        const loader = createMySqlIdentitySessionRefreshLockedLoader(
+          client,
+          context,
+          discovery,
+          workflow.controller,
+        );
+        const writer = createMySqlIdentitySessionRefreshRotatedWriter(context, workflow.controller);
+        const load = await loader.loadForUpdate(transaction.scope, input.ticket);
+        const decision = decideIdentitySessionRefresh(
+          transaction,
+          load,
+          Object.freeze({
+            successorRefreshCredentialId: input.successorRefreshCredentialId,
+            refreshIdleLifetimeSeconds: 900,
+            issuedAccessCredentialId: input.accessCredentialId,
+            accessLifetimeSeconds: 300,
+          }),
+        );
+
+        if (decision.kind !== 'rotated') {
+          throw new Error('Expected the active credential to produce a rotation decision');
+        }
+
+        try {
+          const evidence = await writer.persistRotated(
+            transaction.scope,
+            Object.freeze({ decision, securityEventId: input.eventId }),
+          );
+
+          return context.requestCommit(
+            Object.freeze({
+              accessCredentialExpiresAt: evidence.accessCredentialExpiresAt,
+              accessCredentialIssuedAt: evidence.accessCredentialIssuedAt,
+              kind: evidence.kind,
+              principal: evidence.principal,
+              refreshAbsoluteExpiresAt: evidence.refreshAbsoluteExpiresAt,
+              refreshIdleExpiresAt: evidence.refreshIdleExpiresAt,
+              writerTime: transaction.dbNow,
+            }),
+          );
+        } catch (error: unknown) {
+          if (isMySqlIdentitySessionRefreshRotatedConditionalConflict(error)) {
+            return context.requestRollback('conditional-conflict');
+          }
+
+          throw error;
+        }
+      } finally {
+        closeIdentitySessionRefreshWorkflow(workflow.controller);
+      }
+    },
+    statements: IDENTITY_SESSION_REFRESH_ROTATED_PROGRAM_MYSQL_STATEMENTS,
+    unavailableFailure: 'unavailable' as const,
+  });
+}
+
+async function executeRotated(
+  context: IntegrationContext,
+  fixture: RotatedFixture,
+): Promise<
+  MySqlTransactionOutcome<RotatedProgramCommit, IdentitySessionRefreshMySqlTransactionFailure>
+> {
+  const ticket = await discoverTicket(context, fixture.credential);
+  const attempt = await rotatedCredentialAttempt(fixture);
+  const executor = createMySqlTransactionExecutor(
+    context.runtime,
+    createRotatedProgram(context.client, context.discovery),
+    { timeoutMilliseconds: TRANSACTION_TIMEOUT_MILLISECONDS },
+  );
+
+  return executor.execute(
+    Object.freeze({
+      accessCredentialId: fixture.decisionAccessCredentialId,
+      attempt,
+      eventId: fixture.eventId,
+      successorRefreshCredentialId: fixture.decisionSuccessorCredentialId,
+      ticket,
+    }),
+  );
+}
+
+async function readRotatedPersistenceSnapshot(
+  context: IntegrationContext,
+  fixture: RotatedFixture,
+): Promise<RotatedPersistenceSnapshot> {
+  const [credentials, events, family] = await Promise.all([
+    readCredentialPersistenceState(context, fixture.sessionFamily.id),
+    readSecurityEvents(context, fixture.sessionFamily.id),
+    readRotatedSessionFamilyPersistence(context, fixture.sessionFamily.id),
+  ]);
+
+  return Object.freeze({ credentials, events, family });
+}
+
+function createRotationConstraintClassificationProgram(): MySqlTransactionProgram<
+  RotationConstraintClassificationInput,
+  UnexpectedRotationConstraintWrite,
+  IdentitySessionRefreshMySqlTransactionFailure,
+  RotationConstraintClassificationStatement
+> {
+  return Object.freeze({
+    defectFailure: 'execution-defect' as const,
+    failures: Object.freeze([
+      'credential-collision',
+      'conditional-conflict',
+      'unavailable',
+      'execution-defect',
+    ] as const),
+    async run(context, input) {
+      switch (input.kind) {
+        case 'successor':
+          await context.executeStatement(
+            IDENTITY_SESSION_REFRESH_INSERT_SUCCESSOR_REFRESH_CREDENTIAL_MYSQL_STATEMENT,
+            input.parameters,
+          );
+          break;
+        case 'access':
+          await context.executeStatement(
+            IDENTITY_SESSION_REFRESH_INSERT_ACCESS_CREDENTIAL_MYSQL_STATEMENT,
+            input.parameters,
+          );
+          break;
+        case 'link':
+          await context.executeStatement(
+            IDENTITY_SESSION_REFRESH_LINK_PREDECESSOR_MYSQL_STATEMENT,
+            input.parameters,
+          );
+          break;
+      }
+
+      return context.requestRollback('execution-defect');
+    },
+    statements: ROTATION_CONSTRAINT_CLASSIFICATION_STATEMENTS,
+    unavailableFailure: 'unavailable' as const,
+  });
+}
+
+async function executeRotationConstraintClassification(
+  context: IntegrationContext,
+  input: RotationConstraintClassificationInput,
+): Promise<
+  MySqlTransactionOutcome<
+    UnexpectedRotationConstraintWrite,
+    IdentitySessionRefreshMySqlTransactionFailure
+  >
+> {
+  const executor = createMySqlTransactionExecutor(
+    context.runtime,
+    createRotationConstraintClassificationProgram(),
+    { timeoutMilliseconds: TRANSACTION_TIMEOUT_MILLISECONDS },
+  );
+
+  return executor.execute(input);
+}
+
 async function cleanFixtures(context: IntegrationContext): Promise<void> {
   for (const index of FIXTURE_INDEXES) {
     const familyId = fixtureUuid(index, 2);
     const accountId = fixtureUuid(index, 1);
+    const roleId = fixtureUuid(index, 11);
 
+    await context.client.$executeRaw`
+      DELETE FROM identity_account_roles
+      WHERE account_id = UUID_TO_BIN(${accountId}, 0)
+    `;
+    await context.client.$executeRaw`
+      DELETE FROM identity_role_permissions
+      WHERE role_id = UUID_TO_BIN(${roleId}, 0)
+    `;
     await context.client.$executeRaw`
       DELETE FROM identity_security_events
       WHERE session_id = UUID_TO_BIN(${familyId}, 0)
@@ -1009,6 +1520,10 @@ async function cleanFixtures(context: IntegrationContext): Promise<void> {
       WHERE id = UUID_TO_BIN(${familyId}, 0)
     `;
     await context.client.$executeRaw`
+      DELETE FROM identity_roles
+      WHERE id = UUID_TO_BIN(${roleId}, 0)
+    `;
+    await context.client.$executeRaw`
       DELETE FROM identity_accounts
       WHERE id = UUID_TO_BIN(${accountId}, 0)
     `;
@@ -1022,6 +1537,7 @@ void test(
     const integration = await openContext();
 
     try {
+      await cleanFixtures(integration);
       await testContext.test(
         'rehydrates nontrivial integers and DATETIME(6) values on the executor-owned connection',
         async () => {
@@ -1163,6 +1679,358 @@ void test(
             version: 2n,
           });
           assert.equal(eventsBefore.length, 1);
+        },
+      );
+
+      await testContext.test(
+        'atomically persists the exact rotated credential graph, authority, and success event',
+        async () => {
+          const fixture = await createRotatedFixture(integration, ROTATION_SUCCESS_FIXTURE_INDEX);
+          const outcome = await executeRotated(integration, fixture);
+
+          if (outcome.kind !== 'committed') {
+            throw new Error(`Expected committed rotation persistence, received ${outcome.kind}`);
+          }
+
+          const refreshIdleExpiresAt = offsetInstant(outcome.result.writerTime, 900);
+          const accessExpiresAt = offsetInstant(outcome.result.writerTime, 300);
+
+          assert.deepEqual(outcome.result, {
+            accessCredentialExpiresAt: accessExpiresAt,
+            accessCredentialIssuedAt: outcome.result.writerTime,
+            kind: 'rotated',
+            principal: {
+              actorId: fixture.account.id,
+              permissions: ['catalog.products.read'],
+              sessionId: fixture.sessionFamily.id,
+            },
+            refreshAbsoluteExpiresAt: fixture.sessionFamily.refreshAbsoluteExpiresAt,
+            refreshIdleExpiresAt,
+            writerTime: outcome.result.writerTime,
+          });
+          assert.match(outcome.result.writerTime, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/u);
+
+          const persisted = await readRotatedPersistenceSnapshot(integration, fixture);
+
+          assert.deepEqual(persisted.credentials, {
+            access: [
+              {
+                credential_id: fixture.decisionAccessCredentialId,
+                digest_hex: digestHex(fixture.accessCandidate.digestBytes),
+                expires_at: accessExpiresAt,
+                issued_at: outcome.result.writerTime,
+                sequence: 8n,
+                session_id: fixture.sessionFamily.id,
+              },
+            ],
+            refresh: [
+              {
+                active_slot: null,
+                consumed_at: outcome.result.writerTime,
+                credential_id: fixture.credential.snapshot.id,
+                digest_hex: digestHex(fixture.credential.digestBytes),
+                expires_at: fixture.credential.snapshot.expiresAt,
+                issued_at: fixture.credential.snapshot.issuedAt,
+                sequence: 7n,
+                session_id: fixture.sessionFamily.id,
+                successor_id: fixture.decisionSuccessorCredentialId,
+              },
+              {
+                active_slot: 1,
+                consumed_at: null,
+                credential_id: fixture.decisionSuccessorCredentialId,
+                digest_hex: digestHex(fixture.refreshCandidate.digestBytes),
+                expires_at: refreshIdleExpiresAt,
+                issued_at: outcome.result.writerTime,
+                sequence: 8n,
+                session_id: fixture.sessionFamily.id,
+                successor_id: null,
+              },
+            ],
+          });
+          assert.deepEqual(persisted.family, {
+            absolute_expires_at: fixture.sessionFamily.refreshAbsoluteExpiresAt,
+            closed_reason: null,
+            idle_expires_at: refreshIdleExpiresAt,
+            last_rotated_at: outcome.result.writerTime,
+            revoked_at: null,
+            session_id: fixture.sessionFamily.id,
+            version: 8n,
+          });
+          assert.deepEqual(persisted.events, [
+            {
+              actor_account_id: fixture.account.id,
+              correlation_id: null,
+              event_id: fixture.eventId,
+              event_type: 'SESSION_REFRESH',
+              occurred_at: outcome.result.writerTime,
+              operator_reference: null,
+              outcome: 'SUCCEEDED',
+              permission_code: null,
+              reason_code: null,
+              request_id: null,
+              role_id: null,
+              session_id: fixture.sessionFamily.id,
+              subject_account_id: fixture.account.id,
+            },
+          ]);
+          assert.equal(persisted.credentials.refresh.length, 2);
+          assert.equal(persisted.credentials.access.length, 1);
+          assert.equal(persisted.events.length, 1);
+        },
+      );
+
+      await testContext.test(
+        'rolls back predecessor consumption when the successor digest collides',
+        async () => {
+          const fixture = await createRotatedFixture(
+            integration,
+            ROTATION_CREDENTIAL_COLLISION_FIXTURE_INDEX,
+            { collideRefreshDigest: true },
+          );
+          const before = await readRotatedPersistenceSnapshot(integration, fixture);
+          const outcome = await executeRotated(integration, fixture);
+
+          assert.deepEqual(outcome, {
+            failure: 'credential-collision',
+            kind: 'not-committed',
+          });
+          assert.equal(before.credentials.refresh.length, 1);
+          assert.equal(before.credentials.access.length, 0);
+          assert.equal(before.events.length, 0);
+          assert.deepEqual(await readRotatedPersistenceSnapshot(integration, fixture), before);
+        },
+      );
+
+      await testContext.test(
+        'rolls back predecessor consumption when the successor generation already exists',
+        async () => {
+          const fixture = await createRotatedFixture(
+            integration,
+            ROTATION_CONDITIONAL_COLLISION_FIXTURE_INDEX,
+          );
+
+          await insertRotationFamilySequenceCollision(
+            integration,
+            fixture,
+            ROTATION_CONDITIONAL_COLLISION_FIXTURE_INDEX,
+          );
+          const before = await readRotatedPersistenceSnapshot(integration, fixture);
+          const outcome = await executeRotated(integration, fixture);
+
+          assert.deepEqual(outcome, {
+            failure: 'conditional-conflict',
+            kind: 'not-committed',
+          });
+          assert.equal(before.credentials.refresh.length, 2);
+          assert.equal(before.credentials.access.length, 0);
+          assert.equal(before.events.length, 0);
+          assert.deepEqual(await readRotatedPersistenceSnapshot(integration, fixture), before);
+        },
+      );
+
+      await testContext.test(
+        'rolls back the complete rotation when the final event id is unavailable',
+        async () => {
+          const fixture = await createRotatedFixture(
+            integration,
+            ROTATION_EVENT_COLLISION_FIXTURE_INDEX,
+          );
+
+          await insertPreexistingRotationSecurityEvent(integration, fixture);
+          const before = await readRotatedPersistenceSnapshot(integration, fixture);
+          const outcome = await executeRotated(integration, fixture);
+
+          assert.deepEqual(outcome, {
+            failure: 'unavailable',
+            kind: 'not-committed',
+          });
+          assert.equal(before.credentials.refresh.length, 1);
+          assert.equal(before.credentials.access.length, 0);
+          assert.equal(before.events.length, 1);
+          assert.deepEqual(await readRotatedPersistenceSnapshot(integration, fixture), before);
+        },
+      );
+
+      await testContext.test(
+        'classifies every remaining production rotation duplicate constraint',
+        async () => {
+          const source = await createReuseDetectedFixture(
+            integration,
+            ROTATION_CONSTRAINT_SOURCE_FIXTURE_INDEX,
+          );
+          const emptyTarget = await createActiveFixture(
+            integration,
+            ROTATION_CONSTRAINT_TARGET_FIXTURE_INDEX,
+          );
+          const accessTarget = await createActiveFixture(
+            integration,
+            ROTATION_CONSTRAINT_ACCESS_TARGET_FIXTURE_INDEX,
+            900,
+          );
+          const deletedTargetCredential = await integration.client.$executeRaw`
+            DELETE FROM identity_refresh_credentials
+            WHERE id = UUID_TO_BIN(${emptyTarget.credential.snapshot.id}, 0)
+          `;
+          const linkCollision = storedRefreshCredential(
+            IdentityRefreshCredential.rehydrate({
+              id: fixtureUuid(ROTATION_CONSTRAINT_SOURCE_FIXTURE_INDEX, 9),
+              sessionId: source.sessionFamily.id,
+              sequence: source.successorCredential.snapshot.sequence + 1,
+              issuedAt: offsetInstant(integration.fixtureNow, -60),
+              expiresAt: source.sessionFamily.refreshIdleExpiresAt,
+              consumedAt: offsetInstant(integration.fixtureNow, -30),
+              successorId: source.successorCredential.snapshot.id,
+            }).toSnapshot(),
+            digestBytes(204),
+          );
+
+          assert.equal(deletedTargetCredential, 1);
+          await insertConsumedRefreshCredentialWithoutSuccessor(integration, linkCollision);
+          const linkCollisionConsumedAt = linkCollision.snapshot.consumedAt;
+
+          if (linkCollisionConsumedAt === null) {
+            throw new Error('Expected a consumed link-collision predecessor');
+          }
+
+          const matrix: readonly Readonly<{
+            expected: IdentitySessionRefreshMySqlTransactionFailure;
+            input: RotationConstraintClassificationInput;
+            label: string;
+          }>[] = Object.freeze([
+            Object.freeze({
+              expected: 'credential-collision' as const,
+              input: Object.freeze({
+                kind: 'successor' as const,
+                parameters: Object.freeze([
+                  source.presentedCredential.snapshot.id,
+                  emptyTarget.sessionFamily.id,
+                  digestBytes(200),
+                  1,
+                  emptyTarget.sessionFamily.lastRotatedAt,
+                  emptyTarget.sessionFamily.refreshIdleExpiresAt,
+                ] as const),
+              }),
+              label: 'successor PRIMARY',
+            }),
+            Object.freeze({
+              expected: 'conditional-conflict' as const,
+              input: Object.freeze({
+                kind: 'successor' as const,
+                parameters: Object.freeze([
+                  fixtureUuid(ROTATION_CONSTRAINT_SOURCE_FIXTURE_INDEX, 20),
+                  source.sessionFamily.id,
+                  digestBytes(201),
+                  100,
+                  source.sessionFamily.lastRotatedAt,
+                  source.sessionFamily.refreshIdleExpiresAt,
+                ] as const),
+              }),
+              label: 'successor family_active_slot',
+            }),
+            Object.freeze({
+              expected: 'credential-collision' as const,
+              input: Object.freeze({
+                kind: 'access' as const,
+                parameters: Object.freeze([
+                  source.accessCredential.id,
+                  accessTarget.sessionFamily.id,
+                  digestBytes(202),
+                  accessTarget.credential.snapshot.sequence,
+                  accessTarget.credential.snapshot.issuedAt,
+                  accessTarget.credential.snapshot.expiresAt,
+                ] as const),
+              }),
+              label: 'access PRIMARY',
+            }),
+            Object.freeze({
+              expected: 'credential-collision' as const,
+              input: Object.freeze({
+                kind: 'access' as const,
+                parameters: Object.freeze([
+                  fixtureUuid(ROTATION_CONSTRAINT_ACCESS_TARGET_FIXTURE_INDEX, 21),
+                  accessTarget.sessionFamily.id,
+                  source.accessCredential.digestBytes,
+                  accessTarget.credential.snapshot.sequence,
+                  accessTarget.credential.snapshot.issuedAt,
+                  accessTarget.credential.snapshot.expiresAt,
+                ] as const),
+              }),
+              label: 'access digest',
+            }),
+            Object.freeze({
+              expected: 'conditional-conflict' as const,
+              input: Object.freeze({
+                kind: 'access' as const,
+                parameters: Object.freeze([
+                  fixtureUuid(ROTATION_CONSTRAINT_SOURCE_FIXTURE_INDEX, 22),
+                  source.sessionFamily.id,
+                  digestBytes(203),
+                  source.accessCredential.sequence,
+                  source.accessCredential.issuedAt,
+                  source.accessCredential.expiresAt,
+                ] as const),
+              }),
+              label: 'access family_sequence',
+            }),
+            Object.freeze({
+              expected: 'conditional-conflict' as const,
+              input: Object.freeze({
+                kind: 'link' as const,
+                parameters: Object.freeze([
+                  source.successorCredential.snapshot.id,
+                  linkCollision.snapshot.id,
+                  source.sessionFamily.id,
+                  linkCollision.snapshot.sequence,
+                  linkCollision.snapshot.issuedAt,
+                  linkCollision.snapshot.expiresAt,
+                  linkCollisionConsumedAt,
+                ] as const),
+              }),
+              label: 'predecessor successor-unique',
+            }),
+          ]);
+          const sourceBefore = await readCredentialPersistenceState(
+            integration,
+            source.sessionFamily.id,
+          );
+          const targetBefore = await readCredentialPersistenceState(
+            integration,
+            emptyTarget.sessionFamily.id,
+          );
+          const accessTargetBefore = await readCredentialPersistenceState(
+            integration,
+            accessTarget.sessionFamily.id,
+          );
+
+          for (const classification of matrix) {
+            const outcome = await executeRotationConstraintClassification(
+              integration,
+              classification.input,
+            );
+
+            assert.deepEqual(
+              outcome,
+              {
+                failure: classification.expected,
+                kind: 'not-committed',
+              },
+              classification.label,
+            );
+          }
+
+          assert.deepEqual(
+            await readCredentialPersistenceState(integration, source.sessionFamily.id),
+            sourceBefore,
+          );
+          assert.deepEqual(
+            await readCredentialPersistenceState(integration, emptyTarget.sessionFamily.id),
+            targetBefore,
+          );
+          assert.deepEqual(
+            await readCredentialPersistenceState(integration, accessTarget.sessionFamily.id),
+            accessTargetBefore,
+          );
         },
       );
     } finally {

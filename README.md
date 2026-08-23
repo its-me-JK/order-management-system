@@ -139,8 +139,14 @@ still has no `Authorization` extraction, request association, authentication
 route, or public credential ingress. The locked loader remains deliberately
 load-only; a private direct reuse writer now conditionally revokes the family
 and appends its rejected refresh event on the same transaction connection.
-There is still no rotation writer, concrete Unit of Work, post-deadline command
-cleanup, database-gated completion activation, credential-delivery gate,
+An adjacent private rotation writer now consumes the authenticated rotated
+action and executes predecessor consumption, successor refresh/access
+insertion, predecessor linkage, conditional family advance, bounded
+same-connection authority projection, and the successful refresh event. It
+exposes neither SQL nor credential material and mints only pending workflow
+evidence after all seven operations succeed. There is still no concrete Unit
+of Work, post-deadline command cleanup, database-gated completion activation,
+credential-delivery gate,
 remaining security-event adapters, NestJS composition, Argon2 adapter,
 password input policy, or Redis abuse control completing the runtime path. The
 direct executor quarantines its exact connection, but it may return
@@ -357,13 +363,17 @@ command separately because its lifecycle-blind replay semantics are
 intentionally different from the access-authority reader's lifecycle-gated
 semantics.
 The dedicated locked-loader command reuses one guarded disposable database for
-two sequential proofs. The Prisma reference suite establishes the global lock
-order, query plans, retained-lifecycle mapping, and causal Account contention;
+several sequential proofs. The Prisma reference suite establishes the global
+lock order, query plans, retained-lifecycle mapping, and causal Account contention;
 the direct suite executes the same three locks as prepared statement tokens on
 the sealed executor's exact connection and proves the pinned connector result
-shape, numeric mapping, six-digit instants, and digest-drift not-found. The
-runner drops and independently verifies both its database and temporary DML
-grant.
+shape, numeric mapping, six-digit instants, and digest-drift not-found. It also
+executes the two-token reuse branch and seven-token rotation branch, proving
+the exact rotated credential graph, authority-derived principal, successful
+event, every mapped duplicate constraint, and rollback on credential,
+generation, and final event collisions. These are transaction-branch proofs,
+not commit-confirmed completion or credential delivery. The runner drops and
+independently verifies both its database and temporary DML grant.
 The Catalog integration command verifies an initial-schema
 upgrade with legacy rows, rejects ambiguous terminal history before DDL, and
 also creates, migrates twice, and removes an exact fresh

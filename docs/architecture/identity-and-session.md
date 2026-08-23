@@ -728,7 +728,7 @@ closes the family for replay. If the winner rolls back, the loser sees the
 predecessor unconsumed and may rotate; a lost committed response followed by a
 retry intentionally closes the family.
 
-The future MySQL transaction has an important immediate-constraint ordering.
+The direct MySQL rotation trace has an important immediate-constraint ordering.
 With both one-unconsumed-slot uniqueness and a self-referencing successor
 foreign key, it must first mark the predecessor consumed and clear its active
 slot, then insert the successor refresh with slot `1`, insert the access record
@@ -1196,6 +1196,28 @@ identifier collision remains unavailable and rolls back the preceding family
 update. The writer, statements, signal inspector, and context type have no
 Identity barrel or package export.
 
+The eighth prerequisite increment is the package-internal direct-MySQL
+rotation writer and is delivered. It accepts only the authentic workflow
+scope, rotated decision, and SecurityEvent identifier, derives all relational
+material from the registered domain result, and makes a writer-owned copy of
+each admitted target digest only immediately before its insert. On the
+executor's already-active connection it consumes the predecessor, inserts the successor refresh and
+generation-bound access records, links the predecessor, conditionally advances
+the family, resolves current authority, and appends the successful refresh
+event in that fixed order. Each digest copy remains live until its own prepared
+insert settles and is then overwritten and verified before later state,
+authority, event, or completion work.
+
+The three conditional updates require exactly one affected row; zero produces
+one runtime-authentic private conditional-conflict signal. Credential primary
+key and digest collisions are credential collisions, generation, active-slot,
+and predecessor-link uniqueness failures are conditional conflicts, and every
+unmapped provider failure remains unavailable. Strict frozen statement
+evidence is required throughout. Only the authenticated workflow constructs
+the principal and mints pending evidence, after both authority projection and
+the final event succeed. The writer has no raw connection, settlement, retry,
+wire-value, credential-delivery, or package-export authority.
+
 This is still not the concrete Unit of Work. The executor can seal and return
 `indeterminate` when its deadline wins while the program Promise is still
 settling. At that instant a refresh command may remain `running`, and the
@@ -1610,7 +1632,8 @@ workflow error and fail before SQL. No error or result retains a Prisma
 exception, vendor code, query, constraint, or digest. `not-found` is a normal
 locked-load result, not an outage or write conflict. This read-only boundary
 cannot classify credential collision, conditional conflict, rollback, or commit
-ambiguity; those classifications belong to the future writer and Unit of Work.
+ambiguity; those classifications belong to the delivered scoped writers and
+future Unit of Work.
 
 This is intentionally not the Unit of Work. The loader neither starts nor
 settles a transaction, reads writer time, tracks or cancels concurrent scoped
@@ -1691,13 +1714,14 @@ operations:
    has no writer method; the application terminal factory validates it against
    the registered load and performs no DML or event append.
 
-The future MySQL `persistRotated` trace is fixed: consume predecessor, insert
-successor refresh, insert the generation-bound access row, link predecessor,
-conditionally update the family, resolve the bounded authority projection, and
-append the mapped rotation event. Every expected affected-row count is exactly
-one. `persistReuseDetected` conditionally revokes the family and appends only
-the mapped reuse event. State and event writes share the same transaction and
-connection. Projection or event failure rolls back all earlier writes.
+The delivered MySQL `persistRotated` writer executes the fixed trace: consume
+predecessor, insert the successor refresh, insert the generation-bound access
+row, link the predecessor, conditionally update the family, resolve the bounded
+authority projection, and append the mapped rotation event. Every expected
+affected-row count is exactly one. `persistReuseDetected` conditionally revokes
+the family and appends only the mapped reuse event. State and event writes share
+the same transaction and connection. Projection or event failure rolls back
+all earlier writes.
 
 The rotation authority portion of that trace is now delivered as a private
 prepared-statement kernel. It is a non-locking read on the executor's exact
@@ -1713,8 +1737,9 @@ factory and rechecks aggregate binding. Zero rows, overflow, malformed joins,
 duplicate mappings, and invalid identifiers are execution defects. The query
 does not lock Role or Permission records, so the accepted `READ COMMITTED`
 policy is a statement-time authority snapshot rather than a wider deadlock
-graph. This kernel does not yet claim the five rotation state mutations, event
-append, or complete `persistRotated` writer.
+graph. The rotated writer composes this kernel as operation six after the five
+state mutations and before the event; only workflow completion constructs the
+principal.
 
 The current application-contract tests prove exact shapes, nominal identity,
 freezing, one-shot attempt admission and retirement, candidate-attempt
@@ -1776,6 +1801,17 @@ unmapped insert unavailable and proves the earlier family update is rolled
 back. These cases prove the reuse store's atomic DML composition, not the full
 Unit of Work, completion promotion, or credential delivery.
 
+The rotation cases extend those same three locks with the seven production
+rotation tokens. A committed case proves the exact consumed predecessor,
+active successor, generation-bound access row, family version and deadlines,
+authority-derived principal, and successful null-context event at the
+transaction writer time. Direct constraint probes cover every credential,
+generation, active-slot, and predecessor-link duplicate mapping emitted by the
+pinned driver. End-to-end digest, generation, and final event collisions prove
+the complete earlier graph rolls back under credential-collision,
+conditional-conflict, and unavailable outcomes. These are branch-persistence
+proofs, not commit-confirmed completion promotion or credential delivery.
+
 That guarded command now also executes a test-only conditional family-version
 update followed by the production rotation-authority statement in one executor
 program. Because the projection requires the uncommitted resulting version,
@@ -1787,8 +1823,9 @@ family version, suspended Account, or revoked and closed family cannot resolve
 authority and that the preceding test-local family update rolls back. Focused
 adversarial tests separately cover the exact MariaDB `meta` envelope,
 descriptors, sparse and extended arrays, Proxies and accessors, post-import
-intrinsic poisoning, semantic corruption, and the 2,049th overflow row. These
-cases prove only the authority prerequisite, not durable credential rotation.
+intrinsic poisoning, semantic corruption, and the 2,049th overflow row. Those
+authority-only cases isolate projection semantics; the full rotation cases
+prove durable graph DML.
 
 Separately, a loopback TCP listener accepts a connection but never performs the
 MySQL handshake; that loopback TCP accept/handshake stall becomes the fixed
@@ -1797,9 +1834,10 @@ grant, replays migrations, serializes local runs, and verifies database and
 grant cleanup independently. Those Prisma fault cases do not prove
 cancellation of an established connection or in-flight query. The separate
 database-executor suite proves established-query quarantine and replacement
-capacity, while this Identity suite deliberately does not yet claim rotation
-DML, per-statement rollback injection, commit-acknowledgement loss, or
-completion promotion.
+capacity. This Identity suite now proves successful rotation DML and natural
+constraint/event rollback, but deliberately does not claim injected rollback
+after every operation, protocol-level commit-acknowledgement loss,
+post-deadline cleanup, or completion promotion.
 
 The application increment proves promotion, revocation, final attempt
 retirement, and a dormant exact-attempt binding, but not database settlement or
@@ -1807,8 +1845,9 @@ credential delivery. The concrete Unit of Work must still prove that only its
 real commit acknowledgement can invoke promotion, the later delivery gate must
 prove exact-pair disclosure, and executor tests must prove that caught values
 with hostile getters, Proxies, coercion traps, or secret causes never escape.
-The next direct-MySQL increment must add the rotation writer, then the concrete
-Unit of Work and its cleanup protocol. Together they must prove zero
+The next direct-MySQL increment must compose the delivered locked loader and
+both writers in the concrete Unit of Work and its cleanup protocol. Together
+they must prove zero
 orchestration before a valid context, one orchestration otherwise, one writer
 time, one connection, operation tracking and bounded drain, DML order,
 affected-row checks, rollback injection after every statement, exact
@@ -1845,9 +1884,10 @@ replay, cross-scope, and wrong-kind writes before SQL. An interview-level
 consequence is that consumed pending evidence must survive program-scope close:
 the scope must be invalid before `COMMIT`, while confirmed commit still needs
 the exact attempt binding for later delivery. That retained registration grants
-neither SQL nor delivery authority. The next improvements are the rotation
-writer, exact-pair delivery gate, and an Identity MySQL Unit of Work that maps
-the executor's settlement outcome into completion promotion or revocation.
+neither SQL nor delivery authority. The next improvements are the exact-pair
+delivery gate and an Identity MySQL Unit of Work that composes the delivered
+scoped stores and maps the executor's settlement outcome into completion
+promotion or revocation.
 
 ## Credential and password representation
 
@@ -2861,10 +2901,12 @@ real-MySQL authority/discovery/locked-load/resolver tests, and root-exported
 framework-independent Bearer principal resolver exist. The closed refresh
 command, refresh-specific Unit-of-Work port, dormant commit-completion
 registry, direct reuse writer, shared authority projection mapper, and private
-same-connection rotation-authority statement are also delivered. The rotation
-writer, post-deadline command cleanup protocol, concrete direct-MySQL Unit of
-Work, database-gated promotion, delivery gate, remaining security-event paths,
-cleanup use case, NestJS composition, and complete delivery-gate tests remain.
+same-connection rotation-authority statement are also delivered. The private
+direct rotation writer now composes the five graph mutations, authority read,
+and successful event on that connection. The post-deadline command cleanup
+protocol, concrete direct-MySQL Unit of Work, database-gated promotion,
+delivery gate, remaining security-event paths, cleanup use case, NestJS
+composition, and complete delivery-gate tests remain.
 A trusted caller can now
 resolve an already-extracted canonical access-wire value, but there is still no
 `Authorization` extraction, request association, credential ingress, route, or
@@ -3190,12 +3232,11 @@ public authentication surface.
   crypto-availability metrics, and evaluate FIPS/runtime attestation where a
   deployment requires it. A future HSM or managed provider remains a separate
   implementation of the unchanged application port.
-- Add the rotation writer, the exact-pair delivery gate, and the concrete
-  Identity refresh Unit of Work around the delivered application port, paired
-  locked-loader proof, and reuse writer. Prove scope escape, rollback injection, exact constraint
-  classification, competing refresh, and ambiguous commit before extending
-  the pattern to login, logout, Account, authenticator, or Role workflows; do
-  not generalize it into aggregate CRUD.
+- Compose the delivered direct locked loader, rotation writer, and reuse writer
+  inside the concrete Identity refresh Unit of Work; add the exact-pair
+  delivery gate. Prove scope escape, rollback injection, competing refresh,
+  and ambiguous commit before extending the pattern to login, logout, Account,
+  authenticator, or Role workflows; do not generalize it into aggregate CRUD.
 - Extend the sealed executor with a trusted post-seal program-settlement cleanup
   hook, or add a workflow abort transition with equivalent race safety. Prove
   attempt retirement after deadline-driven `indeterminate` without weakening

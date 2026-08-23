@@ -2,6 +2,10 @@ import { isProxy } from 'node:util/types';
 
 import * as identityPublicApi from '../../src';
 import {
+  decodeIdentitySessionRefreshConditionalMySqlWriteResult,
+  decodeIdentitySessionRefreshInsertMySqlWriteResult,
+} from '../../src/infrastructure/mysql/identity-session-refresh-mysql-write-result';
+import {
   decodeIdentitySessionRefreshReuseDetectedFamilyMySqlWriteResult,
   decodeIdentitySessionRefreshReuseDetectedSecurityEventMySqlWriteResult,
   IDENTITY_SESSION_REFRESH_APPEND_REUSE_EVENT_MYSQL_STATEMENT,
@@ -64,6 +68,54 @@ describe('Identity refresh reuse-detected MySQL statements', (): void => {
     expect(Object.isFrozen(changedEvent)).toBe(true);
     expect(Reflect.ownKeys(changedFamily)).toEqual(['kind']);
     expect(decodeEvent(packet(0))).toEqual({ kind: 'malformed' });
+  });
+
+  it('delegates without consulting mutable Function.prototype.call authority', (): void => {
+    const conditionalCallDescriptor = Object.getOwnPropertyDescriptor(
+      decodeIdentitySessionRefreshConditionalMySqlWriteResult,
+      'call',
+    );
+    const insertCallDescriptor = Object.getOwnPropertyDescriptor(
+      decodeIdentitySessionRefreshInsertMySqlWriteResult,
+      'call',
+    );
+    const failIfCalled = (): never => {
+      throw new Error('mutable call authority reached');
+    };
+
+    Object.defineProperty(decodeIdentitySessionRefreshConditionalMySqlWriteResult, 'call', {
+      configurable: true,
+      value: failIfCalled,
+    });
+    Object.defineProperty(decodeIdentitySessionRefreshInsertMySqlWriteResult, 'call', {
+      configurable: true,
+      value: failIfCalled,
+    });
+
+    try {
+      expect(decodeFamily(packet(1))).toEqual({ kind: 'changed' });
+      expect(decodeEvent(packet(1))).toEqual({ kind: 'changed' });
+    } finally {
+      if (conditionalCallDescriptor === undefined) {
+        Reflect.deleteProperty(decodeIdentitySessionRefreshConditionalMySqlWriteResult, 'call');
+      } else {
+        Object.defineProperty(
+          decodeIdentitySessionRefreshConditionalMySqlWriteResult,
+          'call',
+          conditionalCallDescriptor,
+        );
+      }
+
+      if (insertCallDescriptor === undefined) {
+        Reflect.deleteProperty(decodeIdentitySessionRefreshInsertMySqlWriteResult, 'call');
+      } else {
+        Object.defineProperty(
+          decodeIdentitySessionRefreshInsertMySqlWriteResult,
+          'call',
+          insertCallDescriptor,
+        );
+      }
+    }
   });
 
   it.each([
