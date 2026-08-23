@@ -46,11 +46,14 @@ attempt-100 disablement, pre-hash verification-basis race protection,
 conditional verifier upgrade, and offline rebind transition. The package
 now also owns a terminal Role aggregate with immutable authorization codes,
 strict Unicode display labels, canonical bounded Permission sets, explicit
-grant/revoke deltas, and auditable initial mappings. It deliberately exports no
-application contract and exposes no route yet; sessions, Identity persistence,
-the actual crypto adapter, password input policy, and Redis remain gated later
-slices. Pricing, inventory, Redis caching, and integration events also remain
-separate later slices.
+grant/revoke deltas, and auditable initial mappings. SessionFamily now owns
+lossless idle/absolute deadlines, version-derived rotation reachability,
+derived authentication state, and first-cause terminal revocation without
+exposing a partial refresh-rotation API. The package deliberately exports no
+application contract and exposes no route yet; refresh credentials and atomic
+rotation/replay, Identity persistence, the actual crypto adapter, password
+input policy, and Redis remain gated later slices. Pricing, inventory, Redis
+caching, and integration events also remain separate later slices.
 
 **Overall project progress: 30%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
