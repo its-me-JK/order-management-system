@@ -361,6 +361,17 @@ absolute deadline, the configured 15-minute minimum still applies; the one-
 second minimum applies only when the idle deadline equals the earlier absolute
 cap.
 
+Version also constrains when the retained last rotation could have happened.
+An open version `v` records `v - 1` rotations; a revoked version records
+`v - 2`, with revocation consuming the other post-creation version. For one
+through 29 rotations, `lastRotatedAt` must be strictly before `createdAt` plus
+that count multiplied by 24 hours: every predecessor had an idle deadline no
+more than 24 hours after its rotation, and refresh at that deadline is already
+expired. At 30 or more rotations, `lastRotatedAt < refreshIdleExpiresAt <=
+refreshAbsoluteExpiresAt` and the 30-day absolute maximum already impose the
+stronger bound. This rejects a row claiming one late rotation weeks after its
+only possible predecessor had expired without retaining complete history.
+
 At one authoritative observation instant, the derived family state is:
 
 1. `REVOKED` when the terminal pair is present;
@@ -1358,6 +1369,12 @@ authentication surface becomes public.
     lookup is deliberately non-locking. A concurrent winner may consume that
     credential; the loser must reload locked current state and treat the
     consumed row as replay instead of stopping at a stale-version mismatch.
+14. **Why does SessionFamily rehydration relate version to rotation time?** A
+    version does more than order writes: after subtracting creation and an
+    optional terminal revocation, it counts rotations. Since no predecessor can
+    refresh at or beyond its at-most-24-hour idle deadline, that count places a
+    strict upper bound on the retained last-rotation time and detects impossible
+    persistence state without loading token history.
 
 ## Future improvements
 
