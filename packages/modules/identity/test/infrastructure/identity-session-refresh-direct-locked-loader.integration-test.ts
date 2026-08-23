@@ -54,9 +54,11 @@ import type {
 } from '../../src/application/identity-session-refresh-discovery';
 import {
   IDENTITY_SESSION_REFRESH_INDETERMINATE,
+  IdentitySessionRefreshExecutionFailedError,
   type IdentitySessionRefreshOutcome,
   type IdentitySessionRefreshUnitOfWork,
 } from '../../src/application/identity-session-refresh-unit-of-work';
+import { MAX_IDENTITY_AUTHENTICATED_PRINCIPAL_ACTIVE_ROLE_COUNT } from '../../src/application/identity-authenticated-principal';
 import {
   parseIdentitySecurityEventId,
   type IdentitySecurityEventId,
@@ -105,6 +107,9 @@ const BLOCKER_TRANSACTION_TIMEOUT_MILLISECONDS = 20_000;
 const INTEGRATION_TEST_TIMEOUT_MILLISECONDS = 60_000;
 const ACCOUNT_LOCK_QUERY_OBSERVATION_ATTEMPTS = 300;
 const ACCOUNT_LOCK_QUERY_OBSERVATION_INTERVAL_MILLISECONDS = 10;
+// Kept outside this suite's fixture-derived digest ranges so this retained
+// drift row cannot preempt a later fault at an unrelated transaction stage.
+const DRIFTED_REFRESH_DIGEST_SEED = 17;
 const ROTATION_SUCCESS_FIXTURE_INDEX = 85;
 const ROTATION_CREDENTIAL_COLLISION_FIXTURE_INDEX = 86;
 const ROTATION_CONDITIONAL_COLLISION_FIXTURE_INDEX = 87;
@@ -115,6 +120,14 @@ const ROTATION_CONSTRAINT_ACCESS_TARGET_FIXTURE_INDEX = 97;
 const ROTATION_DEADLINE_FIXTURE_INDEX = 98;
 const ROTATION_DEADLINE_RECOVERY_FIXTURE_INDEX = 99;
 const ROTATION_COMPETING_FIXTURE_INDEX = 100;
+const ROTATION_ROLLBACK_CONSUME_FIXTURE_INDEX = 101;
+const ROTATION_ROLLBACK_SUCCESSOR_FIXTURE_INDEX = 102;
+const ROTATION_ROLLBACK_ACCESS_FIXTURE_INDEX = 103;
+const ROTATION_ROLLBACK_LINK_FIXTURE_INDEX = 104;
+const ROTATION_ROLLBACK_FAMILY_FIXTURE_INDEX = 105;
+const ROTATION_ROLLBACK_AUTHORITY_FIXTURE_INDEX = 106;
+const ROTATION_ROLLBACK_EVENT_FIXTURE_INDEX = 107;
+const ROTATION_ROLLBACK_RECOVERY_FIXTURE_INDEX = 108;
 const FIXTURE_INDEXES = Object.freeze([
   81,
   82,
@@ -130,6 +143,14 @@ const FIXTURE_INDEXES = Object.freeze([
   ROTATION_DEADLINE_FIXTURE_INDEX,
   ROTATION_DEADLINE_RECOVERY_FIXTURE_INDEX,
   ROTATION_COMPETING_FIXTURE_INDEX,
+  ROTATION_ROLLBACK_CONSUME_FIXTURE_INDEX,
+  ROTATION_ROLLBACK_SUCCESSOR_FIXTURE_INDEX,
+  ROTATION_ROLLBACK_ACCESS_FIXTURE_INDEX,
+  ROTATION_ROLLBACK_LINK_FIXTURE_INDEX,
+  ROTATION_ROLLBACK_FAMILY_FIXTURE_INDEX,
+  ROTATION_ROLLBACK_AUTHORITY_FIXTURE_INDEX,
+  ROTATION_ROLLBACK_EVENT_FIXTURE_INDEX,
+  ROTATION_ROLLBACK_RECOVERY_FIXTURE_INDEX,
 ] as const);
 const ACCESS_WIRE_VALUE = parseIdentityAccessCredentialWireValue(`oms_at_v1_${'A'.repeat(42)}E`);
 const REFRESH_WIRE_VALUE = parseIdentityRefreshCredentialWireValue(`oms_rt_v1_${'E'.repeat(42)}M`);
@@ -139,6 +160,32 @@ const COMPETING_ACCESS_WIRE_VALUE = parseIdentityAccessCredentialWireValue(
 const COMPETING_REFRESH_WIRE_VALUE = parseIdentityRefreshCredentialWireValue(
   `oms_rt_v1_${'F'.repeat(42)}M`,
 );
+const ROTATION_ROLLBACK_TRIGGER_FAULTS = Object.freeze([
+  Object.freeze({
+    index: ROTATION_ROLLBACK_CONSUME_FIXTURE_INDEX,
+    label: 'predecessor consumption',
+  }),
+  Object.freeze({
+    index: ROTATION_ROLLBACK_SUCCESSOR_FIXTURE_INDEX,
+    label: 'successor refresh insertion',
+  }),
+  Object.freeze({
+    index: ROTATION_ROLLBACK_ACCESS_FIXTURE_INDEX,
+    label: 'access credential insertion',
+  }),
+  Object.freeze({
+    index: ROTATION_ROLLBACK_LINK_FIXTURE_INDEX,
+    label: 'predecessor linkage',
+  }),
+  Object.freeze({
+    index: ROTATION_ROLLBACK_FAMILY_FIXTURE_INDEX,
+    label: 'family advancement',
+  }),
+  Object.freeze({
+    index: ROTATION_ROLLBACK_EVENT_FIXTURE_INDEX,
+    label: 'security-event insertion',
+  }),
+] as const);
 
 type StoredRefreshCredential = Readonly<{
   digest: IdentityRefreshCredentialDigest;
@@ -820,6 +867,53 @@ async function assignRotationAuthority(
   assert.equal(affectedAssignments, 1);
 }
 
+async function exceedRotationAuthorityRoleBound(
+  context: IntegrationContext,
+  fixture: DirectLockedLoaderFixture,
+  index: number,
+): Promise<void> {
+  // createRotatedFixture already assigns one active role. Add the full bound so
+  // the post-write authority projection contains exactly one role too many.
+  for (
+    let roleIndex = 0;
+    roleIndex < MAX_IDENTITY_AUTHENTICATED_PRINCIPAL_ACTIVE_ROLE_COUNT;
+    roleIndex += 1
+  ) {
+    const roleId = fixtureUuid(index, 20 + roleIndex);
+    const affectedRoles = await context.client.$executeRaw`
+      INSERT INTO identity_roles (
+        id,
+        code,
+        display_name,
+        status,
+        version,
+        created_at,
+        updated_at,
+        retired_at
+      ) VALUES (
+        UUID_TO_BIN(${roleId}, 0),
+        ${`IT_REFRESH_FAULT_${String(index)}_${String(roleIndex)}`},
+        ${`Integration refresh fault ${String(index)} role ${String(roleIndex)}`},
+        'ACTIVE',
+        1,
+        CAST(${toMySqlDateTime6(fixture.account.createdAt)} AS DATETIME(6)),
+        CAST(${toMySqlDateTime6(fixture.account.createdAt)} AS DATETIME(6)),
+        NULL
+      )
+    `;
+    const affectedAssignments = await context.client.$executeRaw`
+      INSERT INTO identity_account_roles (account_id, role_id)
+      VALUES (
+        UUID_TO_BIN(${fixture.account.id}, 0),
+        UUID_TO_BIN(${roleId}, 0)
+      )
+    `;
+
+    assert.equal(affectedRoles, 1);
+    assert.equal(affectedAssignments, 1);
+  }
+}
+
 async function createRotatedFixture(
   context: IntegrationContext,
   index: number,
@@ -1349,6 +1443,16 @@ async function executeRotated(
   });
 }
 
+function assertRotationDeliveryDenied(
+  outcome: unknown,
+  candidates: IdentitySessionCredentialCandidates,
+): void {
+  assert.throws(
+    () => createIdentitySessionRefreshCredentialDelivery(outcome, candidates),
+    InvalidIdentitySessionRefreshCredentialDeliveryError,
+  );
+}
+
 async function prepareRotatedExecution(
   context: IntegrationContext,
   fixture: RotatedFixture,
@@ -1485,6 +1589,20 @@ async function cleanFixtures(context: IntegrationContext): Promise<void> {
       DELETE FROM identity_roles
       WHERE id = UUID_TO_BIN(${roleId}, 0)
     `;
+    if (index === ROTATION_ROLLBACK_AUTHORITY_FIXTURE_INDEX) {
+      for (
+        let roleIndex = 0;
+        roleIndex < MAX_IDENTITY_AUTHENTICATED_PRINCIPAL_ACTIVE_ROLE_COUNT;
+        roleIndex += 1
+      ) {
+        const overBoundRoleId = fixtureUuid(index, 20 + roleIndex);
+
+        await context.client.$executeRaw`
+          DELETE FROM identity_roles
+          WHERE id = UUID_TO_BIN(${overBoundRoleId}, 0)
+        `;
+      }
+    }
     await context.client.$executeRaw`
       DELETE FROM identity_accounts
       WHERE id = UUID_TO_BIN(${accountId}, 0)
@@ -1530,7 +1648,7 @@ void test(
           const ticket = await discoverTicket(integration, fixture.credential);
           const changedRows = await integration.client.$executeRaw`
             UPDATE identity_refresh_credentials
-            SET digest = ${digestBytes(253)}
+            SET digest = ${digestBytes(DRIFTED_REFRESH_DIGEST_SEED)}
             WHERE id = UUID_TO_BIN(${fixture.credential.snapshot.id}, 0)
           `;
 
@@ -2309,6 +2427,87 @@ void test(
           } finally {
             await competingContext.runtime.close();
           }
+        },
+      );
+
+      await testContext.test(
+        'rolls back the entire graph when each rotation mutation is faulted by MySQL',
+        async (rollbackContext) => {
+          for (const fault of ROTATION_ROLLBACK_TRIGGER_FAULTS) {
+            await rollbackContext.test(fault.label, async () => {
+              const fixture = await createRotatedFixture(integration, fault.index);
+              const before = await readRotatedPersistenceSnapshot(integration, fixture);
+              const prepared = await prepareRotatedExecution(integration, fixture);
+              const outcome = await integration.unitOfWork.execute(prepared.command);
+
+              assert.deepEqual(outcome, {
+                kind: 'not-committed',
+                reason: 'unavailable',
+              });
+              assertRotationDeliveryDenied(outcome, prepared.candidates);
+              assert.deepEqual(await readRotatedPersistenceSnapshot(integration, fixture), before);
+            });
+          }
+        },
+      );
+
+      await testContext.test(
+        'rolls back all rotation mutations when the resulting authority projection is invalid',
+        async () => {
+          const fixture = await createRotatedFixture(
+            integration,
+            ROTATION_ROLLBACK_AUTHORITY_FIXTURE_INDEX,
+          );
+
+          await exceedRotationAuthorityRoleBound(
+            integration,
+            fixture,
+            ROTATION_ROLLBACK_AUTHORITY_FIXTURE_INDEX,
+          );
+          const before = await readRotatedPersistenceSnapshot(integration, fixture);
+          const prepared = await prepareRotatedExecution(integration, fixture);
+          const settlement = await observePromise(integration.unitOfWork.execute(prepared.command));
+
+          assert.equal(settlement.kind, 'rejected');
+          const error = settlement.error;
+
+          assert.equal(
+            Object.getPrototypeOf(error),
+            IdentitySessionRefreshExecutionFailedError.prototype,
+          );
+          assert.equal(
+            error instanceof Error ? error.message : undefined,
+            'Identity session refresh execution failed',
+          );
+          assert.equal(Object.hasOwn(error as object, 'cause'), false);
+          assertRotationDeliveryDenied(error, prepared.candidates);
+          assert.deepEqual(await readRotatedPersistenceSnapshot(integration, fixture), before);
+        },
+      );
+
+      await testContext.test(
+        'recovers transaction capacity after the rotation rollback fault matrix',
+        async () => {
+          const fixture = await createRotatedFixture(
+            integration,
+            ROTATION_ROLLBACK_RECOVERY_FIXTURE_INDEX,
+          );
+          const { candidates, outcome } = await executeRotated(integration, fixture);
+
+          assert.equal(outcome.kind, 'committed');
+          const completion = inspectIdentitySessionRefreshCommittedCompletion(outcome);
+
+          assert.equal(completion.evidence.kind, 'rotated');
+          const delivery = createIdentitySessionRefreshCredentialDelivery(completion, candidates);
+          const persisted = await readRotatedPersistenceSnapshot(integration, fixture);
+
+          assert.equal(Object.isFrozen(delivery), true);
+          assert.deepEqual(Reflect.ownKeys(delivery), []);
+          assert.equal(persisted.family.version, 8n);
+          assert.equal(persisted.credentials.refresh.length, 2);
+          assert.equal(persisted.credentials.access.length, 1);
+          assert.equal(persisted.events.length, 1);
+          assert.equal(persisted.events[0]?.outcome, 'SUCCEEDED');
         },
       );
 

@@ -742,8 +742,12 @@ require the final pair and access record, assert every affected-row count, and
 roll back every intermediate state on failure. Login similarly inserts family,
 initial refresh, then initial access. Real-MySQL failure-injection and
 two-refresh race tests are mandatory before any use case is exported. The
-guarded suite now supplies the healthy competing-refresh race; exhaustive
-per-operation rollback injection remains open.
+guarded suite now supplies the healthy competing-refresh race plus
+fixture-scoped statement failure across all six rotation mutations. Each target
+statement is atomic, and progressively later cases roll back every earlier
+successful mutation. It does not claim failure injection for every transaction
+operation: the three locks, post-lock clock, and post-event/pre-`COMMIT`
+interval remain separate open boundaries.
 
 A definite primary-key, digest, or successor collision during insertion also
 rolls back the complete transaction and discards every raw candidate. The
@@ -1967,9 +1971,32 @@ exactly one command rotates, the other reloads the consumed predecessor and
 commits reuse revocation, only the winner's successor/access generation is
 durable, and only the exact winner completion/candidate pair can mint delivery.
 The final family is revoked, so this does not claim that those credentials
-remain usable. These suites do not claim injected rollback after every
-operation, physical MySQL session identity in the Identity test, or
-protocol-level commit-acknowledgement loss.
+remain usable.
+
+The guarded runner also root-installs test-only `AFTER` triggers in its
+disposable database. Exact fixture UUIDs select six independent production
+rotation statement failures for predecessor consumption, successor-refresh
+insertion, access insertion, predecessor linkage, family advancement, and final
+security-event insertion. A trigger error fails its invoking statement, so the
+target statement leaves no row effect; progressively later cases cumulatively
+roll back zero through five earlier successful mutations. The application
+principal retains only its DML grant and receives no trigger or caller-selected
+fault authority. Every trigger case returns the fixed proven-non-commit
+unavailable outcome, denies completion and credential delivery, and leaves the
+complete family, refresh/access, and event snapshot equal to its pre-transaction
+graph. A separate over-bound authority fixture lets all five graph mutations
+complete before the same-connection projection becomes invalid; the fixed
+cause-free execution failure likewise rolls those writes back and grants no
+delivery authority. A final unaffected rotation proves usable transaction
+capacity and normal commit promotion after the matrix.
+
+These cases prove target-statement atomicity across all six mutations,
+cumulative transaction rollback of the preceding successful writes, and
+rollback after a post-write authority-projection defect. They do not inject a
+failure after a successful event append but before `COMMIT`, at the three locks
+or post-lock clock, exercise escaped-scope behavior through production
+composition, prove physical MySQL session identity in the Identity test, or
+simulate protocol-level `COMMIT` acknowledgement loss.
 
 The concrete adapter now turns the previously dormant exact-attempt binding
 into database-gated promotion or revocation. Focused adversarial tests prove one
@@ -1984,14 +2011,16 @@ loader owns only its static post-lock writer-time statement. The Identity Unit
 of Work neither retries nor treats its observer as commit proof.
 
 The remaining transaction proof matrix is deliberately narrower than the
-delivered implementation. It must inject rollback after every participating
-operation, exercise escaped-scope attempts through the production composition,
-and simulate protocol-level commit-acknowledgement loss. Focused application tests now prove
-the delivery gate's exact completion-to-attempt-to-pair authority, one-shot
-consumption, uniform rejection, and redaction. Future channel sinks and
-transport tests must separately prove that each credential is disclosed only
-through its intended response or cookie channel; neither a committed completion
-nor the opaque delivery capability directly serializes a wire value.
+delivered implementation. It must inject failures at the lock and post-lock
+clock boundaries and after a successful event append but before `COMMIT`,
+exercise escaped-scope attempts through the production composition, and
+simulate protocol-level `COMMIT` acknowledgement loss.
+Focused application tests now prove the delivery gate's exact
+completion-to-attempt-to-pair authority, one-shot consumption, uniform
+rejection, and redaction. Future channel sinks and transport tests must
+separately prove that each credential is disclosed only through its intended
+response or cookie channel; neither a committed completion nor the opaque
+delivery capability directly serializes a wire value.
 
 The rejected alternatives are public aggregate repositories and one Unit of
 Work containing every query and mutation. Repositories make partial refresh
@@ -2034,9 +2063,9 @@ the scope must be invalid before `COMMIT`, while confirmed commit still needs
 the exact attempt binding for the later one-shot delivery exchange. That
 retained registration grants neither SQL nor raw credential access. The
 remaining improvements are channel-specific access-response and refresh-cookie
-sinks plus the real-MySQL fault matrix for the delivered Unit of Work:
-per-operation rollback injection, escaped scope, and protocol-level
-commit-acknowledgement loss.
+sinks plus the remaining real-MySQL fault matrix for the delivered Unit of
+Work: lock/post-lock-clock and post-event/pre-`COMMIT` failure injection,
+escaped scope, and protocol-level `COMMIT` acknowledgement loss.
 
 ## Credential and password representation
 
@@ -3071,9 +3100,16 @@ commit and program close, and implements the Identity-owned two-sided command
 cleanup rendezvous for deadline-driven `indeterminate`. The package-internal
 one-shot delivery gate now authenticates and consumes the committed
 completion-to-attempt-to-exact-pair chain into a redacting opaque capability.
+The guarded production composition now proves atomic failure for each of six
+exact root-installed, fixture-scoped rotation mutation statements, cumulative
+rollback of every earlier successful write, rollback at an invalid post-write
+authority projection, denied delivery on every fault, and a later unaffected
+recovery rotation. Lock/clock and post-event/pre-`COMMIT` fault injection,
+escaped-scope composition, and protocol-level `COMMIT` acknowledgement loss
+remain open.
 Channel-specific access-response and refresh-cookie sinks, remaining
 security-event paths, cleanup use case, NestJS composition, transport-level
-delivery tests, and the remaining real-MySQL Unit-of-Work fault matrix remain.
+delivery tests, and those remaining real-MySQL Unit-of-Work proofs remain.
 A trusted caller can now
 resolve an already-extracted canonical access-wire value, but there is still no
 `Authorization` extraction, request association, credential ingress, route, or
@@ -3383,6 +3419,14 @@ public authentication surface.
     the active first Account-lock query before the deadline, which stays
     `indeterminate` and write-free, cannot mint delivery, and is followed by a
     successful independent refresh through recovered single-slot capacity.
+39. **Why use test-only database triggers instead of production failpoints for
+    rollback proof?** Exact fixture-scoped `AFTER` triggers make real InnoDB
+    fail the target mutation statement atomically without adding a production
+    branch, callback, privilege, or configurable failure mode. Progressively
+    later cases prove rollback of every earlier successful write. They do not
+    prove a fault after a successful final append or model a server commit whose
+    acknowledgement is lost, so those gaps require later program- and
+    protocol-level fault proofs.
 
 ## Future improvements
 
@@ -3414,9 +3458,10 @@ public authentication surface.
 - Add channel-specific access-response and refresh-cookie sinks for the
   delivered opaque capability only alongside a reviewed public refresh use case
   and HTTP policy. Keep raw serializers, the internal delivery factory, and
-  generic reveal authority unavailable. Extend the Unit of Work's real-MySQL
-  proof with scope escape, rollback injection after every participating
-  operation and protocol-level commit-acknowledgement loss
+  generic reveal authority unavailable. Extend the Unit of Work's delivered
+  mutation/authority rollback matrix with lock/post-lock-clock failure
+  injection, post-event/pre-`COMMIT` failure, scope escape, and protocol-level
+  `COMMIT` acknowledgement loss
   before applying the pattern to login, logout, Account, authenticator, or Role
   workflows; do not generalize it into aggregate CRUD.
 - Add a closed-cardinality metric and explicit unhealthy-process recycle policy

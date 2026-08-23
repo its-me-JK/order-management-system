@@ -435,11 +435,19 @@ commands from the same predecessor, positively observes both production Account
 locks, and proves one winner-agnostic rotation followed by one committed reuse
 closure. Only the winner's generation persists, the family ends revoked, and
 only the exact winner completion/candidate pair can mint the opaque delivery
-capability. These are transaction, completion, and delivery-authority proofs,
-not per-operation rollback injection, physical-session identity, or
-protocol-level commit-acknowledgement loss. The
-runner drops and independently verifies both its database and temporary DML
-grant.
+capability. The runner also root-installs fixture-scoped `AFTER` triggers that
+make each rotation mutation statement fail in turn: predecessor consumption,
+successor insertion, access insertion, predecessor linkage, family advancement,
+and successful-event append. Each target statement leaves no row effect, each
+later case cumulatively rolls back all earlier successful mutations, the exact
+pre-transaction graph is preserved, and credential delivery stays denied. A
+separate over-bound authority projection fails after the five graph writes and
+proves their rollback, while a final clean rotation proves capacity recovery.
+These are statement-atomicity, cumulative transaction-rollback, completion,
+and delivery-authority proofs; they do not inject lock-acquisition, clock-read,
+or post-event/pre-`COMMIT` faults, prove physical-session identity, or simulate
+protocol-level ambiguous `COMMIT` acknowledgement loss. The runner drops and
+independently verifies both its database and temporary DML grant.
 The Catalog integration command verifies an initial-schema
 upgrade with legacy rows, rejects ambiguous terminal history before DDL, and
 also creates, migrates twice, and removes an exact fresh
@@ -618,7 +626,7 @@ Useful repository commands:
 | `pnpm test:integration:identity-authority` | Verify the bounded Identity access-authority reader in an isolated local MySQL database |
 | `pnpm test:integration:identity-authorization` | Verify the Identity authorization registry, Role mappings, security-event schema, and Prisma drift against isolated real MySQL databases |
 | `pnpm test:integration:identity-refresh-discovery` | Verify lifecycle-blind refresh-digest discovery and its production Prisma query in an isolated local MySQL database |
-| `pnpm test:integration:identity-refresh-locked-loader` | Verify the Prisma reference lock contract and production direct refresh transaction composition, including exact-connection locking, commit-gated completion, rollback mapping, lossless rehydration, and causal Account contention, in an isolated local MySQL database |
+| `pnpm test:integration:identity-refresh-locked-loader` | Verify the Prisma reference lock contract and production direct refresh transaction composition, including exact-connection locking, commit-gated completion, mutation-statement atomicity, cumulative rollback, lossless rehydration, and causal Account contention, in an isolated local MySQL database |
 | `pnpm test:integration:identity-refresh-lineage` | Verify the Identity lineage migration, invariants, and Prisma drift against isolated real MySQL databases |
 | `pnpm format:check` | Verify formatting without modifying files |
 | `pnpm check` | Run every required quality gate in CI order |

@@ -69,6 +69,33 @@ EOSQL
     '
 }
 
+install_refresh_rollback_faults() {
+  local rollback_fault_fixture="$repository_directory/packages/modules/identity/test/fixtures/identity-session-refresh-rollback-faults.sql"
+
+  if [[ ! -f "$rollback_fault_fixture" ]]; then
+    printf '%s\n' 'Identity refresh rollback fault fixture is missing' >&2
+    exit 2
+  fi
+
+  docker compose exec -T \
+    -e REFRESH_LOCKED_LOADER_TEST_DATABASE="$refresh_locked_loader_test_database" \
+    mysql sh -euc '
+      if [ "$REFRESH_LOCKED_LOADER_TEST_DATABASE" != "oms_identity_refresh_locked_loader_integration" ]; then
+        printf "%s\n" "Unexpected Identity refresh rollback fault database" >&2
+        exit 2
+      fi
+
+      MYSQL_PWD="$(cat /run/secrets/mysql_root_password)"
+      export MYSQL_PWD
+
+      exec mysql \
+        --protocol=TCP \
+        --host=127.0.0.1 \
+        --user=root \
+        --database="$REFRESH_LOCKED_LOADER_TEST_DATABASE"
+    ' < "$rollback_fault_fixture"
+}
+
 drop_refresh_locked_loader_test_database() {
   docker compose exec -T \
     -e REFRESH_LOCKED_LOADER_TEST_DATABASE="$refresh_locked_loader_test_database" \
@@ -165,4 +192,5 @@ export DATABASE_TLS_MODE='disabled'
 
 pnpm db:migrate:deploy
 pnpm db:migrate:deploy
+install_refresh_rollback_faults
 pnpm --filter @oms/identity run test:integration:refresh-locked-loader
