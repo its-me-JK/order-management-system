@@ -169,6 +169,90 @@ Optimistic version is checked before lifecycle state, mutation time is checked
 after lifecycle state, and version capacity is checked last; this fixes stable
 failure precedence without accepting stale commands or regressing time.
 
+### Role and permission state contract
+
+A permission code is a stable application-owned policy identifier, not
+operator-authored content. It has exactly three dot-separated ASCII segments
+representing bounded context, resource, and action. Every segment starts with a
+lowercase letter, contains only lowercase letters, digits, or single internal
+hyphens, and is at most 32 characters; the complete code is at most 98
+characters. Empty segments, underscores, consecutive or edge hyphens,
+wildcards, surrounding whitespace, case folding, and silent normalization are
+rejected. This intentionally supports codes such as
+`catalog.product-variants.read` without admitting wildcard policy semantics.
+The application layer later verifies that a syntactically valid code exists in
+the immutable permission registry before Role creation, grant, or revoke. This
+makes a syntactically valid typo an explicit application failure instead of a
+silent absent-mapping no-op; the foreign key remains the final write backstop.
+
+The Role snapshot contains exactly `id`, `code`, `displayName`, `status`,
+`permissions`, `version`, `createdAt`, `updatedAt`, and `retiredAt`:
+
+| Field | Domain rule |
+| --- | --- |
+| `id` | Canonical lowercase UUIDv7. |
+| `code` | Immutable 3-through-64-character uppercase ASCII identifier with single internal underscores; uniqueness is enforced transactionally by persistence. |
+| `displayName` | Operator-facing NFC Unicode text from 1 through 100 code points, with only non-repeated internal U+0020 spaces and no surrogate, control, format, private-use, or unassigned code point. It is never authorization input. |
+| `status` | `ACTIVE` or terminal `RETIRED`; a retired role cannot be renamed or have its mappings changed. |
+| `permissions` | Frozen, distinct, ASCII-lexicographically sorted permission codes, with cardinality from 0 through 128. An empty active role safely grants nothing. |
+| `version` | Positive unsigned 32-bit optimistic version; creation is version 1 and every effective rename, mapping change, or retirement advances it once. |
+| `createdAt`, `updatedAt` | Lossless MySQL-range UTC instants; creation initializes both to the same value and time never regresses. |
+| `retiredAt` | `null` while active; equal to `updatedAt` after the terminal transition. |
+
+Creation accepts permissions in any order, rejects duplicate entries as a
+caller/configuration defect, and stores the canonical sorted set. Rehydration
+is stricter: it rejects extra or missing snapshot fields and any permission
+array that is not already distinct and sorted, so persistence corruption is
+not silently repaired. An Active version-1 snapshot has
+`createdAt = updatedAt` and no retirement time. A Retired snapshot has version
+at least 2 and `retiredAt = updatedAt`. Equal mutation instants remain valid
+because the version is the concurrency order.
+
+Role exposes explicit `grantPermission` and `revokePermission` operations
+instead of replacing the complete set. That prevents a stale administrator
+from accidentally overwriting unrelated grants and produces one precise audit
+fact per effective change. Granting an existing or revoking an absent
+permission, and renaming to the current display name, returns the original
+aggregate unchanged, consumes no version, and emits no fact. Removing the last
+permission is allowed; retiring a role is a separate terminal business
+decision. This deliberately permits a temporarily empty Active role: it is
+operationally visible but grants nothing, while forcing retirement would make a
+temporary least-privilege response irreversible. Account-role assignments
+remain outside both Account and Role so their independent hot paths do not
+create oversized aggregates.
+
+Every mutation validates expected version, Active lifecycle, and its new value
+before deciding whether it is a no-op. Effective changes then validate
+occurrence time and permission capacity where applicable, followed by version
+capacity. This stable precedence rejects stale commands first while allowing a
+semantic no-op carrying the current expected version to succeed without
+requiring a new database time. A replay carrying the pre-change version still
+fails optimistic concurrency; durable command idempotency owns lost-response
+replay. Changed operations return a new immutable Role and a frozen fact
+tuple. Creation emits `ROLE_CREATED` followed by one
+`ROLE_PERMISSION_GRANTED` fact per initial mapping in canonical order; every
+other effective operation emits one fact and unchanged operations emit none.
+Facts contain only type, opaque role ID, resulting status, version, occurrence
+time, and—for a mapping change—the non-secret permission code; display names
+and complete permission sets are excluded. They are inputs to the future
+application Unit of Work, not integration events or permission to publish.
+
+Because Unicode normalization does not prevent homoglyphs, every
+administrator-facing role selector or confirmation renders the immutable ASCII
+role code beside the display name. The application contract must also define
+reserved `SYSTEM_` code ownership and last-administrator protection before any
+remote role-management route is enabled; those cross-aggregate policies do not
+belong inside Role.
+
+The alternative is a generic RBAC entity with mutable role names and bulk
+mapping replacement. It is simpler to scaffold but makes role labels part of
+business policy, expands lost-update risk, and obscures audit intent. The
+chosen aggregate costs more explicit commands and requires the future Unit of
+Work to check the permission registry and persist a Role row plus mapping
+delta atomically. In return, business modules depend only on stable permission
+codes, authority remains least-privilege, and role retirement preserves
+evidence without creating a permanent wildcard administrator.
+
 ### PasswordAuthenticator state contract
 
 The PasswordAuthenticator snapshot contains exactly `accountId`,
@@ -301,6 +385,13 @@ built-in `SYSTEM_ADMINISTRATOR` role containing exactly those seven mappings:
 - `catalog.skus.write`
 - `catalog.skus.publish`
 - `audit.records.read`
+
+The complete application-owned permission registry is capped at 128 codes.
+Every permission-adding migration must assert that bound before inserting. It
+keeps a principal's distinct-permission projection intrinsically bounded; with
+at most 16 active roles, the authority query still caps and validates at most
+2,048 mapping rows before producing at most 128 codes. Exceeding either bound
+is corruption and fails closed, not partial authority.
 
 The role never means “all permissions.” A future permission is not granted
 until a reviewed migration or authorization command explicitly adds that
@@ -966,10 +1057,11 @@ Redis decision latency receive separate metrics and alerts.
 
 Identity records closed events such as bootstrap, login accepted/rejected,
 refresh rotation, refresh reuse, logout, family revocation, password
-authenticator disabled/rebound, password replacement, role grant/revoke,
-suspension, resumption, and deactivation. State-changing events commit with
-their state. A rejected login admitted by Redis may record a bounded event with
-a nullable account identifier; it never records the candidate value.
+authenticator disabled/rebound, password replacement, role creation/rename/
+retirement, role grant/revoke, suspension, resumption, and deactivation.
+State-changing events commit with their state. A rejected login admitted by
+Redis may record a bounded event with a nullable account identifier; it never
+records the candidate value.
 
 Security records contain no arbitrary metadata JSON, login name, password,
 PHC value, token, digest, cookie, IP, user agent, DTO, or exception text.
@@ -1165,6 +1257,11 @@ authentication surface becomes public.
 10. **Why is logout `503` when MySQL is down?** Returning success would claim
     server-side revocation that did not occur. The client can discard its
     in-memory access value and retry while retaining the refresh cookie.
+11. **Why version permission mappings with the Role instead of treating the
+    join table as unrelated CRUD?** A mapping changes effective authority. One
+    aggregate version and one transaction make concurrent grants, revokes, and
+    retirement observable, reject lost updates, and produce precise security
+    evidence.
 
 ## Future improvements
 
@@ -1172,6 +1269,9 @@ authentication surface becomes public.
   lifecycle, and step-up policy before real privileged production use.
 - Add an administrator session list and revoke-one/revoke-all commands without
   exposing raw credential metadata.
+- Add policy-aware approval workflows and temporary grants if operational use
+  demonstrates a need; do not add wildcard permissions or make role display
+  names authorization inputs.
 - Evaluate a same-origin Backend for Frontend after the Next.js threat model is
   concrete.
 - Add breached-password blocklist update provenance and offline freshness
