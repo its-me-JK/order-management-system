@@ -1,2 +1,2 @@
-// Domain types stay internal until an application contract needs to expose them.
-export {};
+// Domain types and principal construction stay internal to Identity.
+export type { IdentityAuthenticatedPrincipal } from './application/identity-authenticated-principal';

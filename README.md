@@ -54,13 +54,16 @@ records the exact refresh generation that issued it. Family creation and
 successful rotation return one frozen, generation-matched refresh/access
 bundle; replay still closes the family without inspecting or issuing access
 state, and the six-field conditional-write basis remains credential-secret
-free. The package deliberately exports no application contract and exposes no
-route yet; the Identity Unit of Work and persistence, token/digest and Argon2
-adapters, password input policy, and Redis remain gated later slices. Pricing,
-inventory, Redis caching, and integration events also remain separate later
-slices.
+free. The package's first public application contract is now a nominal,
+immutable authenticated principal containing only opaque actor/session IDs and
+the bounded current permission set. Its authority factory remains internal and
+validates role-count evidence, so the runtime package root exports no
+constructor. Identity still exposes no resolver use case or route; the Unit of
+Work and persistence, token/digest and Argon2 adapters, password input policy,
+and Redis remain gated later slices. Pricing, inventory, Redis caching, and
+integration events also remain separate later slices.
 
-**Overall project progress: 32%.** The fixed, deployment-inclusive scoring
+**Overall project progress: 33%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
 
 ## Planned technology
