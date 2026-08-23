@@ -123,7 +123,7 @@ authority an unbounded request input.
 | `Account` aggregate | Canonical login, `ACTIVE`, `SUSPENDED`, or terminal `DEACTIVATED`, and optimistic version. Roles and password state are not loaded into this aggregate. |
 | `PasswordAuthenticator` aggregate | One account key, `ACTIVE` or `REBIND_REQUIRED`, Argon2id PHC value, optimistic version, bounded consecutive failures, and the next permitted verification instant. It is separate because rejected login mutates this hot state without changing Account. |
 | `Role` aggregate | Immutable code, display name, `ACTIVE` or terminal `RETIRED`, optimistic version, and a bounded permission set. |
-| `SessionFamily` aggregate | Stable session identifier, one account, absolute and idle deadlines, revocation, and only the current command's presented/successor refresh entities. It never loads complete token history. |
+| `SessionFamily` aggregate | Stable session identifier, one account, absolute and idle deadlines, revocation, only the current command's presented/successor refresh entities, and the access entity issued by that command. It never loads access or refresh history. |
 | `Permission` reference | Immutable application-owned permission code seeded by a reviewed migration. |
 | `SecurityEvent` record | Append-only evidence with closed event and reason codes; it is not a mutable aggregate. |
 | Authority read model | One purpose-built current-state projection returning only the authenticated principal. |
@@ -462,47 +462,56 @@ minutes or with different fractional digits is valid only when expiry equals
 the family absolute deadline. These combined rules detect partial or corrupt
 cross-table state without loading token history.
 
-Family creation now requires one caller-generated candidate
-`initialRefreshCredentialId` in addition to the family/account IDs, lifetimes,
-and occurrence time, and returns the derived sequence-1 RefreshCredential in
-the same frozen result as `initialRefreshCredential`. Its issuance equals
-creation and its expiry equals the initial idle deadline. No standalone
-credential fact is emitted: the existing family-created fact is the business
-occurrence. The future login Unit of Work accepts that complete result and
-cannot persist a family through an independent save operation. Before calling
+Family creation now requires caller-generated `initialRefreshCredentialId`
+and `initialAccessCredentialId` candidates in addition to the family/account
+IDs, refresh lifetimes, access lifetime, and occurrence time. It returns the
+derived sequence-1 children in the same frozen result as
+`initialRefreshCredential` and `initialAccessCredential`. Both issuance times
+equal creation. Refresh expiry equals the initial idle deadline; access expiry
+uses its configured lifetime because the one-day minimum family absolute life
+is longer than the thirty-minute maximum access life. No standalone credential
+fact is emitted: the existing family-created fact is the business occurrence.
+The future login Unit of Work accepts that complete result and cannot persist
+a family or either child through an independent save operation. Before calling
 creation it holds the owning Account lock, proves the Account is Active, and
 requires the authoritative occurrence time to be no earlier than
 `account.updatedAt`.
 
-Creation parses `occurredAt`, family ID, account ID, initial credential ID,
-idle lifetime, then absolute lifetime in that exact order. The initial
-credential ID may equal the family ID because the branded identifiers occupy
-separate table namespaces; no invariant or lookup relies on global UUID
-uniqueness.
+Creation preserves its existing validation prefix, then appends access
+validation: `occurredAt`, family ID, account ID, initial refresh ID, refresh-idle
+lifetime, refresh-absolute lifetime, initial access ID, then access lifetime.
+Only after all eight values pass does it derive deadlines or construct any
+entity. Initial access, refresh, and family IDs may share the same UUID bytes
+because their brands and tables are separate namespaces; no invariant or
+lookup relies on global UUID uniqueness.
 
 The only refresh presentation operation is
 `SessionFamily.presentRefreshCredential({ account,
 presentedRefreshCredential, occurredAt, successorRefreshCredentialId,
-refreshIdleLifetimeSeconds })`. It receives the locked current Account, the
-locked presented RefreshCredential, one authoritative time, a candidate
-successor ID, and the configured idle lifetime. It receives no raw credential,
-digest, caller-supplied deadline, expected sequence, or family version from
-non-locking lookup. It validates the Account/family ownership relationship and
-requires `account.createdAt <= family.createdAt`. It records the locked account
-version in the write basis; Account itself is never mutated by refresh.
+refreshIdleLifetimeSeconds, issuedAccessCredentialId,
+accessLifetimeSeconds })`. It receives the locked current Account, the locked
+presented RefreshCredential, one authoritative time, candidate successor
+refresh and issued-access IDs, and the two configured lifetimes. It receives no
+raw credential, digest, caller-supplied deadline, expected sequence, or family
+version from non-locking lookup. It validates the Account/family ownership
+relationship and requires `account.createdAt <= family.createdAt`. It records
+the locked account version in the write basis; Account itself is never mutated
+by refresh.
 
 The operation returns one exact frozen union:
 
 - `rotated` contains exact members `kind`, `basis`, `sessionFamily`,
-  `consumedRefreshCredential`, `successorRefreshCredential`, and `facts`;
+  `consumedRefreshCredential`, `successorRefreshCredential`,
+  `issuedAccessCredential`, and `facts`;
 - `reuse-detected` contains exact members `kind`, `basis`, `sessionFamily`,
   `reusedRefreshCredential`, and `facts`; or
 - `rejected` contains exact members `kind`, `sessionFamily`,
   `presentedRefreshCredential`, and `facts`, with no detailed reason.
 
-The rotated child is a new immutable consumed view of the predecessor; the
-reuse and rejection children are their original object references. The
-Account never appears in a result.
+The rotated refresh child is a new immutable consumed view of the predecessor;
+the successor refresh and issued access records share the next sequence and
+issuance instant. The reuse and rejection children are their original object
+references. The Account never appears in a result.
 
 The changed variants' write basis contains exactly `accountId`, locked
 `accountVersion`, `sessionId`, prior `sessionFamilyVersion`,
@@ -550,9 +559,12 @@ Validation and security precedence is exact:
 5. Only an unconsumed branch requires an Active Account, strict future family
    idle and credential deadlines, and at least one whole second through the
    absolute deadline. Equality at any expiry is rejected.
-6. Only then parse the successor ID, parse the idle lifetime, reject reuse of
-   the predecessor ID, prove version and sequence capacity, and construct the
-   complete changed bundle, in that exact order.
+6. Only then parse the successor refresh ID, parse the refresh-idle lifetime,
+   reject reuse of the predecessor ID, and prove family/refresh sequence
+   capacity, in that exact order. This preserves the already accepted refresh
+   failure precedence.
+7. Parse the issued access ID and access lifetime, then construct the complete
+   changed bundle. Reuse and rejection never read either access input.
 
 Successful rotation changes the predecessor only by setting consumption time
 to the transaction instant and linking the candidate successor. The successor
@@ -560,10 +572,13 @@ uses the same family, the next sequence, that instant as issuance, and
 `min(occurredAt + idle lifetime, absolute expiry)` as expiry. The family moves
 `lastRotatedAt` and idle expiry to those same values and advances once. If
 adding the idle lifetime would exceed MySQL year 9999, the valid earlier
-absolute deadline is the cap rather than an overflow failure. The result emits
-one `SESSION_FAMILY_REFRESH_ROTATED` fact containing only session and account
-IDs, `AUTHENTICATING`, resulting family version, and occurrence time. Replay
-uses the existing `SESSION_FAMILY_REVOKED` fact narrowed to
+absolute deadline is the cap rather than an overflow failure. The issued access
+record uses that same next sequence and occurrence time, with expiry
+`min(occurredAt + access lifetime, absolute expiry)` independently of refresh
+idle expiry. The family still advances exactly once. The result emits one
+`SESSION_FAMILY_REFRESH_ROTATED` fact containing only session and account IDs,
+`AUTHENTICATING`, resulting family version, and occurrence time. Replay uses
+the existing `SESSION_FAMILY_REVOKED` fact narrowed to
 `REFRESH_REUSE_DETECTED`. Neither fact contains credential IDs, sequences,
 deadlines, tokens, or digests.
 
@@ -586,28 +601,116 @@ retry intentionally closes the family.
 The future MySQL transaction has an important immediate-constraint ordering.
 With both one-unconsumed-slot uniqueness and a self-referencing successor
 foreign key, it must first mark the predecessor consumed, then insert the
-successor, then link the predecessor, and finally update the family plus the
-remaining access/event state. A database check requiring consumption time and
-successor ID to become non-null in the same statement would make every order
-impossible because MySQL cannot defer those constraints. Persistence therefore
-enforces the weaker rule that a successor implies consumption; the domain and
-Unit of Work require the final pair, assert every affected-row count, and roll
-back every intermediate state on failure. Real-MySQL failure-injection and
+successor refresh, insert the access record that references that generation,
+link the predecessor, and finally update the family plus projection/event
+state. A database check requiring consumption time and successor ID to become
+non-null in the same statement would make every order impossible because
+MySQL cannot defer those constraints. Persistence therefore enforces the
+weaker rule that a successor implies consumption; the domain and Unit of Work
+require the final pair and access record, assert every affected-row count, and
+roll back every intermediate state on failure. Login similarly inserts family,
+initial refresh, then initial access. Real-MySQL failure-injection and
 two-refresh race tests are mandatory before any use case is exported.
 
-A primary-key, digest, or successor collision during insertion also rolls back
-the complete transaction and discards every raw candidate. The application may
-boundedly regenerate and retry in a new transaction or return one sanitized
-internal failure; it cannot reinterpret an infrastructure collision as a
-completed domain transition.
+A definite primary-key, digest, or successor collision during insertion also
+rolls back the complete transaction and discards every raw candidate. The
+application may boundedly regenerate and retry in a new transaction or return
+one sanitized internal failure; it cannot reinterpret an infrastructure
+collision as a completed domain transition. An indeterminate commit is never
+automatically retried: candidates are discarded and the operation returns a
+sanitized unavailable result. In particular, retrying an ambiguous refresh
+internally could observe the predecessor as consumed and close the family for
+replay.
 
-AccessCredential remains a separate immutable issuance record and is not part
-of the loaded refresh-child boundary. This domain-only increment may defer it
-because the package root and every refresh use case remain absent. The first
-application/persistence refresh increment must atomically add the access
-record and digest, refresh digest, permission projection, and security event to
-the complete rotation transaction; raw candidate values are returned only
-after commit and discarded on rejection or rollback.
+### AccessCredential and complete issuance result
+
+AccessCredential is a versionless, immutable SessionFamily issuance record.
+It is created with the initial refresh generation or one successful refresh
+generation, but SessionFamily never loads access history to rotate or revoke.
+Old unexpired access rows intentionally coexist after refresh; family and
+Account joins, rather than per-access mutation, govern terminal validity.
+
+Its exact domain snapshot is:
+
+| Field | Domain rule |
+| --- | --- |
+| `id` | Canonical lowercase UUIDv7 branded separately from every other Identity identifier. |
+| `sessionId` | Immutable owning SessionFamily identifier; it maps to `family_id` in persistence. |
+| `sequence` | The existing `IdentityRefreshCredentialSequence` from 1 through 4,294,967,294. It identifies the exact refresh generation that issued this access record; it is not an optimistic version. |
+| `issuedAt`, `expiresAt` | Lossless UTC instants. Expiry is at least one whole second and no more than 1,800 seconds after issuance. |
+
+The entity contains no raw credential, digest, account ID, status, permission
+claim, lifecycle version, `updatedAt`, request data, or transport metadata. It
+has no mutation or isolated `isValid` method because authentication always
+depends on AccessCredential, its paired refresh generation, SessionFamily,
+Account, and current permission state together. Strict rehydration accepts
+only the five exact fields, copies and freezes them, and collapses every
+malformed value or intrinsic chronology cause to the fixed cause-free
+`InvalidIdentityAccessCredentialStateError`.
+
+`IdentityAccessCredentialId` has a fixed
+`InvalidIdentityAccessCredentialIdError`. Configured
+`IdentityAccessLifetimeSeconds` is an integer from 300 through 1,800 with
+constants `MIN_IDENTITY_ACCESS_LIFETIME_SECONDS` and
+`MAX_IDENTITY_ACCESS_LIFETIME_SECONDS` and a fixed
+`InvalidIdentityAccessLifetimeSecondsError`. Local rehydration deliberately
+permits an actual interval from one through 1,800 seconds and permits different
+fractional digits: a family absolute cap can create either shape. It never
+silently expands a capped interval to the configured minimum.
+
+Package-internal `IdentityAccessCredential.issueForSessionFamily` is the only
+factory, and SessionFamily is its only production caller. Initial issuance is
+sequence 1 at family creation. Refresh issuance uses the successor refresh
+sequence and exact issuance instant. In both paths expiry is the earlier of
+`issuedAt + access lifetime` and family absolute expiry. If addition would
+exceed MySQL year 9999, the already valid earlier absolute deadline is the cap.
+Refresh idle and refresh-credential expiry never cap access. There is no
+standalone access issue/save operation and the package root remains empty.
+
+Every durable AccessCredential must have one exact issuance witness:
+
+- `(sessionId, sequence)` equals one retained RefreshCredential generation;
+- `access.issuedAt` equals that refresh generation's `issuedAt`;
+- sequence is no greater than the family's current sequence;
+- `family.createdAt <= access.issuedAt <= family.lastRotatedAt`;
+- access expiry is no later than family absolute expiry; and
+- unless access expiry equals the family absolute cap, issuance and expiry have
+  matching fractional digits and the interval is from 300 through 1,800 whole
+  seconds.
+
+The paired refresh row is immutable issuance evidence only. Authority never
+requires it to remain unconsumed or unexpired, and it never compares access
+expiry with refresh idle or refresh expiry. A prior access credential may
+therefore remain valid after a later rotation until its own expiry, family
+closure/absolute expiry, or Account inactivation.
+
+The existing `SESSION_FAMILY_CREATED` and
+`SESSION_FAMILY_REFRESH_ROTATED` facts are the complete business occurrences;
+no access-issued fact is added. Facts still exclude every credential ID,
+sequence, deadline, raw value, and digest. The refresh conditional-write basis
+also remains its exact six prior locked fields: the issued access record is new
+insert state, not an optimistic condition.
+
+The future Unit of Work accepts only the complete creation or rotated bundle.
+Login commits family, initial refresh/access digests, authenticator changes,
+limit eviction, permission projection, and events together. Refresh commits
+predecessor consumption, successor refresh/access digests, link, family
+advance, projection, and event together. Failure after any step rolls back all
+of them. Raw `oms_at_v1_...` and `oms_rt_v1_...` candidates and SHA-256 digests
+remain application/crypto-adapter material outside domain state. Only a
+confirmed commit permits returning the raw access value or setting the refresh
+cookie; rejection, reuse closure, rollback, collision, and indeterminate
+commit discard candidates.
+
+The alternative is a digest-only access row without generation provenance or
+a standalone issuance service. Both are smaller, but neither can prove that a
+retained access row belongs to an actual refresh occurrence, and a separate
+service can commit rotation without the access record required by the
+response. The sequence and foreign key cost four bytes plus one unique indexed
+join per protected request and couple cleanup order. In return they enforce at
+most one access record per refresh generation, make issuance time
+referentially auditable, and let authority fail closed on cross-row corruption
+without loading unbounded history.
 
 The alternative is separate family rotation and credential mutation methods,
 or a grace period that recovers the prior successor. Separate methods admit
@@ -666,7 +769,7 @@ otherwise-equal values that differ only in those digits.
 | `identity_role_permissions` | Composite primary key `(role_id, permission_code)` plus reverse `(permission_code, role_id)` index. |
 | `identity_account_roles` | Composite primary key `(account_id, role_id)` plus reverse `(role_id, account_id)` index. |
 | `identity_session_families` | Externally visible UUID session ID; account ID; unsigned version; created, last-rotated, idle-expiry, absolute-expiry, optional revoked time and closed reason. Indexes `(account_id, revoked_at, absolute_expires_at, id)` and `(absolute_expires_at, id)`. Expiry is derived from time, not a stored status. |
-| `identity_access_credentials` | UUID primary key; family ID; unique `BINARY(32)` digest; issued and expiry times. Indexes `(family_id, expires_at, id)` and `(expires_at, id)`. Validity derives from credential, family, and account state. |
+| `identity_access_credentials` | UUID primary key; family ID; unsigned sequence; unique `BINARY(32)` digest; issued and expiry times. Unique `(family_id, sequence)` is also a composite foreign key to the retained refresh generation with the same pair. Indexes `(family_id, expires_at, id)` and `(expires_at, id)`. The digest is persistence-only; validity derives from credential, paired issuance generation, family, account, and current permissions. |
 | `identity_refresh_credentials` | UUID primary key; family ID; unique `BINARY(32)` digest; unsigned sequence; issued, expiry, optional consumed time and optional unique successor ID. Unique `(family_id, sequence)`. A generated active-slot column plus unique `(family_id, active_slot)` enforces at most one unconsumed credential per family. |
 | `identity_security_events` | UUID, closed event/outcome/reason codes, optional opaque actor/subject/session/request/correlation IDs, and occurrence time. It has no arbitrary JSON and no foreign key to account or session retention. Indexes support time, subject-time, and session-time queries. |
 | `identity_bootstrap_state` | One seeded singleton row locked by first-admin provisioning so two concurrent commands cannot both claim bootstrap. |
@@ -749,11 +852,23 @@ authenticator is a fixed refusal, never an upsert. The runbook requires a fresh
 login afterward and correlation of the application event with the deployment
 audit record.
 
-The authority query starts from a unique access digest and inner-joins the
-unexpired credential, unrevoked family before its absolute expiry, and active
-account. It then left-joins active role assignments and permissions in the same
-bounded SQL statement using one MySQL `CURRENT_TIMESTAMP(6)` value selected in
-that statement. Zero
+The authority query starts from a unique access digest and inner-joins its
+exact `(family_id, sequence)` refresh issuance witness, the unrevoked family
+before its absolute expiry, and the active account. Using the one MySQL
+`CURRENT_TIMESTAMP(6)` value selected in that statement, it requires
+`access.issued_at <= dbNow < access.expires_at`, exact access/refresh issuance
+time equality, `access.expires_at <= family.absolute_expires_at`, and
+`family.created_at <= access.issued_at <= family.last_rotated_at`. Because
+authority already requires an unrevoked family, it also requires
+`access.sequence <= family.version`; that version is the family's current
+refresh sequence until terminal revocation. The duration must be at least one
+second and no more than 1,800 seconds. Unless expiry equals the family absolute
+deadline, it must also be an exact whole 300 through 1,800 seconds with matching
+fractional digits. It then left-joins active role assignments and permissions
+in the same bounded statement. The paired refresh row is evidence, not a live
+authority gate: its consumed time, idle expiry, and credential expiry are
+deliberately not filtered. Any missing witness or cross-row inconsistency fails
+closed rather than returning partial authority. Zero
 active roles is a valid authenticated principal with `permissions: []`, not an
 authentication failure; a protected business command subsequently returns its
 ordinary permission `403`. The 16-role bound counts distinct non-null active
@@ -1450,8 +1565,9 @@ The implementation increment is incomplete until tests prove:
 
 1. Accept this contract and ADR-0017 without runtime code.
 2. Scaffold `@oms/identity`; deliver Account values and lifecycle first, then
-   PasswordAuthenticator, Role, SessionFamily, application ports, outcomes,
-   and tests in bounded commits; expose no route.
+   PasswordAuthenticator, Role, SessionFamily with RefreshCredential and
+   AccessCredential issuance, application ports, outcomes, and tests in
+   bounded commits; expose no route.
 3. Add the Identity Prisma fragment, forward migration, Unit of Work,
    repositories, authority read model, bounded cleanup use case, and
    real-MySQL tests.
@@ -1590,6 +1706,19 @@ authentication surface becomes public.
     before successor insertion, while the immediate self-FK requires insertion
     before linking. The transaction and final-state assertions supply the
     cross-statement invariant that non-deferrable checks cannot express.
+19. **Why does a versionless AccessCredential still store sequence?** It is not
+    an optimistic version. The sequence binds the row to the exact retained
+    refresh generation that issued it, supports a composite foreign key, and
+    proves at most one access issuance per successful generation.
+20. **Why does refresh idle expiry not cap access expiry?** Idle expiry governs
+    the ability to issue another credential. Access authority has its own short
+    advertised lifetime, so shortening it implicitly would conflate two
+    contracts and make clients observe an expiry different from issuance.
+21. **Why can an access credential remain valid after its paired refresh is
+    consumed?** Refresh consumption records successful rotation, not access
+    revocation. Family closure, absolute expiry, Account state, and current
+    permissions are the immediate authority controls; requiring an unconsumed
+    witness would invalidate the prior access token at every routine refresh.
 
 ## Future improvements
 
