@@ -1,5 +1,11 @@
 import { IdentityAccount, type IdentityAccountSnapshot } from './identity-account';
 import { parseIdentityAccountId, type IdentityAccountId } from './identity-account.values';
+import { IdentityAccessCredential } from './identity-access-credential';
+import {
+  parseIdentityAccessCredentialId,
+  parseIdentityAccessLifetimeSeconds,
+  type IdentityAccessLifetimeSeconds,
+} from './identity-access-credential.values';
 import {
   IdentityRefreshCredential,
   type IdentityRefreshCredentialSnapshot,
@@ -85,8 +91,10 @@ export type CreateIdentitySessionFamilyInput = Readonly<{
   id: unknown;
   accountId: unknown;
   initialRefreshCredentialId: unknown;
+  initialAccessCredentialId: unknown;
   refreshIdleLifetimeSeconds: unknown;
   refreshAbsoluteLifetimeSeconds: unknown;
+  accessLifetimeSeconds: unknown;
   occurredAt: unknown;
 }>;
 
@@ -105,6 +113,8 @@ export type PresentIdentityRefreshCredentialInput = Readonly<{
   occurredAt: unknown;
   successorRefreshCredentialId: unknown;
   refreshIdleLifetimeSeconds: unknown;
+  issuedAccessCredentialId: unknown;
+  accessLifetimeSeconds: unknown;
 }>;
 
 export type IdentitySessionFamilyRefreshWriteBasis = Readonly<{
@@ -120,6 +130,7 @@ export type IdentitySessionFamilyCreationResult = Readonly<{
   kind: 'changed';
   sessionFamily: IdentitySessionFamily;
   initialRefreshCredential: IdentityRefreshCredential;
+  initialAccessCredential: IdentityAccessCredential;
   facts: IdentitySessionFamilyCreationFacts;
 }>;
 
@@ -129,6 +140,7 @@ export type IdentitySessionFamilyRefreshRotatedResult = Readonly<{
   sessionFamily: IdentitySessionFamily;
   consumedRefreshCredential: IdentityRefreshCredential;
   successorRefreshCredential: IdentityRefreshCredential;
+  issuedAccessCredential: IdentityAccessCredential;
   facts: IdentitySessionFamilyRefreshRotationFacts;
 }>;
 
@@ -425,9 +437,14 @@ export class IdentitySessionFamily {
     const absoluteLifetime = parseIdentityRefreshAbsoluteLifetimeSeconds(
       input.refreshAbsoluteLifetimeSeconds,
     );
+    const initialAccessCredentialId = parseIdentityAccessCredentialId(
+      input.initialAccessCredentialId,
+    );
+    const accessLifetime = parseIdentityAccessLifetimeSeconds(input.accessLifetimeSeconds);
 
     const refreshAbsoluteExpiresAt = IdentitySessionFamily.deadline(occurredAt, absoluteLifetime);
     const refreshIdleExpiresAt = IdentitySessionFamily.deadline(occurredAt, idleLifetime);
+    const accessExpiresAt = IdentitySessionFamily.deadline(occurredAt, accessLifetime);
     const snapshot = freezeSnapshot({
       id,
       accountId,
@@ -446,6 +463,13 @@ export class IdentitySessionFamily {
       issuedAt: occurredAt,
       expiresAt: refreshIdleExpiresAt,
     });
+    const initialAccessCredential = IdentityAccessCredential.issueForSessionFamily({
+      id: initialAccessCredentialId,
+      sessionId: id,
+      sequence: initialRefreshCredential.toSnapshot().sequence,
+      issuedAt: occurredAt,
+      expiresAt: accessExpiresAt,
+    });
     const facts: IdentitySessionFamilyCreationFacts = [
       {
         type: 'SESSION_FAMILY_CREATED',
@@ -461,6 +485,7 @@ export class IdentitySessionFamily {
       kind: 'changed',
       sessionFamily,
       initialRefreshCredential,
+      initialAccessCredential,
       facts: freezeFacts(facts),
     });
   }
@@ -539,17 +564,35 @@ export class IdentitySessionFamily {
       throw new IdentitySessionFamilyRefreshCapacityExhaustedError();
     }
 
+    const issuedAccessCredentialId = parseIdentityAccessCredentialId(
+      input.issuedAccessCredentialId,
+    );
+    const accessLifetime = parseIdentityAccessLifetimeSeconds(input.accessLifetimeSeconds);
     const configuredIdleExpiresAt = tryAddIdentitySeconds(occurredAt, idleLifetime);
     const refreshIdleExpiresAt =
       configuredIdleExpiresAt === null ||
       compareIdentityInstants(configuredIdleExpiresAt, this.#snapshot.refreshAbsoluteExpiresAt) > 0
         ? this.#snapshot.refreshAbsoluteExpiresAt
         : configuredIdleExpiresAt;
+    const configuredAccessExpiresAt = tryAddIdentitySeconds(occurredAt, accessLifetime);
+    const accessExpiresAt =
+      configuredAccessExpiresAt === null ||
+      compareIdentityInstants(configuredAccessExpiresAt, this.#snapshot.refreshAbsoluteExpiresAt) >
+        0
+        ? this.#snapshot.refreshAbsoluteExpiresAt
+        : configuredAccessExpiresAt;
     const basis = this.refreshWriteBasis(locked.account, locked.credentialSnapshot);
     const rotatedCredentials = IdentityRefreshCredential.rotateForSessionFamily(locked.credential, {
       consumedAt: occurredAt,
       successorId,
       successorExpiresAt: refreshIdleExpiresAt,
+    });
+    const issuedAccessCredential = IdentityAccessCredential.issueForSessionFamily({
+      id: issuedAccessCredentialId,
+      sessionId: this.#snapshot.id,
+      sequence: rotatedCredentials.successorRefreshCredential.toSnapshot().sequence,
+      issuedAt: occurredAt,
+      expiresAt: accessExpiresAt,
     });
     const snapshot = freezeSnapshot({
       ...this.#snapshot,
@@ -574,6 +617,7 @@ export class IdentitySessionFamily {
       basis,
       sessionFamily,
       ...rotatedCredentials,
+      issuedAccessCredential,
       facts: freezeFacts(facts),
     });
   }
@@ -776,7 +820,10 @@ export class IdentitySessionFamily {
 
   private static deadline(
     start: IdentityInstant,
-    lifetime: IdentityRefreshIdleLifetimeSeconds | IdentityRefreshAbsoluteLifetimeSeconds,
+    lifetime:
+      | IdentityRefreshIdleLifetimeSeconds
+      | IdentityRefreshAbsoluteLifetimeSeconds
+      | IdentityAccessLifetimeSeconds,
   ): IdentityInstant {
     const deadline = tryAddIdentitySeconds(start, lifetime);
 

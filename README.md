@@ -49,16 +49,18 @@ strict Unicode display labels, canonical bounded Permission sets, explicit
 grant/revoke deltas, and auditable initial mappings. SessionFamily now owns
 lossless idle/absolute deadlines, version-derived rotation reachability,
 derived authentication state, first-cause terminal revocation, and a
-versionless RefreshCredential child. Its single composite presentation
-transition atomically rotates a current child or closes the family on retained
-reuse evidence, while returning only frozen secret-free state and a bounded
-conditional-write basis. The package deliberately exports no application
-contract and exposes no route yet; AccessCredential issuance, the Identity
-Unit of Work and persistence, the actual crypto adapter, password input policy,
-and Redis remain gated later slices. Pricing, inventory, Redis caching, and
-integration events also remain separate later slices.
+versionless RefreshCredential child. A separate immutable AccessCredential now
+records the exact refresh generation that issued it. Family creation and
+successful rotation return one frozen, generation-matched refresh/access
+bundle; replay still closes the family without inspecting or issuing access
+state, and the six-field conditional-write basis remains credential-secret
+free. The package deliberately exports no application contract and exposes no
+route yet; the Identity Unit of Work and persistence, token/digest and Argon2
+adapters, password input policy, and Redis remain gated later slices. Pricing,
+inventory, Redis caching, and integration events also remain separate later
+slices.
 
-**Overall project progress: 31%.** The fixed, deployment-inclusive scoring
+**Overall project progress: 32%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
 
 ## Planned technology

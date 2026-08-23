@@ -1,5 +1,11 @@
 import { InvalidIdentityAccountIdError } from '../src/domain/identity-account.values';
 import { IdentityAccount } from '../src/domain/identity-account';
+import {
+  InvalidIdentityAccessCredentialIdError,
+  InvalidIdentityAccessLifetimeSecondsError,
+  MAX_IDENTITY_ACCESS_LIFETIME_SECONDS,
+  MIN_IDENTITY_ACCESS_LIFETIME_SECONDS,
+} from '../src/domain/identity-access-credential.values';
 import { IdentityRefreshCredential } from '../src/domain/identity-refresh-credential';
 import {
   InvalidIdentityRefreshCredentialIdError,
@@ -52,8 +58,11 @@ const OTHER_ACCOUNT_ID = '01890f3a-8bcd-7def-aabc-0123456789ab';
 const INITIAL_REFRESH_CREDENTIAL_ID = '01890f3a-8bcd-7def-babc-0123456789ab';
 const SUCCESSOR_REFRESH_CREDENTIAL_ID = '01890f3a-8bcd-7def-8abc-1123456789ab';
 const SECOND_SUCCESSOR_REFRESH_CREDENTIAL_ID = '01890f3a-8bcd-7def-9abc-1123456789ab';
+const INITIAL_ACCESS_CREDENTIAL_ID = '01890f3a-8bcd-7def-aabc-2123456789ab';
+const ISSUED_ACCESS_CREDENTIAL_ID = '01890f3a-8bcd-7def-babc-2123456789ab';
 const CREATED_AT = '2026-08-23T10:00:00.000001Z';
 const INITIAL_IDLE_EXPIRES_AT = '2026-08-23T10:15:00.000001Z';
+const INITIAL_ACCESS_EXPIRES_AT = '2026-08-23T10:05:00.000001Z';
 const ABSOLUTE_EXPIRES_AT = '2026-08-24T10:00:00.000001Z';
 const ROTATED_AT = '2026-08-23T10:30:00.000002Z';
 const ROTATED_IDLE_EXPIRES_AT = '2026-08-23T10:45:00.000002Z';
@@ -190,6 +199,8 @@ function createSessionBundle(): ReturnType<typeof IdentitySessionFamily.create> 
     initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
     refreshIdleLifetimeSeconds: MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
     refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
+    initialAccessCredentialId: INITIAL_ACCESS_CREDENTIAL_ID,
+    accessLifetimeSeconds: MIN_IDENTITY_ACCESS_LIFETIME_SECONDS,
     occurredAt: CREATED_AT,
   });
 }
@@ -272,7 +283,38 @@ function presentationInput(
     occurredAt: '2026-08-23T10:05:00.000002Z',
     successorRefreshCredentialId: SUCCESSOR_REFRESH_CREDENTIAL_ID,
     refreshIdleLifetimeSeconds: MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
+    issuedAccessCredentialId: ISSUED_ACCESS_CREDENTIAL_ID,
+    accessLifetimeSeconds: MIN_IDENTITY_ACCESS_LIFETIME_SECONDS,
     ...overrides,
+  };
+}
+
+function hostileAccessPresentationInput(
+  account: unknown,
+  presentedRefreshCredential: unknown,
+  overrides: Partial<PresentIdentityRefreshCredentialInput> = {},
+): Readonly<{
+  input: PresentIdentityRefreshCredentialInput;
+  accessReadCount: () => number;
+  secret: string;
+}> {
+  const secret = 'hostile-access-input-secret';
+  let reads = 0;
+  const input = presentationInput(account, presentedRefreshCredential, overrides);
+  const throwOnRead = (): never => {
+    reads += 1;
+    throw new Error(secret);
+  };
+
+  Object.defineProperties(input, {
+    issuedAccessCredentialId: { enumerable: true, configurable: true, get: throwOnRead },
+    accessLifetimeSeconds: { enumerable: true, configurable: true, get: throwOnRead },
+  });
+
+  return {
+    input,
+    accessReadCount: (): number => reads,
+    secret,
   };
 }
 
@@ -483,6 +525,8 @@ describe('IdentitySessionFamily creation', (): void => {
       initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
       refreshIdleLifetimeSeconds: MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
       refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
+      initialAccessCredentialId: INITIAL_ACCESS_CREDENTIAL_ID,
+      accessLifetimeSeconds: MIN_IDENTITY_ACCESS_LIFETIME_SECONDS,
       occurredAt: CREATED_AT,
     });
 
@@ -490,6 +534,7 @@ describe('IdentitySessionFamily creation', (): void => {
       kind: 'changed',
       sessionFamily: result.sessionFamily,
       initialRefreshCredential: result.initialRefreshCredential,
+      initialAccessCredential: result.initialAccessCredential,
       facts: [
         {
           type: 'SESSION_FAMILY_CREATED',
@@ -511,14 +556,26 @@ describe('IdentitySessionFamily creation', (): void => {
       consumedAt: null,
       successorId: null,
     });
+    expect(result.initialAccessCredential.toSnapshot()).toEqual({
+      id: INITIAL_ACCESS_CREDENTIAL_ID,
+      sessionId: SESSION_ID,
+      sequence: 1,
+      issuedAt: CREATED_AT,
+      expiresAt: INITIAL_ACCESS_EXPIRES_AT,
+    });
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result.sessionFamily)).toBe(true);
     expect(Object.isFrozen(result.sessionFamily.toSnapshot())).toBe(true);
     expect(Object.isFrozen(result.initialRefreshCredential)).toBe(true);
     expect(Object.isFrozen(result.initialRefreshCredential.toSnapshot())).toBe(true);
+    expect(Object.isFrozen(result.initialAccessCredential)).toBe(true);
+    expect(Object.isFrozen(result.initialAccessCredential.toSnapshot())).toBe(true);
     expectFrozenSafeFacts(result.facts);
+    expect(JSON.stringify(result.facts)).not.toContain(INITIAL_ACCESS_CREDENTIAL_ID);
     expect(Object.keys(result.sessionFamily)).toEqual([]);
     expect(JSON.stringify(result.sessionFamily)).toBe('{}');
+    expect(Object.keys(result.initialAccessCredential)).toEqual([]);
+    expect(JSON.stringify(result.initialAccessCredential)).toBe('{}');
   });
 
   it('derives exact maximum-lifetime deadlines without losing microseconds', (): void => {
@@ -528,6 +585,8 @@ describe('IdentitySessionFamily creation', (): void => {
       initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
       refreshIdleLifetimeSeconds: MAX_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
       refreshAbsoluteLifetimeSeconds: MAX_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
+      initialAccessCredentialId: INITIAL_ACCESS_CREDENTIAL_ID,
+      accessLifetimeSeconds: MAX_IDENTITY_ACCESS_LIFETIME_SECONDS,
       occurredAt: CREATED_AT,
     });
 
@@ -537,6 +596,13 @@ describe('IdentitySessionFamily creation', (): void => {
         refreshAbsoluteExpiresAt: '2026-09-22T10:00:00.000001Z',
       }),
     );
+    expect(result.initialAccessCredential.toSnapshot()).toEqual({
+      id: INITIAL_ACCESS_CREDENTIAL_ID,
+      sessionId: SESSION_ID,
+      sequence: 1,
+      issuedAt: CREATED_AT,
+      expiresAt: '2026-08-23T10:30:00.000001Z',
+    });
   });
 
   it('allows separately branded family and initial credential IDs to share bytes', (): void => {
@@ -546,6 +612,8 @@ describe('IdentitySessionFamily creation', (): void => {
       initialRefreshCredentialId: SESSION_ID,
       refreshIdleLifetimeSeconds: MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
       refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
+      initialAccessCredentialId: SESSION_ID,
+      accessLifetimeSeconds: MIN_IDENTITY_ACCESS_LIFETIME_SECONDS,
       occurredAt: CREATED_AT,
     });
 
@@ -554,39 +622,51 @@ describe('IdentitySessionFamily creation', (): void => {
       id: SESSION_ID,
       sessionId: SESSION_ID,
     });
+    expect(result.initialAccessCredential.toSnapshot()).toMatchObject({
+      id: SESSION_ID,
+      sessionId: SESSION_ID,
+    });
   });
 
   it('allows equal idle and absolute lifetimes and derives one equal deadline', (): void => {
-    const sessionFamily = IdentitySessionFamily.create({
+    const result = IdentitySessionFamily.create({
       id: SESSION_ID,
       accountId: ACCOUNT_ID,
       initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
       refreshIdleLifetimeSeconds: MAX_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
       refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
+      initialAccessCredentialId: INITIAL_ACCESS_CREDENTIAL_ID,
+      accessLifetimeSeconds: MIN_IDENTITY_ACCESS_LIFETIME_SECONDS,
       occurredAt: CREATED_AT,
-    }).sessionFamily;
+    });
 
-    expect(sessionFamily.toSnapshot()).toMatchObject({
+    expect(result.sessionFamily.toSnapshot()).toMatchObject({
       refreshIdleExpiresAt: ABSOLUTE_EXPIRES_AT,
       refreshAbsoluteExpiresAt: ABSOLUTE_EXPIRES_AT,
     });
   });
 
   it('uses Gregorian leap-day arithmetic across a calendar boundary', (): void => {
-    const sessionFamily = IdentitySessionFamily.create({
+    const result = IdentitySessionFamily.create({
       id: SESSION_ID,
       accountId: ACCOUNT_ID,
       initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
       refreshIdleLifetimeSeconds: MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
       refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
+      initialAccessCredentialId: INITIAL_ACCESS_CREDENTIAL_ID,
+      accessLifetimeSeconds: MIN_IDENTITY_ACCESS_LIFETIME_SECONDS,
       occurredAt: '2024-02-28T23:59:59.123456Z',
-    }).sessionFamily;
+    });
 
-    expect(sessionFamily.toSnapshot()).toMatchObject({
+    expect(result.sessionFamily.toSnapshot()).toMatchObject({
       createdAt: '2024-02-28T23:59:59.123456Z',
       lastRotatedAt: '2024-02-28T23:59:59.123456Z',
       refreshIdleExpiresAt: '2024-02-29T00:14:59.123456Z',
       refreshAbsoluteExpiresAt: '2024-02-29T23:59:59.123456Z',
+    });
+    expect(result.initialAccessCredential.toSnapshot()).toMatchObject({
+      issuedAt: '2024-02-28T23:59:59.123456Z',
+      expiresAt: '2024-02-29T00:04:59.123456Z',
     });
   });
 
@@ -601,6 +681,8 @@ describe('IdentitySessionFamily creation', (): void => {
           initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
           refreshIdleLifetimeSeconds: MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
           refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
+          initialAccessCredentialId: INITIAL_ACCESS_CREDENTIAL_ID,
+          accessLifetimeSeconds: MIN_IDENTITY_ACCESS_LIFETIME_SECONDS,
           occurredAt,
         }),
       IdentitySessionFamilyDeadlineOverflowError,
@@ -617,6 +699,8 @@ describe('IdentitySessionFamily creation', (): void => {
         initialRefreshCredentialId: 'credential-secret-id',
         refreshIdleLifetimeSeconds: 'idle-secret',
         refreshAbsoluteLifetimeSeconds: 'absolute-secret',
+        initialAccessCredentialId: 'access-secret-id',
+        accessLifetimeSeconds: 'access-lifetime-secret',
         occurredAt: 'time-secret',
       },
       InvalidIdentityInstantError,
@@ -629,6 +713,8 @@ describe('IdentitySessionFamily creation', (): void => {
         initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
         refreshIdleLifetimeSeconds: MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
         refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
+        initialAccessCredentialId: 'access-secret-id',
+        accessLifetimeSeconds: 'access-lifetime-secret',
         occurredAt: CREATED_AT,
       },
       InvalidIdentitySessionIdError,
@@ -641,6 +727,8 @@ describe('IdentitySessionFamily creation', (): void => {
         initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
         refreshIdleLifetimeSeconds: MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
         refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
+        initialAccessCredentialId: 'access-secret-id',
+        accessLifetimeSeconds: 'access-lifetime-secret',
         occurredAt: CREATED_AT,
       },
       InvalidIdentityAccountIdError,
@@ -653,6 +741,8 @@ describe('IdentitySessionFamily creation', (): void => {
         initialRefreshCredentialId: 'credential-secret-id',
         refreshIdleLifetimeSeconds: 'idle-secret',
         refreshAbsoluteLifetimeSeconds: 'absolute-secret',
+        initialAccessCredentialId: 'access-secret-id',
+        accessLifetimeSeconds: 'access-lifetime-secret',
         occurredAt: CREATED_AT,
       },
       InvalidIdentityRefreshCredentialIdError,
@@ -665,6 +755,8 @@ describe('IdentitySessionFamily creation', (): void => {
         initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
         refreshIdleLifetimeSeconds: 'idle-secret',
         refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
+        initialAccessCredentialId: 'access-secret-id',
+        accessLifetimeSeconds: 'access-lifetime-secret',
         occurredAt: CREATED_AT,
       },
       InvalidIdentityRefreshIdleLifetimeSecondsError,
@@ -677,9 +769,39 @@ describe('IdentitySessionFamily creation', (): void => {
         initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
         refreshIdleLifetimeSeconds: MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
         refreshAbsoluteLifetimeSeconds: 'absolute-secret',
+        initialAccessCredentialId: 'access-secret-id',
+        accessLifetimeSeconds: 'access-lifetime-secret',
         occurredAt: CREATED_AT,
       },
       InvalidIdentityRefreshAbsoluteLifetimeSecondsError,
+    ],
+    [
+      'invalid initial Access Credential id before deadline derivation',
+      {
+        id: SESSION_ID,
+        accountId: ACCOUNT_ID,
+        initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
+        refreshIdleLifetimeSeconds: MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
+        refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
+        initialAccessCredentialId: 'access-secret-id',
+        accessLifetimeSeconds: 'access-lifetime-secret',
+        occurredAt: '9999-12-31T00:00:00.654321Z',
+      },
+      InvalidIdentityAccessCredentialIdError,
+    ],
+    [
+      'invalid access lifetime before deadline derivation',
+      {
+        id: SESSION_ID,
+        accountId: ACCOUNT_ID,
+        initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
+        refreshIdleLifetimeSeconds: MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
+        refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
+        initialAccessCredentialId: INITIAL_ACCESS_CREDENTIAL_ID,
+        accessLifetimeSeconds: 'access-lifetime-secret',
+        occurredAt: '9999-12-31T00:00:00.654321Z',
+      },
+      InvalidIdentityAccessLifetimeSecondsError,
     ],
   ] as const)(
     'uses stable validation precedence for an %s',
@@ -690,6 +812,8 @@ describe('IdentitySessionFamily creation', (): void => {
         'credential-secret-id',
         'idle-secret',
         'absolute-secret',
+        'access-secret-id',
+        'access-lifetime-secret',
         'time-secret',
       ]);
     },
@@ -702,17 +826,31 @@ describe('IdentitySessionFamily creation', (): void => {
       initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
       refreshIdleLifetimeSeconds: MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
       refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
+      initialAccessCredentialId: INITIAL_ACCESS_CREDENTIAL_ID,
+      accessLifetimeSeconds: MIN_IDENTITY_ACCESS_LIFETIME_SECONDS,
       occurredAt: CREATED_AT,
     };
-    const sessionFamily = IdentitySessionFamily.create(input).sessionFamily;
+    const created = IdentitySessionFamily.create(input);
+    const accessBefore = created.initialAccessCredential.toSnapshot();
     input.id = 'changed-outside';
     input.refreshIdleLifetimeSeconds = MAX_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS;
+    input.initialAccessCredentialId = 'changed-access-id';
+    input.accessLifetimeSeconds = MAX_IDENTITY_ACCESS_LIFETIME_SECONDS;
 
-    expect(sessionFamily.toSnapshot()).toEqual(initialSnapshot());
+    expect(created.sessionFamily.toSnapshot()).toEqual(initialSnapshot());
+    expect(created.initialAccessCredential.toSnapshot()).toBe(accessBefore);
+    expect(created.initialAccessCredential.toSnapshot()).toEqual({
+      id: INITIAL_ACCESS_CREDENTIAL_ID,
+      sessionId: SESSION_ID,
+      sequence: 1,
+      issuedAt: CREATED_AT,
+      expiresAt: INITIAL_ACCESS_EXPIRES_AT,
+    });
     expect(() => {
-      (sessionFamily.toSnapshot() as { closedReason: string | null }).closedReason = 'LOGOUT';
+      (created.sessionFamily.toSnapshot() as { closedReason: string | null }).closedReason =
+        'LOGOUT';
     }).toThrow(TypeError);
-    expect(sessionFamily.toSnapshot()).toEqual(initialSnapshot());
+    expect(created.sessionFamily.toSnapshot()).toEqual(initialSnapshot());
   });
 });
 
@@ -1468,13 +1606,12 @@ describe('IdentitySessionFamily rejected refresh presentation', (): void => {
       const familyBefore = sessionFamily.toSnapshot();
       const accountBefore = account.toSnapshot();
       const credentialBefore = credential.toSnapshot();
-      const result = sessionFamily.presentRefreshCredential(
-        presentationInput(account, credential, {
-          occurredAt,
-          successorRefreshCredentialId: 'ignored-invalid-successor',
-          refreshIdleLifetimeSeconds: 'ignored-invalid-idle',
-        }),
-      );
+      const hostile = hostileAccessPresentationInput(account, credential, {
+        occurredAt,
+        successorRefreshCredentialId: 'ignored-invalid-successor',
+        refreshIdleLifetimeSeconds: 'ignored-invalid-idle',
+      });
+      const result = sessionFamily.presentRefreshCredential(hostile.input);
 
       expect(result).toEqual({
         kind: 'rejected',
@@ -1486,6 +1623,8 @@ describe('IdentitySessionFamily rejected refresh presentation', (): void => {
         ['facts', 'kind', 'presentedRefreshCredential', 'sessionFamily'].sort(),
       );
       expect(Object.hasOwn(result, 'basis')).toBe(false);
+      expect(Object.hasOwn(result, 'issuedAccessCredential')).toBe(false);
+      expect(hostile.accessReadCount()).toBe(0);
       expect(Object.isFrozen(result)).toBe(true);
       expectFrozenSafeFacts(result.facts);
       expect(sessionFamily.toSnapshot()).toBe(familyBefore);
@@ -1591,6 +1730,7 @@ describe('IdentitySessionFamily successful refresh rotation', (): void => {
         'basis',
         'consumedRefreshCredential',
         'facts',
+        'issuedAccessCredential',
         'kind',
         'sessionFamily',
         'successorRefreshCredential',
@@ -1624,6 +1764,13 @@ describe('IdentitySessionFamily successful refresh rotation', (): void => {
       consumedAt: null,
       successorId: null,
     });
+    expect(result.issuedAccessCredential.toSnapshot()).toEqual({
+      id: ISSUED_ACCESS_CREDENTIAL_ID,
+      sessionId: SESSION_ID,
+      sequence: 2,
+      issuedAt: occurredAt,
+      expiresAt: '2026-08-23T10:10:00.000002Z',
+    });
     expect(result.facts).toEqual([
       {
         type: 'SESSION_FAMILY_REFRESH_ROTATED',
@@ -1639,15 +1786,19 @@ describe('IdentitySessionFamily successful refresh rotation', (): void => {
     expect(Object.isFrozen(result.sessionFamily)).toBe(true);
     expect(Object.isFrozen(result.consumedRefreshCredential)).toBe(true);
     expect(Object.isFrozen(result.successorRefreshCredential)).toBe(true);
+    expect(Object.isFrozen(result.issuedAccessCredential)).toBe(true);
     expect(Object.isFrozen(result.sessionFamily.toSnapshot())).toBe(true);
     expect(Object.isFrozen(result.consumedRefreshCredential.toSnapshot())).toBe(true);
     expect(Object.isFrozen(result.successorRefreshCredential.toSnapshot())).toBe(true);
+    expect(Object.isFrozen(result.issuedAccessCredential.toSnapshot())).toBe(true);
     expectFrozenSafeFacts(result.facts);
     expect(JSON.stringify(result.facts)).not.toContain(INITIAL_REFRESH_CREDENTIAL_ID);
     expect(JSON.stringify(result.facts)).not.toContain(SUCCESSOR_REFRESH_CREDENTIAL_ID);
+    expect(JSON.stringify(result.facts)).not.toContain(ISSUED_ACCESS_CREDENTIAL_ID);
     expect(JSON.stringify(result.basis)).not.toContain('system.admin');
     expect(JSON.stringify(result.basis)).not.toContain('ACTIVE');
     expect(JSON.stringify(result.basis)).not.toContain('expiresAt');
+    expect(JSON.stringify(result.basis)).not.toContain(ISSUED_ACCESS_CREDENTIAL_ID);
     expect(Object.hasOwn(result, 'account')).toBe(false);
     expect(created.sessionFamily.toSnapshot()).toBe(familyBefore);
     expect(created.initialRefreshCredential.toSnapshot()).toBe(credentialBefore);
@@ -1666,6 +1817,34 @@ describe('IdentitySessionFamily successful refresh rotation', (): void => {
     if (result.kind === 'rotated') {
       expect(result.sessionFamily.toSnapshot().refreshIdleExpiresAt).toBe(ABSOLUTE_EXPIRES_AT);
       expect(result.successorRefreshCredential.toSnapshot().expiresAt).toBe(ABSOLUTE_EXPIRES_AT);
+      expect(result.issuedAccessCredential.toSnapshot().expiresAt).toBe(
+        '2026-08-23T10:10:00.000002Z',
+      );
+    }
+  });
+
+  it('uses the maximum access lifetime independently of the refresh idle deadline', (): void => {
+    const created = createSessionBundle();
+    const result = created.sessionFamily.presentRefreshCredential(
+      presentationInput(activeAccount(), created.initialRefreshCredential, {
+        issuedAccessCredentialId: SUCCESSOR_REFRESH_CREDENTIAL_ID,
+        accessLifetimeSeconds: MAX_IDENTITY_ACCESS_LIFETIME_SECONDS,
+      }),
+    );
+
+    expect(result.kind).toBe('rotated');
+    if (result.kind === 'rotated') {
+      expect(result.successorRefreshCredential.toSnapshot()).toMatchObject({
+        id: SUCCESSOR_REFRESH_CREDENTIAL_ID,
+        expiresAt: '2026-08-23T10:20:00.000002Z',
+      });
+      expect(result.issuedAccessCredential.toSnapshot()).toEqual({
+        id: SUCCESSOR_REFRESH_CREDENTIAL_ID,
+        sessionId: SESSION_ID,
+        sequence: 2,
+        issuedAt: '2026-08-23T10:05:00.000002Z',
+        expiresAt: '2026-08-23T10:35:00.000002Z',
+      });
     }
   });
 
@@ -1695,6 +1874,40 @@ describe('IdentitySessionFamily successful refresh rotation', (): void => {
       expect(result.successorRefreshCredential.toSnapshot()).toMatchObject({
         sequence: 3,
         issuedAt: '2026-08-24T09:59:59.000001Z',
+        expiresAt: ABSOLUTE_EXPIRES_AT,
+      });
+      expect(result.issuedAccessCredential.toSnapshot()).toEqual({
+        id: ISSUED_ACCESS_CREDENTIAL_ID,
+        sessionId: SESSION_ID,
+        sequence: 3,
+        issuedAt: '2026-08-24T09:59:59.000001Z',
+        expiresAt: ABSOLUTE_EXPIRES_AT,
+      });
+    }
+  });
+
+  it('retains a fractionally different access expiry when the absolute deadline caps it', (): void => {
+    const lastRotatedAt = '2026-08-24T09:59:58.999999Z';
+    const family = IdentitySessionFamily.rehydrate(cappedRotatedSnapshot({ lastRotatedAt }));
+    const current = refreshCredential({
+      id: SUCCESSOR_REFRESH_CREDENTIAL_ID,
+      sequence: 2,
+      issuedAt: lastRotatedAt,
+      expiresAt: ABSOLUTE_EXPIRES_AT,
+    });
+    const result = family.presentRefreshCredential(
+      presentationInput(activeAccount(), current, {
+        occurredAt: lastRotatedAt,
+        successorRefreshCredentialId: SECOND_SUCCESSOR_REFRESH_CREDENTIAL_ID,
+        accessLifetimeSeconds: MAX_IDENTITY_ACCESS_LIFETIME_SECONDS,
+      }),
+    );
+
+    expect(result.kind).toBe('rotated');
+    if (result.kind === 'rotated') {
+      expect(result.issuedAccessCredential.toSnapshot()).toMatchObject({
+        sequence: 3,
+        issuedAt: lastRotatedAt,
         expiresAt: ABSOLUTE_EXPIRES_AT,
       });
     }
@@ -1734,6 +1947,11 @@ describe('IdentitySessionFamily successful refresh rotation', (): void => {
     if (result.kind === 'rotated') {
       expect(result.sessionFamily.toSnapshot().refreshIdleExpiresAt).toBe(absolute);
       expect(result.successorRefreshCredential.toSnapshot().expiresAt).toBe(absolute);
+      expect(result.issuedAccessCredential.toSnapshot()).toMatchObject({
+        sequence: 3,
+        issuedAt: lastRotatedAt,
+        expiresAt: absolute,
+      });
     }
   });
 
@@ -1744,6 +1962,8 @@ describe('IdentitySessionFamily successful refresh rotation', (): void => {
       initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
       refreshIdleLifetimeSeconds: 3_600,
       refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
+      initialAccessCredentialId: INITIAL_ACCESS_CREDENTIAL_ID,
+      accessLifetimeSeconds: MIN_IDENTITY_ACCESS_LIFETIME_SECONDS,
       occurredAt: '2024-02-28T23:45:00.123456Z',
     });
     const account = activeAccount({
@@ -1753,6 +1973,7 @@ describe('IdentitySessionFamily successful refresh rotation', (): void => {
     const result = created.sessionFamily.presentRefreshCredential(
       presentationInput(account, created.initialRefreshCredential, {
         occurredAt: '2024-02-28T23:50:00.654321Z',
+        accessLifetimeSeconds: MAX_IDENTITY_ACCESS_LIFETIME_SECONDS,
       }),
     );
 
@@ -1761,10 +1982,13 @@ describe('IdentitySessionFamily successful refresh rotation', (): void => {
       expect(result.successorRefreshCredential.toSnapshot().expiresAt).toBe(
         '2024-02-29T00:05:00.654321Z',
       );
+      expect(result.issuedAccessCredential.toSnapshot().expiresAt).toBe(
+        '2024-02-29T00:20:00.654321Z',
+      );
     }
   });
 
-  it('uses stable successor, idle, conflict, then capacity precedence', (): void => {
+  it('uses stable refresh, capacity, Access Credential id, then access lifetime precedence', (): void => {
     const created = createSessionBundle();
     const account = activeAccount();
 
@@ -1840,8 +2064,42 @@ describe('IdentitySessionFamily successful refresh rotation', (): void => {
       maximumOpen,
       account,
       maximumCurrent,
-      () => maximumOpen.presentRefreshCredential(presentationInput(account, maximumCurrent)),
+      () => {
+        const hostile = hostileAccessPresentationInput(account, maximumCurrent);
+
+        try {
+          return maximumOpen.presentRefreshCredential(hostile.input);
+        } finally {
+          expect(hostile.accessReadCount()).toBe(0);
+        }
+      },
       IdentitySessionFamilyRefreshCapacityExhaustedError,
+    );
+
+    expectSafePresentationError(
+      created.sessionFamily,
+      account,
+      created.initialRefreshCredential,
+      () =>
+        created.sessionFamily.presentRefreshCredential(
+          presentationInput(account, created.initialRefreshCredential, {
+            issuedAccessCredentialId: 'invalid-access-id',
+            accessLifetimeSeconds: 'invalid-access-lifetime',
+          }),
+        ),
+      InvalidIdentityAccessCredentialIdError,
+    );
+    expectSafePresentationError(
+      created.sessionFamily,
+      account,
+      created.initialRefreshCredential,
+      () =>
+        created.sessionFamily.presentRefreshCredential(
+          presentationInput(account, created.initialRefreshCredential, {
+            accessLifetimeSeconds: 'invalid-access-lifetime',
+          }),
+        ),
+      InvalidIdentityAccessLifetimeSecondsError,
     );
   });
 
@@ -1863,6 +2121,9 @@ describe('IdentitySessionFamily successful refresh rotation', (): void => {
       expect(result.successorRefreshCredential.toSnapshot().sequence).toBe(
         MAX_IDENTITY_REFRESH_CREDENTIAL_SEQUENCE,
       );
+      expect(result.issuedAccessCredential.toSnapshot().sequence).toBe(
+        MAX_IDENTITY_REFRESH_CREDENTIAL_SEQUENCE,
+      );
     }
   });
 });
@@ -1881,14 +2142,14 @@ describe('IdentitySessionFamily refresh reuse detection', (): void => {
 
     const familyBefore = winner.sessionFamily.toSnapshot();
     const reusedBefore = winner.consumedRefreshCredential.toSnapshot();
+    const issuedAccessBefore = winner.issuedAccessCredential.toSnapshot();
     const occurredAt = '2026-08-23T10:30:00.000003Z';
-    const replay = winner.sessionFamily.presentRefreshCredential(
-      presentationInput(account, winner.consumedRefreshCredential, {
-        occurredAt,
-        successorRefreshCredentialId: 'ignored-invalid-successor',
-        refreshIdleLifetimeSeconds: 'ignored-invalid-idle',
-      }),
-    );
+    const hostile = hostileAccessPresentationInput(account, winner.consumedRefreshCredential, {
+      occurredAt,
+      successorRefreshCredentialId: 'ignored-invalid-successor',
+      refreshIdleLifetimeSeconds: 'ignored-invalid-idle',
+    });
+    const replay = winner.sessionFamily.presentRefreshCredential(hostile.input);
 
     expect(replay.kind).toBe('reuse-detected');
     if (replay.kind !== 'reuse-detected') {
@@ -1930,8 +2191,11 @@ describe('IdentitySessionFamily refresh reuse detection', (): void => {
     expectFrozenSafeFacts(replay.facts);
     expect(JSON.stringify(replay.facts)).not.toContain(INITIAL_REFRESH_CREDENTIAL_ID);
     expect(Object.hasOwn(replay, 'successorRefreshCredential')).toBe(false);
+    expect(Object.hasOwn(replay, 'issuedAccessCredential')).toBe(false);
+    expect(hostile.accessReadCount()).toBe(0);
     expect(winner.sessionFamily.toSnapshot()).toBe(familyBefore);
     expect(winner.consumedRefreshCredential.toSnapshot()).toBe(reusedBefore);
+    expect(winner.issuedAccessCredential.toSnapshot()).toBe(issuedAccessBefore);
   });
 
   it.each([
