@@ -1,13 +1,29 @@
+import { IdentityAccount, type IdentityAccountSnapshot } from './identity-account';
 import { parseIdentityAccountId, type IdentityAccountId } from './identity-account.values';
 import {
+  IdentityRefreshCredential,
+  type IdentityRefreshCredentialSnapshot,
+} from './identity-refresh-credential';
+import {
+  parseIdentityRefreshCredentialId,
+  type IdentityRefreshCredentialId,
+  type IdentityRefreshCredentialSequence,
+} from './identity-refresh-credential.values';
+import {
   IdentitySessionFamilyDeadlineOverflowError,
+  IdentitySessionFamilyRefreshCapacityExhaustedError,
+  IdentitySessionFamilyRefreshSuccessorConflictError,
+  IdentitySessionFamilyRefreshTimestampRegressionError,
   IdentitySessionFamilyTimestampRegressionError,
+  InvalidIdentitySessionFamilyRefreshStateError,
   InvalidIdentitySessionFamilyStateError,
 } from './identity-session-family.errors';
 import type {
   IdentitySessionFamilyCreationFacts,
   IdentitySessionFamilyFactTuple,
   IdentitySessionFamilyGenericRevocationFacts,
+  IdentitySessionFamilyRefreshReuseFacts,
+  IdentitySessionFamilyRefreshRotationFacts,
 } from './identity-session-family.facts';
 import {
   MAX_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
@@ -27,6 +43,7 @@ import {
 } from './identity-session-family.values';
 import {
   compareIdentityInstants,
+  MAX_IDENTITY_AGGREGATE_VERSION,
   nextIdentityAggregateVersion,
   parseIdentityAggregateVersion,
   parseIdentityInstant,
@@ -47,6 +64,7 @@ const IDENTITY_SESSION_FAMILY_SNAPSHOT_KEYS = Object.freeze([
   'closedReason',
 ] as const);
 const EMPTY_IDENTITY_SESSION_FAMILY_FACTS: readonly [] = Object.freeze([]);
+const MAX_OPEN_IDENTITY_SESSION_FAMILY_VERSION = MAX_IDENTITY_AGGREGATE_VERSION - 1;
 const ROTATION_COUNT_WITH_IMPLICIT_ABSOLUTE_BOUND = Math.ceil(
   MAX_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS / MAX_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
 );
@@ -66,6 +84,7 @@ export type IdentitySessionFamilySnapshot = Readonly<{
 export type CreateIdentitySessionFamilyInput = Readonly<{
   id: unknown;
   accountId: unknown;
+  initialRefreshCredentialId: unknown;
   refreshIdleLifetimeSeconds: unknown;
   refreshAbsoluteLifetimeSeconds: unknown;
   occurredAt: unknown;
@@ -79,6 +98,59 @@ export type RevokeIdentitySessionFamilyInput = Readonly<{
   closedReason: unknown;
   occurredAt: unknown;
 }>;
+
+export type PresentIdentityRefreshCredentialInput = Readonly<{
+  account: unknown;
+  presentedRefreshCredential: unknown;
+  occurredAt: unknown;
+  successorRefreshCredentialId: unknown;
+  refreshIdleLifetimeSeconds: unknown;
+}>;
+
+export type IdentitySessionFamilyRefreshWriteBasis = Readonly<{
+  accountId: IdentityAccountId;
+  accountVersion: IdentityAggregateVersion;
+  sessionId: IdentitySessionId;
+  sessionFamilyVersion: IdentityAggregateVersion;
+  presentedRefreshCredentialId: IdentityRefreshCredentialId;
+  presentedRefreshCredentialSequence: IdentityRefreshCredentialSequence;
+}>;
+
+export type IdentitySessionFamilyCreationResult = Readonly<{
+  kind: 'changed';
+  sessionFamily: IdentitySessionFamily;
+  initialRefreshCredential: IdentityRefreshCredential;
+  facts: IdentitySessionFamilyCreationFacts;
+}>;
+
+export type IdentitySessionFamilyRefreshRotatedResult = Readonly<{
+  kind: 'rotated';
+  basis: IdentitySessionFamilyRefreshWriteBasis;
+  sessionFamily: IdentitySessionFamily;
+  consumedRefreshCredential: IdentityRefreshCredential;
+  successorRefreshCredential: IdentityRefreshCredential;
+  facts: IdentitySessionFamilyRefreshRotationFacts;
+}>;
+
+export type IdentitySessionFamilyRefreshReuseDetectedResult = Readonly<{
+  kind: 'reuse-detected';
+  basis: IdentitySessionFamilyRefreshWriteBasis;
+  sessionFamily: IdentitySessionFamily;
+  reusedRefreshCredential: IdentityRefreshCredential;
+  facts: IdentitySessionFamilyRefreshReuseFacts;
+}>;
+
+export type IdentitySessionFamilyRefreshRejectedResult = Readonly<{
+  kind: 'rejected';
+  sessionFamily: IdentitySessionFamily;
+  presentedRefreshCredential: IdentityRefreshCredential;
+  facts: readonly [];
+}>;
+
+export type IdentitySessionFamilyRefreshResult =
+  | IdentitySessionFamilyRefreshRotatedResult
+  | IdentitySessionFamilyRefreshReuseDetectedResult
+  | IdentitySessionFamilyRefreshRejectedResult;
 
 export type IdentitySessionFamilyChangedResult<
   Facts extends IdentitySessionFamilyFactTuple = IdentitySessionFamilyFactTuple,
@@ -237,6 +309,7 @@ function assertSnapshotLifecycle(snapshot: IdentitySessionFamilySnapshot): void 
 
   if (
     isRevoked !== (snapshot.closedReason !== null) ||
+    (!isRevoked && snapshot.version > MAX_OPEN_IDENTITY_SESSION_FAMILY_VERSION) ||
     rotationCount < 0 ||
     (snapshot.closedReason === 'REFRESH_REUSE_DETECTED' && rotationCount === 0)
   ) {
@@ -306,6 +379,30 @@ function unchanged(sessionFamily: IdentitySessionFamily): IdentitySessionFamilyU
   });
 }
 
+function rejectedRefresh(
+  sessionFamily: IdentitySessionFamily,
+  presentedRefreshCredential: IdentityRefreshCredential,
+): IdentitySessionFamilyRefreshRejectedResult {
+  return Object.freeze({
+    kind: 'rejected',
+    sessionFamily,
+    presentedRefreshCredential,
+    facts: EMPTY_IDENTITY_SESSION_FAMILY_FACTS,
+  });
+}
+
+function invalidRefreshState(): never {
+  throw new InvalidIdentitySessionFamilyRefreshStateError();
+}
+
+function identityAccountSnapshotOf(value: unknown): IdentityAccountSnapshot {
+  return IdentityAccount.prototype.toSnapshot.call(value as IdentityAccount);
+}
+
+function identityRefreshCredentialSnapshotOf(value: unknown): IdentityRefreshCredentialSnapshot {
+  return IdentityRefreshCredential.prototype.toSnapshot.call(value as IdentityRefreshCredential);
+}
+
 /** Framework-free lifetime and terminal revocation state for one login session. */
 export class IdentitySessionFamily {
   readonly #snapshot: IdentitySessionFamilySnapshot;
@@ -317,10 +414,13 @@ export class IdentitySessionFamily {
 
   public static create(
     input: CreateIdentitySessionFamilyInput,
-  ): IdentitySessionFamilyChangedResult<IdentitySessionFamilyCreationFacts> {
+  ): IdentitySessionFamilyCreationResult {
     const occurredAt = parseIdentityInstant(input.occurredAt);
     const id = parseIdentitySessionId(input.id);
     const accountId = parseIdentityAccountId(input.accountId);
+    const initialRefreshCredentialId = parseIdentityRefreshCredentialId(
+      input.initialRefreshCredentialId,
+    );
     const idleLifetime = parseIdentityRefreshIdleLifetimeSeconds(input.refreshIdleLifetimeSeconds);
     const absoluteLifetime = parseIdentityRefreshAbsoluteLifetimeSeconds(
       input.refreshAbsoluteLifetimeSeconds,
@@ -340,6 +440,12 @@ export class IdentitySessionFamily {
       closedReason: null,
     });
     const sessionFamily = new IdentitySessionFamily(snapshot);
+    const initialRefreshCredential = IdentityRefreshCredential.createInitialForSessionFamily({
+      id: initialRefreshCredentialId,
+      sessionId: id,
+      issuedAt: occurredAt,
+      expiresAt: refreshIdleExpiresAt,
+    });
     const facts: IdentitySessionFamilyCreationFacts = [
       {
         type: 'SESSION_FAMILY_CREATED',
@@ -351,7 +457,12 @@ export class IdentitySessionFamily {
       },
     ];
 
-    return changed(sessionFamily, facts);
+    return Object.freeze({
+      kind: 'changed',
+      sessionFamily,
+      initialRefreshCredential,
+      facts: freezeFacts(facts),
+    });
   }
 
   /** Rebuilds authoritative state without replaying historical domain facts. */
@@ -386,6 +497,87 @@ export class IdentitySessionFamily {
       : 'AUTHENTICATING';
   }
 
+  public presentRefreshCredential(
+    input: PresentIdentityRefreshCredentialInput,
+  ): IdentitySessionFamilyRefreshResult {
+    const locked = this.lockedRefreshState(input.account, input.presentedRefreshCredential);
+    const occurredAt = this.refreshMutationInstant(input.occurredAt, locked.account);
+
+    if (
+      this.#snapshot.revokedAt !== null ||
+      compareIdentityInstants(occurredAt, this.#snapshot.refreshAbsoluteExpiresAt) >= 0
+    ) {
+      return rejectedRefresh(this, locked.credential);
+    }
+
+    if (locked.credentialSnapshot.consumedAt !== null) {
+      return this.closeForRefreshReuse(locked.account, locked.credential, occurredAt);
+    }
+
+    const oneSecondAfterOccurrence = tryAddIdentitySeconds(occurredAt, 1);
+    if (
+      locked.account.status !== 'ACTIVE' ||
+      compareIdentityInstants(occurredAt, this.#snapshot.refreshIdleExpiresAt) >= 0 ||
+      compareIdentityInstants(occurredAt, locked.credentialSnapshot.expiresAt) >= 0 ||
+      oneSecondAfterOccurrence === null ||
+      compareIdentityInstants(oneSecondAfterOccurrence, this.#snapshot.refreshAbsoluteExpiresAt) > 0
+    ) {
+      return rejectedRefresh(this, locked.credential);
+    }
+
+    const successorId = parseIdentityRefreshCredentialId(input.successorRefreshCredentialId);
+    const idleLifetime = parseIdentityRefreshIdleLifetimeSeconds(input.refreshIdleLifetimeSeconds);
+
+    if (successorId === locked.credentialSnapshot.id) {
+      throw new IdentitySessionFamilyRefreshSuccessorConflictError();
+    }
+
+    if (
+      this.#snapshot.version >= MAX_OPEN_IDENTITY_SESSION_FAMILY_VERSION ||
+      locked.credentialSnapshot.sequence >= MAX_OPEN_IDENTITY_SESSION_FAMILY_VERSION
+    ) {
+      throw new IdentitySessionFamilyRefreshCapacityExhaustedError();
+    }
+
+    const configuredIdleExpiresAt = tryAddIdentitySeconds(occurredAt, idleLifetime);
+    const refreshIdleExpiresAt =
+      configuredIdleExpiresAt === null ||
+      compareIdentityInstants(configuredIdleExpiresAt, this.#snapshot.refreshAbsoluteExpiresAt) > 0
+        ? this.#snapshot.refreshAbsoluteExpiresAt
+        : configuredIdleExpiresAt;
+    const basis = this.refreshWriteBasis(locked.account, locked.credentialSnapshot);
+    const rotatedCredentials = IdentityRefreshCredential.rotateForSessionFamily(locked.credential, {
+      consumedAt: occurredAt,
+      successorId,
+      successorExpiresAt: refreshIdleExpiresAt,
+    });
+    const snapshot = freezeSnapshot({
+      ...this.#snapshot,
+      version: nextIdentityAggregateVersion(this.#snapshot.version),
+      lastRotatedAt: occurredAt,
+      refreshIdleExpiresAt,
+    });
+    const sessionFamily = new IdentitySessionFamily(snapshot);
+    const facts: IdentitySessionFamilyRefreshRotationFacts = [
+      {
+        type: 'SESSION_FAMILY_REFRESH_ROTATED',
+        sessionId: snapshot.id,
+        accountId: snapshot.accountId,
+        state: 'AUTHENTICATING',
+        version: snapshot.version,
+        occurredAt,
+      },
+    ];
+
+    return Object.freeze({
+      kind: 'rotated',
+      basis,
+      sessionFamily,
+      ...rotatedCredentials,
+      facts: freezeFacts(facts),
+    });
+  }
+
   public revoke(
     input: RevokeIdentitySessionFamilyInput,
   ): IdentitySessionFamilyMutationResult<IdentitySessionFamilyGenericRevocationFacts> {
@@ -416,6 +608,170 @@ export class IdentitySessionFamily {
     ];
 
     return changed(sessionFamily, facts);
+  }
+
+  private lockedRefreshState(
+    accountValue: unknown,
+    credentialValue: unknown,
+  ): Readonly<{
+    account: IdentityAccountSnapshot;
+    credential: IdentityRefreshCredential;
+    credentialSnapshot: IdentityRefreshCredentialSnapshot;
+  }> {
+    let account: IdentityAccountSnapshot;
+    let credentialSnapshot: IdentityRefreshCredentialSnapshot;
+
+    try {
+      account = identityAccountSnapshotOf(accountValue);
+      credentialSnapshot = identityRefreshCredentialSnapshotOf(credentialValue);
+    } catch {
+      invalidRefreshState();
+    }
+
+    const currentSequence = this.#snapshot.version - (this.#snapshot.revokedAt === null ? 0 : 1);
+
+    if (
+      account.id !== this.#snapshot.accountId ||
+      compareIdentityInstants(account.createdAt, this.#snapshot.createdAt) > 0 ||
+      credentialSnapshot.sessionId !== this.#snapshot.id ||
+      credentialSnapshot.sequence > currentSequence ||
+      compareIdentityInstants(credentialSnapshot.issuedAt, this.#snapshot.createdAt) < 0 ||
+      compareIdentityInstants(
+        credentialSnapshot.expiresAt,
+        this.#snapshot.refreshAbsoluteExpiresAt,
+      ) > 0 ||
+      (credentialSnapshot.sequence === 1 &&
+        credentialSnapshot.issuedAt !== this.#snapshot.createdAt)
+    ) {
+      invalidRefreshState();
+    }
+
+    if (credentialSnapshot.sequence >= 2 && credentialSnapshot.sequence <= 30) {
+      const latestExclusiveIssuance = tryAddIdentitySeconds(
+        this.#snapshot.createdAt,
+        (credentialSnapshot.sequence - 1) * MAX_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
+      );
+
+      if (
+        latestExclusiveIssuance !== null &&
+        compareIdentityInstants(credentialSnapshot.issuedAt, latestExclusiveIssuance) >= 0
+      ) {
+        invalidRefreshState();
+      }
+    }
+
+    if (credentialSnapshot.consumedAt !== null && credentialSnapshot.sequence <= 29) {
+      const latestExclusiveConsumption = tryAddIdentitySeconds(
+        this.#snapshot.createdAt,
+        credentialSnapshot.sequence * MAX_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
+      );
+
+      if (
+        latestExclusiveConsumption !== null &&
+        compareIdentityInstants(credentialSnapshot.consumedAt, latestExclusiveConsumption) >= 0
+      ) {
+        invalidRefreshState();
+      }
+    }
+
+    if (
+      credentialSnapshot.sequence > 1 &&
+      credentialSnapshot.expiresAt !== this.#snapshot.refreshAbsoluteExpiresAt &&
+      (!hasSameFractionalSecond(credentialSnapshot.issuedAt, credentialSnapshot.expiresAt) ||
+        !intervalIsAtLeast(
+          credentialSnapshot.issuedAt,
+          credentialSnapshot.expiresAt,
+          MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
+        ))
+    ) {
+      invalidRefreshState();
+    }
+
+    if (credentialSnapshot.consumedAt === null) {
+      if (
+        credentialSnapshot.sequence !== currentSequence ||
+        credentialSnapshot.issuedAt !== this.#snapshot.lastRotatedAt ||
+        credentialSnapshot.expiresAt !== this.#snapshot.refreshIdleExpiresAt
+      ) {
+        invalidRefreshState();
+      }
+    } else if (
+      credentialSnapshot.sequence >= currentSequence ||
+      compareIdentityInstants(credentialSnapshot.consumedAt, this.#snapshot.lastRotatedAt) > 0
+    ) {
+      invalidRefreshState();
+    }
+
+    return Object.freeze({
+      account,
+      credential: credentialValue as IdentityRefreshCredential,
+      credentialSnapshot,
+    });
+  }
+
+  private refreshMutationInstant(
+    value: unknown,
+    account: IdentityAccountSnapshot,
+  ): IdentityInstant {
+    const occurredAt = parseIdentityInstant(value);
+    const familyHighWaterMark = this.#snapshot.revokedAt ?? this.#snapshot.lastRotatedAt;
+
+    if (
+      compareIdentityInstants(occurredAt, account.updatedAt) < 0 ||
+      compareIdentityInstants(occurredAt, familyHighWaterMark) < 0
+    ) {
+      throw new IdentitySessionFamilyRefreshTimestampRegressionError();
+    }
+
+    return occurredAt;
+  }
+
+  private refreshWriteBasis(
+    account: IdentityAccountSnapshot,
+    credential: IdentityRefreshCredentialSnapshot,
+  ): IdentitySessionFamilyRefreshWriteBasis {
+    return Object.freeze({
+      accountId: account.id,
+      accountVersion: account.version,
+      sessionId: this.#snapshot.id,
+      sessionFamilyVersion: this.#snapshot.version,
+      presentedRefreshCredentialId: credential.id,
+      presentedRefreshCredentialSequence: credential.sequence,
+    });
+  }
+
+  private closeForRefreshReuse(
+    account: IdentityAccountSnapshot,
+    reusedRefreshCredential: IdentityRefreshCredential,
+    occurredAt: IdentityInstant,
+  ): IdentitySessionFamilyRefreshReuseDetectedResult {
+    const basis = this.refreshWriteBasis(account, reusedRefreshCredential.toSnapshot());
+    const snapshot = freezeSnapshot({
+      ...this.#snapshot,
+      version: nextIdentityAggregateVersion(this.#snapshot.version),
+      revokedAt: occurredAt,
+      closedReason: 'REFRESH_REUSE_DETECTED',
+    });
+    const sessionFamily = new IdentitySessionFamily(snapshot);
+    const facts: IdentitySessionFamilyRefreshReuseFacts = [
+      {
+        type: 'SESSION_FAMILY_REVOKED',
+        sessionId: snapshot.id,
+        accountId: snapshot.accountId,
+        state: 'REVOKED',
+        version: snapshot.version,
+        occurredAt,
+        closedReason: 'REFRESH_REUSE_DETECTED',
+      },
+    ];
+
+    return Object.freeze({
+      kind: 'reuse-detected',
+      basis,
+      sessionFamily,
+      reusedRefreshCredential,
+      facts: freezeFacts(facts),
+    });
   }
 
   private static deadline(

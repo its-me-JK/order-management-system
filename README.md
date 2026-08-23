@@ -48,14 +48,17 @@ now also owns a terminal Role aggregate with immutable authorization codes,
 strict Unicode display labels, canonical bounded Permission sets, explicit
 grant/revoke deltas, and auditable initial mappings. SessionFamily now owns
 lossless idle/absolute deadlines, version-derived rotation reachability,
-derived authentication state, and first-cause terminal revocation without
-exposing a partial refresh-rotation API. The package deliberately exports no
-application contract and exposes no route yet; refresh credentials and atomic
-rotation/replay, Identity persistence, the actual crypto adapter, password
-input policy, and Redis remain gated later slices. Pricing, inventory, Redis
-caching, and integration events also remain separate later slices.
+derived authentication state, first-cause terminal revocation, and a
+versionless RefreshCredential child. Its single composite presentation
+transition atomically rotates a current child or closes the family on retained
+reuse evidence, while returning only frozen secret-free state and a bounded
+conditional-write basis. The package deliberately exports no application
+contract and exposes no route yet; AccessCredential issuance, the Identity
+Unit of Work and persistence, the actual crypto adapter, password input policy,
+and Redis remain gated later slices. Pricing, inventory, Redis caching, and
+integration events also remain separate later slices.
 
-**Overall project progress: 30%.** The fixed, deployment-inclusive scoring
+**Overall project progress: 31%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
 
 ## Planned technology

@@ -1,11 +1,22 @@
 import { InvalidIdentityAccountIdError } from '../src/domain/identity-account.values';
+import { IdentityAccount } from '../src/domain/identity-account';
+import { IdentityRefreshCredential } from '../src/domain/identity-refresh-credential';
+import {
+  InvalidIdentityRefreshCredentialIdError,
+  MAX_IDENTITY_REFRESH_CREDENTIAL_SEQUENCE,
+} from '../src/domain/identity-refresh-credential.values';
 import {
   IdentitySessionFamilyDeadlineOverflowError,
+  IdentitySessionFamilyRefreshCapacityExhaustedError,
+  IdentitySessionFamilyRefreshSuccessorConflictError,
+  IdentitySessionFamilyRefreshTimestampRegressionError,
   IdentitySessionFamilyTimestampRegressionError,
+  InvalidIdentitySessionFamilyRefreshStateError,
   InvalidIdentitySessionFamilyStateError,
 } from '../src/domain/identity-session-family.errors';
 import {
   IdentitySessionFamily,
+  type PresentIdentityRefreshCredentialInput,
   type IdentitySessionFamilySnapshot,
 } from '../src/domain/identity-session-family';
 import {
@@ -31,13 +42,16 @@ import {
   type IdentitySessionId,
 } from '../src/domain/identity-session-family.values';
 import {
-  IdentityAggregateVersionExhaustedError,
   InvalidIdentityInstantError,
   MAX_IDENTITY_AGGREGATE_VERSION,
 } from '../src/domain/identity-values';
 
 const SESSION_ID = '01890f3a-8bcd-7def-8abc-0123456789ab';
 const ACCOUNT_ID = '01890f3a-8bcd-7def-9abc-0123456789ab';
+const OTHER_ACCOUNT_ID = '01890f3a-8bcd-7def-aabc-0123456789ab';
+const INITIAL_REFRESH_CREDENTIAL_ID = '01890f3a-8bcd-7def-babc-0123456789ab';
+const SUCCESSOR_REFRESH_CREDENTIAL_ID = '01890f3a-8bcd-7def-8abc-1123456789ab';
+const SECOND_SUCCESSOR_REFRESH_CREDENTIAL_ID = '01890f3a-8bcd-7def-9abc-1123456789ab';
 const CREATED_AT = '2026-08-23T10:00:00.000001Z';
 const INITIAL_IDLE_EXPIRES_AT = '2026-08-23T10:15:00.000001Z';
 const ABSOLUTE_EXPIRES_AT = '2026-08-24T10:00:00.000001Z';
@@ -55,6 +69,16 @@ type RawSessionFamilySnapshot = Readonly<{
   refreshAbsoluteExpiresAt: unknown;
   revokedAt: unknown;
   closedReason: unknown;
+}>;
+
+type RawRefreshCredentialSnapshot = Readonly<{
+  id: unknown;
+  sessionId: unknown;
+  sequence: unknown;
+  issuedAt: unknown;
+  expiresAt: unknown;
+  consumedAt: unknown;
+  successorId: unknown;
 }>;
 
 type ErrorClass = abstract new (...arguments_: never[]) => Error;
@@ -159,14 +183,97 @@ function expiredSnapshot(
   });
 }
 
-function createSessionFamily(): IdentitySessionFamily {
+function createSessionBundle(): ReturnType<typeof IdentitySessionFamily.create> {
   return IdentitySessionFamily.create({
     id: SESSION_ID,
     accountId: ACCOUNT_ID,
+    initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
     refreshIdleLifetimeSeconds: MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
     refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
     occurredAt: CREATED_AT,
-  }).sessionFamily;
+  });
+}
+
+function createSessionFamily(): IdentitySessionFamily {
+  return createSessionBundle().sessionFamily;
+}
+
+function accountSnapshot(
+  overrides: Readonly<Record<string, unknown>> = {},
+): Readonly<Record<string, unknown>> {
+  return {
+    id: ACCOUNT_ID,
+    loginName: 'system.admin',
+    status: 'ACTIVE',
+    version: 1,
+    createdAt: '2026-08-23T09:00:00.000001Z',
+    updatedAt: '2026-08-23T09:00:00.000001Z',
+    suspendedAt: null,
+    deactivatedAt: null,
+    ...overrides,
+  };
+}
+
+function activeAccount(overrides: Readonly<Record<string, unknown>> = {}): IdentityAccount {
+  return IdentityAccount.rehydrate(accountSnapshot(overrides));
+}
+
+function suspendedAccount(): IdentityAccount {
+  return IdentityAccount.rehydrate(
+    accountSnapshot({
+      status: 'SUSPENDED',
+      version: 2,
+      updatedAt: CREATED_AT,
+      suspendedAt: CREATED_AT,
+    }),
+  );
+}
+
+function deactivatedAccount(): IdentityAccount {
+  return IdentityAccount.rehydrate(
+    accountSnapshot({
+      status: 'DEACTIVATED',
+      version: 2,
+      updatedAt: CREATED_AT,
+      deactivatedAt: CREATED_AT,
+    }),
+  );
+}
+
+function refreshCredentialSnapshot(
+  overrides: Partial<RawRefreshCredentialSnapshot> = {},
+): RawRefreshCredentialSnapshot {
+  return {
+    id: INITIAL_REFRESH_CREDENTIAL_ID,
+    sessionId: SESSION_ID,
+    sequence: 1,
+    issuedAt: CREATED_AT,
+    expiresAt: INITIAL_IDLE_EXPIRES_AT,
+    consumedAt: null,
+    successorId: null,
+    ...overrides,
+  };
+}
+
+function refreshCredential(
+  overrides: Partial<RawRefreshCredentialSnapshot> = {},
+): IdentityRefreshCredential {
+  return IdentityRefreshCredential.rehydrate(refreshCredentialSnapshot(overrides));
+}
+
+function presentationInput(
+  account: unknown,
+  presentedRefreshCredential: unknown,
+  overrides: Partial<PresentIdentityRefreshCredentialInput> = {},
+): PresentIdentityRefreshCredentialInput {
+  return {
+    account,
+    presentedRefreshCredential,
+    occurredAt: '2026-08-23T10:05:00.000002Z',
+    successorRefreshCredentialId: SUCCESSOR_REFRESH_CREDENTIAL_ID,
+    refreshIdleLifetimeSeconds: MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
+    ...overrides,
+  };
 }
 
 function expectFrozenSafeFacts(facts: readonly object[]): void {
@@ -203,6 +310,23 @@ function expectSafeImmutableRejection(
   expect(sessionFamily.toSnapshot()).toEqual(before);
   expect(Object.isFrozen(sessionFamily)).toBe(true);
   expect(Object.isFrozen(before)).toBe(true);
+}
+
+function expectSafePresentationError(
+  sessionFamily: IdentitySessionFamily,
+  account: IdentityAccount,
+  credential: IdentityRefreshCredential,
+  operation: () => unknown,
+  expectedClass: ErrorClass,
+): void {
+  const familyBefore = sessionFamily.toSnapshot();
+  const accountBefore = account.toSnapshot();
+  const credentialBefore = credential.toSnapshot();
+
+  expectFixedSafeError(operation, expectedClass);
+  expect(sessionFamily.toSnapshot()).toBe(familyBefore);
+  expect(account.toSnapshot()).toBe(accountBefore);
+  expect(credential.toSnapshot()).toBe(credentialBefore);
 }
 
 describe('Identity Session Family values', (): void => {
@@ -356,6 +480,7 @@ describe('IdentitySessionFamily creation', (): void => {
     const result = IdentitySessionFamily.create({
       id: SESSION_ID,
       accountId: ACCOUNT_ID,
+      initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
       refreshIdleLifetimeSeconds: MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
       refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
       occurredAt: CREATED_AT,
@@ -364,6 +489,7 @@ describe('IdentitySessionFamily creation', (): void => {
     expect(result).toEqual({
       kind: 'changed',
       sessionFamily: result.sessionFamily,
+      initialRefreshCredential: result.initialRefreshCredential,
       facts: [
         {
           type: 'SESSION_FAMILY_CREATED',
@@ -376,9 +502,20 @@ describe('IdentitySessionFamily creation', (): void => {
       ],
     });
     expect(result.sessionFamily.toSnapshot()).toEqual(initialSnapshot());
+    expect(result.initialRefreshCredential.toSnapshot()).toEqual({
+      id: INITIAL_REFRESH_CREDENTIAL_ID,
+      sessionId: SESSION_ID,
+      sequence: 1,
+      issuedAt: CREATED_AT,
+      expiresAt: INITIAL_IDLE_EXPIRES_AT,
+      consumedAt: null,
+      successorId: null,
+    });
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result.sessionFamily)).toBe(true);
     expect(Object.isFrozen(result.sessionFamily.toSnapshot())).toBe(true);
+    expect(Object.isFrozen(result.initialRefreshCredential)).toBe(true);
+    expect(Object.isFrozen(result.initialRefreshCredential.toSnapshot())).toBe(true);
     expectFrozenSafeFacts(result.facts);
     expect(Object.keys(result.sessionFamily)).toEqual([]);
     expect(JSON.stringify(result.sessionFamily)).toBe('{}');
@@ -388,6 +525,7 @@ describe('IdentitySessionFamily creation', (): void => {
     const result = IdentitySessionFamily.create({
       id: SESSION_ID,
       accountId: ACCOUNT_ID,
+      initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
       refreshIdleLifetimeSeconds: MAX_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
       refreshAbsoluteLifetimeSeconds: MAX_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
       occurredAt: CREATED_AT,
@@ -401,10 +539,28 @@ describe('IdentitySessionFamily creation', (): void => {
     );
   });
 
+  it('allows separately branded family and initial credential IDs to share bytes', (): void => {
+    const result = IdentitySessionFamily.create({
+      id: SESSION_ID,
+      accountId: ACCOUNT_ID,
+      initialRefreshCredentialId: SESSION_ID,
+      refreshIdleLifetimeSeconds: MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
+      refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
+      occurredAt: CREATED_AT,
+    });
+
+    expect(result.sessionFamily.toSnapshot().id).toBe(SESSION_ID);
+    expect(result.initialRefreshCredential.toSnapshot()).toMatchObject({
+      id: SESSION_ID,
+      sessionId: SESSION_ID,
+    });
+  });
+
   it('allows equal idle and absolute lifetimes and derives one equal deadline', (): void => {
     const sessionFamily = IdentitySessionFamily.create({
       id: SESSION_ID,
       accountId: ACCOUNT_ID,
+      initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
       refreshIdleLifetimeSeconds: MAX_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
       refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
       occurredAt: CREATED_AT,
@@ -420,6 +576,7 @@ describe('IdentitySessionFamily creation', (): void => {
     const sessionFamily = IdentitySessionFamily.create({
       id: SESSION_ID,
       accountId: ACCOUNT_ID,
+      initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
       refreshIdleLifetimeSeconds: MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
       refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
       occurredAt: '2024-02-28T23:59:59.123456Z',
@@ -441,6 +598,7 @@ describe('IdentitySessionFamily creation', (): void => {
         IdentitySessionFamily.create({
           id: SESSION_ID,
           accountId: ACCOUNT_ID,
+          initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
           refreshIdleLifetimeSeconds: MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
           refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
           occurredAt,
@@ -456,6 +614,7 @@ describe('IdentitySessionFamily creation', (): void => {
       {
         id: 'session-secret-id',
         accountId: 'account-secret-id',
+        initialRefreshCredentialId: 'credential-secret-id',
         refreshIdleLifetimeSeconds: 'idle-secret',
         refreshAbsoluteLifetimeSeconds: 'absolute-secret',
         occurredAt: 'time-secret',
@@ -467,6 +626,7 @@ describe('IdentitySessionFamily creation', (): void => {
       {
         id: 'session-secret-id',
         accountId: ACCOUNT_ID,
+        initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
         refreshIdleLifetimeSeconds: MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
         refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
         occurredAt: CREATED_AT,
@@ -478,6 +638,7 @@ describe('IdentitySessionFamily creation', (): void => {
       {
         id: SESSION_ID,
         accountId: 'account-secret-id',
+        initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
         refreshIdleLifetimeSeconds: MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
         refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
         occurredAt: CREATED_AT,
@@ -485,10 +646,23 @@ describe('IdentitySessionFamily creation', (): void => {
       InvalidIdentityAccountIdError,
     ],
     [
+      'invalid initial Refresh Credential id',
+      {
+        id: SESSION_ID,
+        accountId: ACCOUNT_ID,
+        initialRefreshCredentialId: 'credential-secret-id',
+        refreshIdleLifetimeSeconds: 'idle-secret',
+        refreshAbsoluteLifetimeSeconds: 'absolute-secret',
+        occurredAt: CREATED_AT,
+      },
+      InvalidIdentityRefreshCredentialIdError,
+    ],
+    [
       'invalid idle lifetime',
       {
         id: SESSION_ID,
         accountId: ACCOUNT_ID,
+        initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
         refreshIdleLifetimeSeconds: 'idle-secret',
         refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
         occurredAt: CREATED_AT,
@@ -500,6 +674,7 @@ describe('IdentitySessionFamily creation', (): void => {
       {
         id: SESSION_ID,
         accountId: ACCOUNT_ID,
+        initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
         refreshIdleLifetimeSeconds: MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
         refreshAbsoluteLifetimeSeconds: 'absolute-secret',
         occurredAt: CREATED_AT,
@@ -512,6 +687,7 @@ describe('IdentitySessionFamily creation', (): void => {
       expectFixedSafeError(() => IdentitySessionFamily.create(input), expectedClass, [
         'session-secret-id',
         'account-secret-id',
+        'credential-secret-id',
         'idle-secret',
         'absolute-secret',
         'time-secret',
@@ -523,6 +699,7 @@ describe('IdentitySessionFamily creation', (): void => {
     const input = {
       id: SESSION_ID,
       accountId: ACCOUNT_ID,
+      initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
       refreshIdleLifetimeSeconds: MIN_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
       refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
       occurredAt: CREATED_AT,
@@ -649,6 +826,10 @@ describe('IdentitySessionFamily strict rehydration', (): void => {
     ['invalid Session id', initialSnapshot({ id: 'persistence-session-secret' })],
     ['invalid Account id', initialSnapshot({ accountId: 'persistence-account-secret' })],
     ['invalid version', initialSnapshot({ version: 0 })],
+    [
+      'open family consuming the terminal reserved version',
+      initialSnapshot({ version: MAX_IDENTITY_AGGREGATE_VERSION }),
+    ],
     ['invalid creation time', initialSnapshot({ createdAt: 'persistence-time-secret' })],
     ['invalid last-rotation time', initialSnapshot({ lastRotatedAt: 'not-an-instant' })],
     ['invalid idle deadline', initialSnapshot({ refreshIdleExpiresAt: 'not-an-instant' })],
@@ -893,6 +1074,1007 @@ describe('IdentitySessionFamily derived authentication state', (): void => {
   });
 });
 
+describe('IdentitySessionFamily combined refresh reachability', (): void => {
+  it('rejects plain-object aggregate and entity impostors before parsing time', (): void => {
+    const sessionFamily = createSessionFamily();
+    const account = activeAccount();
+    const credential = refreshCredential();
+
+    expectFixedSafeError(
+      () =>
+        sessionFamily.presentRefreshCredential(
+          presentationInput(account.toSnapshot(), credential, { occurredAt: 'invalid-time' }),
+        ),
+      InvalidIdentitySessionFamilyRefreshStateError,
+    );
+    expectFixedSafeError(
+      () =>
+        sessionFamily.presentRefreshCredential(
+          presentationInput(account, credential.toSnapshot(), { occurredAt: 'invalid-time' }),
+        ),
+      InvalidIdentitySessionFamilyRefreshStateError,
+    );
+  });
+
+  it('collapses forged, hostile Proxy, and revoked Proxy locked inputs to one safe state error', (): void => {
+    const sessionFamily = createSessionFamily();
+    const familyBefore = sessionFamily.toSnapshot();
+    const validAccount = activeAccount();
+    const accountBefore = validAccount.toSnapshot();
+    const validCredential = refreshCredential();
+    const credentialBefore = validCredential.toSnapshot();
+    const hostileSecret = 'hostile-locked-refresh-proxy-secret';
+    let hostileTrapCalls = 0;
+    const hostileAccount = new Proxy(validAccount, {
+      get(): never {
+        hostileTrapCalls += 1;
+        throw new Error(hostileSecret);
+      },
+      getPrototypeOf(): never {
+        hostileTrapCalls += 1;
+        throw new Error(hostileSecret);
+      },
+    });
+    const hostileCredential = new Proxy(validCredential, {
+      get(): never {
+        hostileTrapCalls += 1;
+        throw new Error(hostileSecret);
+      },
+      getPrototypeOf(): never {
+        hostileTrapCalls += 1;
+        throw new Error(hostileSecret);
+      },
+    });
+    const revokedAccount = Proxy.revocable(validAccount, {});
+    const revokedCredential = Proxy.revocable(validCredential, {});
+    revokedAccount.revoke();
+    revokedCredential.revoke();
+    const scenarios: readonly (readonly [unknown, unknown])[] = [
+      [Object.create(IdentityAccount.prototype) as unknown, validCredential],
+      [hostileAccount, validCredential],
+      [revokedAccount.proxy, validCredential],
+      [validAccount, Object.create(IdentityRefreshCredential.prototype) as unknown],
+      [validAccount, hostileCredential],
+      [validAccount, revokedCredential.proxy],
+    ];
+
+    for (const [account, credential] of scenarios) {
+      expectFixedSafeError(
+        () =>
+          sessionFamily.presentRefreshCredential(
+            presentationInput(account, credential, { occurredAt: 'invalid-time' }),
+          ),
+        InvalidIdentitySessionFamilyRefreshStateError,
+        [hostileSecret],
+      );
+    }
+
+    expect(hostileTrapCalls).toBe(0);
+    expect(sessionFamily.toSnapshot()).toBe(familyBefore);
+    expect(validAccount.toSnapshot()).toBe(accountBefore);
+    expect(validCredential.toSnapshot()).toBe(credentialBefore);
+  });
+
+  it.each([
+    [
+      'Account owned by another identity',
+      createSessionFamily(),
+      activeAccount({ id: OTHER_ACCOUNT_ID }),
+      refreshCredential(),
+    ],
+    [
+      'Account created after the family',
+      createSessionFamily(),
+      activeAccount({
+        createdAt: '2026-08-23T10:00:00.000002Z',
+        updatedAt: '2026-08-23T10:00:00.000002Z',
+      }),
+      refreshCredential(),
+    ],
+    [
+      'credential owned by another family',
+      createSessionFamily(),
+      activeAccount(),
+      refreshCredential({ sessionId: SECOND_SUCCESSOR_REFRESH_CREDENTIAL_ID }),
+    ],
+    [
+      'credential sequence above the current family generation',
+      createSessionFamily(),
+      activeAccount(),
+      refreshCredential({ sequence: 2 }),
+    ],
+    [
+      'sequence-1 credential issued before family creation',
+      createSessionFamily(),
+      activeAccount(),
+      refreshCredential({
+        issuedAt: '2026-08-23T09:00:00.000001Z',
+        expiresAt: '2026-08-23T09:15:00.000001Z',
+      }),
+    ],
+    [
+      'sequence-1 credential issued after family creation',
+      createSessionFamily(),
+      activeAccount(),
+      refreshCredential({
+        issuedAt: '2026-08-23T10:00:01.000001Z',
+        expiresAt: '2026-08-23T10:15:01.000001Z',
+      }),
+    ],
+    [
+      'historical credential left unconsumed',
+      IdentitySessionFamily.rehydrate(rotatedSnapshot()),
+      activeAccount(),
+      refreshCredential(),
+    ],
+    [
+      'current credential already consumed',
+      createSessionFamily(),
+      activeAccount(),
+      refreshCredential({
+        consumedAt: CREATED_AT,
+        successorId: SUCCESSOR_REFRESH_CREDENTIAL_ID,
+      }),
+    ],
+    [
+      'historical consumption after last rotation',
+      IdentitySessionFamily.rehydrate(rotatedSnapshot()),
+      activeAccount(),
+      refreshCredential({
+        expiresAt: ABSOLUTE_EXPIRES_AT,
+        consumedAt: '2026-08-23T10:31:00.000003Z',
+        successorId: SUCCESSOR_REFRESH_CREDENTIAL_ID,
+      }),
+    ],
+    [
+      'later short credential not capped by family absolute expiry',
+      IdentitySessionFamily.rehydrate(rotatedSnapshot({ version: 3 })),
+      activeAccount(),
+      refreshCredential({
+        sequence: 2,
+        issuedAt: '2026-08-23T10:10:00.000002Z',
+        expiresAt: '2026-08-23T10:10:01.000003Z',
+        consumedAt: '2026-08-23T10:10:00.000002Z',
+        successorId: SUCCESSOR_REFRESH_CREDENTIAL_ID,
+      }),
+    ],
+    [
+      'sequence-2 issuance exactly at its strict one-day bound',
+      IdentitySessionFamily.rehydrate(
+        rotatedSnapshot({
+          version: 3,
+          lastRotatedAt: '2026-08-24T12:00:00.000001Z',
+          refreshIdleExpiresAt: '2026-08-24T12:15:00.000001Z',
+          refreshAbsoluteExpiresAt: '2026-09-22T10:00:00.000001Z',
+        }),
+      ),
+      activeAccount(),
+      refreshCredential({
+        sequence: 2,
+        issuedAt: '2026-08-24T10:00:00.000001Z',
+        expiresAt: '2026-08-24T10:15:00.000001Z',
+        consumedAt: '2026-08-24T10:01:00.000001Z',
+        successorId: SUCCESSOR_REFRESH_CREDENTIAL_ID,
+      }),
+    ],
+    [
+      'historical expiry beyond the family absolute deadline',
+      IdentitySessionFamily.rehydrate(
+        rotatedSnapshot({
+          version: 3,
+          lastRotatedAt: '2026-08-23T11:00:00.000001Z',
+          refreshIdleExpiresAt: '2026-08-23T11:15:00.000001Z',
+        }),
+      ),
+      activeAccount(),
+      refreshCredential({
+        sequence: 2,
+        issuedAt: '2026-08-23T10:30:00.000001Z',
+        expiresAt: '2026-08-24T10:30:00.000001Z',
+        consumedAt: '2026-08-23T10:31:00.000001Z',
+        successorId: SUCCESSOR_REFRESH_CREDENTIAL_ID,
+      }),
+    ],
+  ] as const)(
+    'rejects %s as one fixed combined-state error',
+    (_scenario, sessionFamily, account, credential): void => {
+      expectSafePresentationError(
+        sessionFamily,
+        account,
+        credential,
+        () =>
+          sessionFamily.presentRefreshCredential(
+            presentationInput(account, credential, { occurredAt: 'invalid-time' }),
+          ),
+        InvalidIdentitySessionFamilyRefreshStateError,
+      );
+    },
+  );
+
+  it('accepts a later one-second credential only at the absolute cap', (): void => {
+    const sessionFamily = IdentitySessionFamily.rehydrate(cappedRotatedSnapshot());
+    const account = activeAccount();
+    const credential = refreshCredential({
+      id: SUCCESSOR_REFRESH_CREDENTIAL_ID,
+      sequence: 2,
+      issuedAt: '2026-08-24T09:59:59.000001Z',
+      expiresAt: ABSOLUTE_EXPIRES_AT,
+    });
+    const result = sessionFamily.presentRefreshCredential(
+      presentationInput(account, credential, {
+        occurredAt: '2026-08-24T09:59:59.000001Z',
+        successorRefreshCredentialId: SECOND_SUCCESSOR_REFRESH_CREDENTIAL_ID,
+      }),
+    );
+
+    expect(result.kind).toBe('rotated');
+  });
+
+  it('keeps a current sequence-3 credential reachable when its issuance bound overflows year 9999', (): void => {
+    const nearRangeEnd = '9999-12-30T00:00:00.000001Z';
+    const sessionFamily = IdentitySessionFamily.rehydrate(
+      initialSnapshot({
+        version: 3,
+        createdAt: nearRangeEnd,
+        lastRotatedAt: nearRangeEnd,
+        refreshIdleExpiresAt: '9999-12-30T00:15:00.000001Z',
+        refreshAbsoluteExpiresAt: '9999-12-31T00:00:00.000001Z',
+      }),
+    );
+    const account = activeAccount({
+      createdAt: '9999-12-29T23:59:59.000001Z',
+      updatedAt: '9999-12-29T23:59:59.000001Z',
+    });
+    const credential = refreshCredential({
+      sequence: 3,
+      issuedAt: nearRangeEnd,
+      expiresAt: '9999-12-30T00:15:00.000001Z',
+    });
+
+    const result = sessionFamily.presentRefreshCredential(
+      presentationInput(account, credential, { occurredAt: nearRangeEnd }),
+    );
+
+    expect(result.kind).toBe('rotated');
+    if (result.kind === 'rotated') {
+      expect(result.sessionFamily.toSnapshot().version).toBe(4);
+      expect(result.successorRefreshCredential.toSnapshot().sequence).toBe(4);
+    }
+  });
+
+  it('keeps a consumed sequence-2 credential reachable when its consumption bound overflows year 9999', (): void => {
+    const nearRangeEnd = '9999-12-30T00:00:00.000001Z';
+    const sessionFamily = IdentitySessionFamily.rehydrate(
+      initialSnapshot({
+        version: 3,
+        createdAt: nearRangeEnd,
+        lastRotatedAt: nearRangeEnd,
+        refreshIdleExpiresAt: '9999-12-30T00:15:00.000001Z',
+        refreshAbsoluteExpiresAt: '9999-12-31T00:00:00.000001Z',
+      }),
+    );
+    const account = activeAccount({
+      createdAt: '9999-12-29T23:59:59.000001Z',
+      updatedAt: '9999-12-29T23:59:59.000001Z',
+    });
+    const credential = refreshCredential({
+      sequence: 2,
+      issuedAt: nearRangeEnd,
+      expiresAt: '9999-12-30T00:15:00.000001Z',
+      consumedAt: nearRangeEnd,
+      successorId: SUCCESSOR_REFRESH_CREDENTIAL_ID,
+    });
+
+    const result = sessionFamily.presentRefreshCredential(
+      presentationInput(account, credential, { occurredAt: nearRangeEnd }),
+    );
+
+    expect(result.kind).toBe('reuse-detected');
+    if (result.kind === 'reuse-detected') {
+      expect(result.sessionFamily.toSnapshot()).toMatchObject({
+        version: 4,
+        revokedAt: nearRangeEnd,
+        closedReason: 'REFRESH_REUSE_DETECTED',
+      });
+      expect(result.reusedRefreshCredential).toBe(credential);
+    }
+  });
+});
+
+describe('IdentitySessionFamily rejected refresh presentation', (): void => {
+  it.each([
+    [
+      'already-revoked family',
+      (): readonly [IdentitySessionFamily, IdentityAccount, IdentityRefreshCredential, string] => {
+        const created = createSessionBundle();
+        const revoked = created.sessionFamily.revoke({
+          closedReason: 'LOGOUT',
+          occurredAt: '2026-08-23T10:05:00.000002Z',
+        }).sessionFamily;
+        return [
+          revoked,
+          activeAccount(),
+          created.initialRefreshCredential,
+          '2026-08-23T10:05:00.000002Z',
+        ];
+      },
+    ],
+    [
+      'absolute expiry equality',
+      (): readonly [IdentitySessionFamily, IdentityAccount, IdentityRefreshCredential, string] => {
+        const created = createSessionBundle();
+        return [
+          created.sessionFamily,
+          activeAccount(),
+          created.initialRefreshCredential,
+          ABSOLUTE_EXPIRES_AT,
+        ];
+      },
+    ],
+    [
+      'idle and current-credential expiry equality',
+      (): readonly [IdentitySessionFamily, IdentityAccount, IdentityRefreshCredential, string] => {
+        const created = createSessionBundle();
+        return [
+          created.sessionFamily,
+          activeAccount(),
+          created.initialRefreshCredential,
+          INITIAL_IDLE_EXPIRES_AT,
+        ];
+      },
+    ],
+    [
+      'suspended Account with a current credential',
+      (): readonly [IdentitySessionFamily, IdentityAccount, IdentityRefreshCredential, string] => {
+        const created = createSessionBundle();
+        return [
+          created.sessionFamily,
+          suspendedAccount(),
+          created.initialRefreshCredential,
+          '2026-08-23T10:05:00.000002Z',
+        ];
+      },
+    ],
+    [
+      'deactivated Account with a current credential',
+      (): readonly [IdentitySessionFamily, IdentityAccount, IdentityRefreshCredential, string] => {
+        const created = createSessionBundle();
+        return [
+          created.sessionFamily,
+          deactivatedAccount(),
+          created.initialRefreshCredential,
+          '2026-08-23T10:05:00.000002Z',
+        ];
+      },
+    ],
+    [
+      'less than one whole second before absolute expiry',
+      (): readonly [IdentitySessionFamily, IdentityAccount, IdentityRefreshCredential, string] => [
+        IdentitySessionFamily.rehydrate(cappedRotatedSnapshot()),
+        activeAccount(),
+        refreshCredential({
+          id: SUCCESSOR_REFRESH_CREDENTIAL_ID,
+          sequence: 2,
+          issuedAt: '2026-08-24T09:59:59.000001Z',
+          expiresAt: ABSOLUTE_EXPIRES_AT,
+        }),
+        '2026-08-24T09:59:59.000002Z',
+      ],
+    ],
+  ] as const)(
+    'returns one indistinguishable immutable rejection for %s',
+    (_scenario, arrange): void => {
+      const [sessionFamily, account, credential, occurredAt] = arrange();
+      const familyBefore = sessionFamily.toSnapshot();
+      const accountBefore = account.toSnapshot();
+      const credentialBefore = credential.toSnapshot();
+      const result = sessionFamily.presentRefreshCredential(
+        presentationInput(account, credential, {
+          occurredAt,
+          successorRefreshCredentialId: 'ignored-invalid-successor',
+          refreshIdleLifetimeSeconds: 'ignored-invalid-idle',
+        }),
+      );
+
+      expect(result).toEqual({
+        kind: 'rejected',
+        sessionFamily,
+        presentedRefreshCredential: credential,
+        facts: [],
+      });
+      expect(Object.keys(result).sort()).toEqual(
+        ['facts', 'kind', 'presentedRefreshCredential', 'sessionFamily'].sort(),
+      );
+      expect(Object.hasOwn(result, 'basis')).toBe(false);
+      expect(Object.isFrozen(result)).toBe(true);
+      expectFrozenSafeFacts(result.facts);
+      expect(sessionFamily.toSnapshot()).toBe(familyBefore);
+      expect(account.toSnapshot()).toBe(accountBefore);
+      expect(credential.toSnapshot()).toBe(credentialBefore);
+    },
+  );
+
+  it('parses and checks authoritative time before terminal rejection', (): void => {
+    const created = createSessionBundle();
+    const terminal = created.sessionFamily.revoke({
+      closedReason: 'LOGOUT',
+      occurredAt: '2026-08-23T10:05:00.000002Z',
+    }).sessionFamily;
+    const account = activeAccount();
+
+    expectSafePresentationError(
+      terminal,
+      account,
+      created.initialRefreshCredential,
+      () =>
+        terminal.presentRefreshCredential(
+          presentationInput(account, created.initialRefreshCredential, {
+            occurredAt: 'invalid-time',
+          }),
+        ),
+      InvalidIdentityInstantError,
+    );
+    expectSafePresentationError(
+      terminal,
+      account,
+      created.initialRefreshCredential,
+      () =>
+        terminal.presentRefreshCredential(
+          presentationInput(account, created.initialRefreshCredential, {
+            occurredAt: CREATED_AT,
+          }),
+        ),
+      IdentitySessionFamilyRefreshTimestampRegressionError,
+    );
+  });
+
+  it('rejects regression against either the Account or family high-water mark', (): void => {
+    const created = createSessionBundle();
+    const laterAccount = activeAccount({
+      version: 3,
+      updatedAt: '2026-08-23T10:06:00.000002Z',
+    });
+
+    expectSafePresentationError(
+      created.sessionFamily,
+      laterAccount,
+      created.initialRefreshCredential,
+      () =>
+        created.sessionFamily.presentRefreshCredential(
+          presentationInput(laterAccount, created.initialRefreshCredential),
+        ),
+      IdentitySessionFamilyRefreshTimestampRegressionError,
+    );
+
+    const rotatedFamily = IdentitySessionFamily.rehydrate(rotatedSnapshot());
+    const current = refreshCredential({
+      id: SUCCESSOR_REFRESH_CREDENTIAL_ID,
+      sequence: 2,
+      issuedAt: ROTATED_AT,
+      expiresAt: ROTATED_IDLE_EXPIRES_AT,
+    });
+    const account = activeAccount();
+    expectSafePresentationError(
+      rotatedFamily,
+      account,
+      current,
+      () =>
+        rotatedFamily.presentRefreshCredential(
+          presentationInput(account, current, {
+            occurredAt: '2026-08-23T10:29:59.999999Z',
+          }),
+        ),
+      IdentitySessionFamilyRefreshTimestampRegressionError,
+    );
+  });
+});
+
+describe('IdentitySessionFamily successful refresh rotation', (): void => {
+  it('returns one exact immutable atomic rotation bundle', (): void => {
+    const created = createSessionBundle();
+    const account = activeAccount();
+    const occurredAt = '2026-08-23T10:05:00.000002Z';
+    const familyBefore = created.sessionFamily.toSnapshot();
+    const accountBefore = account.toSnapshot();
+    const credentialBefore = created.initialRefreshCredential.toSnapshot();
+    const result = created.sessionFamily.presentRefreshCredential(
+      presentationInput(account, created.initialRefreshCredential, { occurredAt }),
+    );
+
+    expect(result.kind).toBe('rotated');
+    if (result.kind !== 'rotated') {
+      throw new Error('Expected an atomic rotation result');
+    }
+
+    expect(Object.keys(result).sort()).toEqual(
+      [
+        'basis',
+        'consumedRefreshCredential',
+        'facts',
+        'kind',
+        'sessionFamily',
+        'successorRefreshCredential',
+      ].sort(),
+    );
+    expect(result.basis).toEqual({
+      accountId: ACCOUNT_ID,
+      accountVersion: 1,
+      sessionId: SESSION_ID,
+      sessionFamilyVersion: 1,
+      presentedRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
+      presentedRefreshCredentialSequence: 1,
+    });
+    expect(result.sessionFamily.toSnapshot()).toEqual({
+      ...familyBefore,
+      version: 2,
+      lastRotatedAt: occurredAt,
+      refreshIdleExpiresAt: '2026-08-23T10:20:00.000002Z',
+    });
+    expect(result.consumedRefreshCredential.toSnapshot()).toEqual({
+      ...credentialBefore,
+      consumedAt: occurredAt,
+      successorId: SUCCESSOR_REFRESH_CREDENTIAL_ID,
+    });
+    expect(result.successorRefreshCredential.toSnapshot()).toEqual({
+      id: SUCCESSOR_REFRESH_CREDENTIAL_ID,
+      sessionId: SESSION_ID,
+      sequence: 2,
+      issuedAt: occurredAt,
+      expiresAt: '2026-08-23T10:20:00.000002Z',
+      consumedAt: null,
+      successorId: null,
+    });
+    expect(result.facts).toEqual([
+      {
+        type: 'SESSION_FAMILY_REFRESH_ROTATED',
+        sessionId: SESSION_ID,
+        accountId: ACCOUNT_ID,
+        state: 'AUTHENTICATING',
+        version: 2,
+        occurredAt,
+      },
+    ]);
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.basis)).toBe(true);
+    expect(Object.isFrozen(result.sessionFamily)).toBe(true);
+    expect(Object.isFrozen(result.consumedRefreshCredential)).toBe(true);
+    expect(Object.isFrozen(result.successorRefreshCredential)).toBe(true);
+    expect(Object.isFrozen(result.sessionFamily.toSnapshot())).toBe(true);
+    expect(Object.isFrozen(result.consumedRefreshCredential.toSnapshot())).toBe(true);
+    expect(Object.isFrozen(result.successorRefreshCredential.toSnapshot())).toBe(true);
+    expectFrozenSafeFacts(result.facts);
+    expect(JSON.stringify(result.facts)).not.toContain(INITIAL_REFRESH_CREDENTIAL_ID);
+    expect(JSON.stringify(result.facts)).not.toContain(SUCCESSOR_REFRESH_CREDENTIAL_ID);
+    expect(JSON.stringify(result.basis)).not.toContain('system.admin');
+    expect(JSON.stringify(result.basis)).not.toContain('ACTIVE');
+    expect(JSON.stringify(result.basis)).not.toContain('expiresAt');
+    expect(Object.hasOwn(result, 'account')).toBe(false);
+    expect(created.sessionFamily.toSnapshot()).toBe(familyBefore);
+    expect(created.initialRefreshCredential.toSnapshot()).toBe(credentialBefore);
+    expect(account.toSnapshot()).toBe(accountBefore);
+  });
+
+  it('caps a maximum configured idle lifetime at the immutable absolute deadline', (): void => {
+    const created = createSessionBundle();
+    const result = created.sessionFamily.presentRefreshCredential(
+      presentationInput(activeAccount(), created.initialRefreshCredential, {
+        refreshIdleLifetimeSeconds: MAX_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
+      }),
+    );
+
+    expect(result.kind).toBe('rotated');
+    if (result.kind === 'rotated') {
+      expect(result.sessionFamily.toSnapshot().refreshIdleExpiresAt).toBe(ABSOLUTE_EXPIRES_AT);
+      expect(result.successorRefreshCredential.toSnapshot().expiresAt).toBe(ABSOLUTE_EXPIRES_AT);
+    }
+  });
+
+  it('allows exactly one whole second and derives a one-second capped successor', (): void => {
+    const family = IdentitySessionFamily.rehydrate(cappedRotatedSnapshot());
+    const current = refreshCredential({
+      id: SUCCESSOR_REFRESH_CREDENTIAL_ID,
+      sequence: 2,
+      issuedAt: '2026-08-24T09:59:59.000001Z',
+      expiresAt: ABSOLUTE_EXPIRES_AT,
+    });
+    const result = family.presentRefreshCredential(
+      presentationInput(activeAccount(), current, {
+        occurredAt: '2026-08-24T09:59:59.000001Z',
+        successorRefreshCredentialId: SECOND_SUCCESSOR_REFRESH_CREDENTIAL_ID,
+        refreshIdleLifetimeSeconds: MAX_IDENTITY_REFRESH_IDLE_LIFETIME_SECONDS,
+      }),
+    );
+
+    expect(result.kind).toBe('rotated');
+    if (result.kind === 'rotated') {
+      expect(result.sessionFamily.toSnapshot()).toMatchObject({
+        version: 3,
+        lastRotatedAt: '2026-08-24T09:59:59.000001Z',
+        refreshIdleExpiresAt: ABSOLUTE_EXPIRES_AT,
+      });
+      expect(result.successorRefreshCredential.toSnapshot()).toMatchObject({
+        sequence: 3,
+        issuedAt: '2026-08-24T09:59:59.000001Z',
+        expiresAt: ABSOLUTE_EXPIRES_AT,
+      });
+    }
+  });
+
+  it('uses the valid absolute cap when configured addition would exceed year 9999', (): void => {
+    const createdAt = '9999-12-30T23:59:59.000001Z';
+    const lastRotatedAt = '9999-12-31T23:59:58.000001Z';
+    const absolute = '9999-12-31T23:59:59.000001Z';
+    const family = IdentitySessionFamily.rehydrate(
+      initialSnapshot({
+        version: 2,
+        createdAt,
+        lastRotatedAt,
+        refreshIdleExpiresAt: absolute,
+        refreshAbsoluteExpiresAt: absolute,
+      }),
+    );
+    const account = activeAccount({
+      createdAt: '9999-12-01T00:00:00.000001Z',
+      updatedAt: '9999-12-01T00:00:00.000001Z',
+    });
+    const current = refreshCredential({
+      id: SUCCESSOR_REFRESH_CREDENTIAL_ID,
+      sequence: 2,
+      issuedAt: lastRotatedAt,
+      expiresAt: absolute,
+    });
+    const result = family.presentRefreshCredential(
+      presentationInput(account, current, {
+        occurredAt: lastRotatedAt,
+        successorRefreshCredentialId: SECOND_SUCCESSOR_REFRESH_CREDENTIAL_ID,
+      }),
+    );
+
+    expect(result.kind).toBe('rotated');
+    if (result.kind === 'rotated') {
+      expect(result.sessionFamily.toSnapshot().refreshIdleExpiresAt).toBe(absolute);
+      expect(result.successorRefreshCredential.toSnapshot().expiresAt).toBe(absolute);
+    }
+  });
+
+  it('preserves microseconds through a leap-day successor deadline', (): void => {
+    const created = IdentitySessionFamily.create({
+      id: SESSION_ID,
+      accountId: ACCOUNT_ID,
+      initialRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
+      refreshIdleLifetimeSeconds: 3_600,
+      refreshAbsoluteLifetimeSeconds: MIN_IDENTITY_REFRESH_ABSOLUTE_LIFETIME_SECONDS,
+      occurredAt: '2024-02-28T23:45:00.123456Z',
+    });
+    const account = activeAccount({
+      createdAt: '2024-02-28T22:00:00.123456Z',
+      updatedAt: '2024-02-28T22:00:00.123456Z',
+    });
+    const result = created.sessionFamily.presentRefreshCredential(
+      presentationInput(account, created.initialRefreshCredential, {
+        occurredAt: '2024-02-28T23:50:00.654321Z',
+      }),
+    );
+
+    expect(result.kind).toBe('rotated');
+    if (result.kind === 'rotated') {
+      expect(result.successorRefreshCredential.toSnapshot().expiresAt).toBe(
+        '2024-02-29T00:05:00.654321Z',
+      );
+    }
+  });
+
+  it('uses stable successor, idle, conflict, then capacity precedence', (): void => {
+    const created = createSessionBundle();
+    const account = activeAccount();
+
+    expectSafePresentationError(
+      created.sessionFamily,
+      account,
+      created.initialRefreshCredential,
+      () =>
+        created.sessionFamily.presentRefreshCredential(
+          presentationInput(account, created.initialRefreshCredential, {
+            successorRefreshCredentialId: 'invalid-successor',
+            refreshIdleLifetimeSeconds: 'invalid-idle',
+          }),
+        ),
+      InvalidIdentityRefreshCredentialIdError,
+    );
+    expectSafePresentationError(
+      created.sessionFamily,
+      account,
+      created.initialRefreshCredential,
+      () =>
+        created.sessionFamily.presentRefreshCredential(
+          presentationInput(account, created.initialRefreshCredential, {
+            refreshIdleLifetimeSeconds: 'invalid-idle',
+          }),
+        ),
+      InvalidIdentityRefreshIdleLifetimeSecondsError,
+    );
+    expectSafePresentationError(
+      created.sessionFamily,
+      account,
+      created.initialRefreshCredential,
+      () =>
+        created.sessionFamily.presentRefreshCredential(
+          presentationInput(account, created.initialRefreshCredential, {
+            successorRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
+          }),
+        ),
+      IdentitySessionFamilyRefreshSuccessorConflictError,
+    );
+
+    const maximumOpen = IdentitySessionFamily.rehydrate(
+      initialSnapshot({ version: MAX_IDENTITY_AGGREGATE_VERSION - 1 }),
+    );
+    const maximumCurrent = refreshCredential({
+      sequence: MAX_IDENTITY_REFRESH_CREDENTIAL_SEQUENCE,
+    });
+    expectSafePresentationError(
+      maximumOpen,
+      account,
+      maximumCurrent,
+      () =>
+        maximumOpen.presentRefreshCredential(
+          presentationInput(account, maximumCurrent, {
+            successorRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
+          }),
+        ),
+      IdentitySessionFamilyRefreshSuccessorConflictError,
+    );
+    expectSafePresentationError(
+      maximumOpen,
+      account,
+      maximumCurrent,
+      () =>
+        maximumOpen.presentRefreshCredential(
+          presentationInput(account, maximumCurrent, {
+            refreshIdleLifetimeSeconds: 'invalid-idle',
+          }),
+        ),
+      InvalidIdentityRefreshIdleLifetimeSecondsError,
+    );
+    expectSafePresentationError(
+      maximumOpen,
+      account,
+      maximumCurrent,
+      () => maximumOpen.presentRefreshCredential(presentationInput(account, maximumCurrent)),
+      IdentitySessionFamilyRefreshCapacityExhaustedError,
+    );
+  });
+
+  it('allows the last rotation that preserves the terminal version reserve', (): void => {
+    const family = IdentitySessionFamily.rehydrate(
+      initialSnapshot({ version: MAX_IDENTITY_AGGREGATE_VERSION - 2 }),
+    );
+    const current = refreshCredential({
+      sequence: MAX_IDENTITY_REFRESH_CREDENTIAL_SEQUENCE - 1,
+    });
+    const result = family.presentRefreshCredential(presentationInput(activeAccount(), current));
+
+    expect(result.kind).toBe('rotated');
+    if (result.kind === 'rotated') {
+      expect(result.sessionFamily.toSnapshot().version).toBe(MAX_IDENTITY_AGGREGATE_VERSION - 1);
+      expect(result.consumedRefreshCredential.toSnapshot().sequence).toBe(
+        MAX_IDENTITY_REFRESH_CREDENTIAL_SEQUENCE - 1,
+      );
+      expect(result.successorRefreshCredential.toSnapshot().sequence).toBe(
+        MAX_IDENTITY_REFRESH_CREDENTIAL_SEQUENCE,
+      );
+    }
+  });
+});
+
+describe('IdentitySessionFamily refresh reuse detection', (): void => {
+  it('closes the family atomically from a lost committed rotation response', (): void => {
+    const created = createSessionBundle();
+    const account = activeAccount();
+    const winner = created.sessionFamily.presentRefreshCredential(
+      presentationInput(account, created.initialRefreshCredential),
+    );
+    expect(winner.kind).toBe('rotated');
+    if (winner.kind !== 'rotated') {
+      throw new Error('Expected the first presentation to rotate');
+    }
+
+    const familyBefore = winner.sessionFamily.toSnapshot();
+    const reusedBefore = winner.consumedRefreshCredential.toSnapshot();
+    const occurredAt = '2026-08-23T10:30:00.000003Z';
+    const replay = winner.sessionFamily.presentRefreshCredential(
+      presentationInput(account, winner.consumedRefreshCredential, {
+        occurredAt,
+        successorRefreshCredentialId: 'ignored-invalid-successor',
+        refreshIdleLifetimeSeconds: 'ignored-invalid-idle',
+      }),
+    );
+
+    expect(replay.kind).toBe('reuse-detected');
+    if (replay.kind !== 'reuse-detected') {
+      throw new Error('Expected replay detection');
+    }
+    expect(Object.keys(replay).sort()).toEqual(
+      ['basis', 'facts', 'kind', 'reusedRefreshCredential', 'sessionFamily'].sort(),
+    );
+    expect(replay.basis).toEqual({
+      accountId: ACCOUNT_ID,
+      accountVersion: 1,
+      sessionId: SESSION_ID,
+      sessionFamilyVersion: 2,
+      presentedRefreshCredentialId: INITIAL_REFRESH_CREDENTIAL_ID,
+      presentedRefreshCredentialSequence: 1,
+    });
+    expect(replay.sessionFamily.toSnapshot()).toEqual({
+      ...familyBefore,
+      version: 3,
+      revokedAt: occurredAt,
+      closedReason: 'REFRESH_REUSE_DETECTED',
+    });
+    expect(replay.reusedRefreshCredential).toBe(winner.consumedRefreshCredential);
+    expect(replay.reusedRefreshCredential.toSnapshot()).toBe(reusedBefore);
+    expect(replay.facts).toEqual([
+      {
+        type: 'SESSION_FAMILY_REVOKED',
+        sessionId: SESSION_ID,
+        accountId: ACCOUNT_ID,
+        state: 'REVOKED',
+        version: 3,
+        occurredAt,
+        closedReason: 'REFRESH_REUSE_DETECTED',
+      },
+    ]);
+    expect(Object.isFrozen(replay)).toBe(true);
+    expect(Object.isFrozen(replay.basis)).toBe(true);
+    expect(Object.isFrozen(replay.sessionFamily)).toBe(true);
+    expectFrozenSafeFacts(replay.facts);
+    expect(JSON.stringify(replay.facts)).not.toContain(INITIAL_REFRESH_CREDENTIAL_ID);
+    expect(Object.hasOwn(replay, 'successorRefreshCredential')).toBe(false);
+    expect(winner.sessionFamily.toSnapshot()).toBe(familyBefore);
+    expect(winner.consumedRefreshCredential.toSnapshot()).toBe(reusedBefore);
+  });
+
+  it.each([
+    ['Suspended', (): IdentityAccount => suspendedAccount()],
+    ['Deactivated', (): IdentityAccount => deactivatedAccount()],
+  ] as const)(
+    'does not let a %s Account suppress fail-secure replay closure',
+    (_status, accountFactory): void => {
+      const created = createSessionBundle();
+      const winner = created.sessionFamily.presentRefreshCredential(
+        presentationInput(activeAccount(), created.initialRefreshCredential),
+      );
+      expect(winner.kind).toBe('rotated');
+      if (winner.kind !== 'rotated') {
+        throw new Error('Expected the first presentation to rotate');
+      }
+      const account = accountFactory();
+      const accountBefore = account.toSnapshot();
+      const replay = winner.sessionFamily.presentRefreshCredential(
+        presentationInput(account, winner.consumedRefreshCredential, {
+          occurredAt: '2026-08-23T10:30:00.000003Z',
+          successorRefreshCredentialId: 'ignored-invalid-successor',
+          refreshIdleLifetimeSeconds: 'ignored-invalid-idle',
+        }),
+      );
+
+      expect(replay.kind).toBe('reuse-detected');
+      if (replay.kind === 'reuse-detected') {
+        expect(replay.basis.accountVersion).toBe(accountBefore.version);
+        expect(replay.sessionFamily.toSnapshot().closedReason).toBe('REFRESH_REUSE_DETECTED');
+      }
+      expect(account.toSnapshot()).toBe(accountBefore);
+    },
+  );
+
+  it('detects an older retained predecessor rather than only the immediate predecessor', (): void => {
+    const created = createSessionBundle();
+    const account = activeAccount();
+    const first = created.sessionFamily.presentRefreshCredential(
+      presentationInput(account, created.initialRefreshCredential),
+    );
+    expect(first.kind).toBe('rotated');
+    if (first.kind !== 'rotated') {
+      throw new Error('Expected first rotation');
+    }
+    const second = first.sessionFamily.presentRefreshCredential(
+      presentationInput(account, first.successorRefreshCredential, {
+        occurredAt: '2026-08-23T10:10:00.000003Z',
+        successorRefreshCredentialId: SECOND_SUCCESSOR_REFRESH_CREDENTIAL_ID,
+      }),
+    );
+    expect(second.kind).toBe('rotated');
+    if (second.kind !== 'rotated') {
+      throw new Error('Expected second rotation');
+    }
+
+    const replay = second.sessionFamily.presentRefreshCredential(
+      presentationInput(account, first.consumedRefreshCredential, {
+        occurredAt: '2026-08-23T10:11:00.000004Z',
+      }),
+    );
+
+    expect(replay.kind).toBe('reuse-detected');
+    if (replay.kind === 'reuse-detected') {
+      expect(replay.basis).toMatchObject({
+        sessionFamilyVersion: 3,
+        presentedRefreshCredentialSequence: 1,
+      });
+      expect(replay.sessionFamily.toSnapshot()).toMatchObject({
+        version: 4,
+        closedReason: 'REFRESH_REUSE_DETECTED',
+      });
+    }
+  });
+
+  it('rejects consumed replay at absolute expiry without replacing state', (): void => {
+    const created = createSessionBundle();
+    const account = activeAccount();
+    const winner = created.sessionFamily.presentRefreshCredential(
+      presentationInput(account, created.initialRefreshCredential),
+    );
+    expect(winner.kind).toBe('rotated');
+    if (winner.kind !== 'rotated') {
+      throw new Error('Expected rotation');
+    }
+
+    const replay = winner.sessionFamily.presentRefreshCredential(
+      presentationInput(account, winner.consumedRefreshCredential, {
+        occurredAt: ABSOLUTE_EXPIRES_AT,
+      }),
+    );
+
+    expect(replay).toEqual({
+      kind: 'rejected',
+      sessionFamily: winner.sessionFamily,
+      presentedRefreshCredential: winner.consumedRefreshCredential,
+      facts: [],
+    });
+  });
+
+  it('never replaces an existing terminal reason with reuse detection', (): void => {
+    const created = createSessionBundle();
+    const terminal = created.sessionFamily.revoke({
+      closedReason: 'LOGOUT',
+      occurredAt: '2026-08-23T10:05:00.000002Z',
+    }).sessionFamily;
+    const current = created.initialRefreshCredential;
+    const result = terminal.presentRefreshCredential(
+      presentationInput(activeAccount(), current, {
+        occurredAt: '2026-08-23T10:06:00.000003Z',
+      }),
+    );
+
+    expect(result.kind).toBe('rejected');
+    expect(result.sessionFamily.toSnapshot()).toMatchObject({
+      version: 2,
+      closedReason: 'LOGOUT',
+    });
+  });
+
+  it('uses the reserved terminal family version for replay closure', (): void => {
+    const family = IdentitySessionFamily.rehydrate(
+      initialSnapshot({ version: MAX_IDENTITY_AGGREGATE_VERSION - 1 }),
+    );
+    const reused = refreshCredential({
+      consumedAt: CREATED_AT,
+      successorId: SUCCESSOR_REFRESH_CREDENTIAL_ID,
+    });
+    const result = family.presentRefreshCredential(
+      presentationInput(activeAccount(), reused, { occurredAt: CREATED_AT }),
+    );
+
+    expect(result.kind).toBe('reuse-detected');
+    if (result.kind === 'reuse-detected') {
+      expect(result.sessionFamily.toSnapshot()).toMatchObject({
+        version: MAX_IDENTITY_AGGREGATE_VERSION,
+        revokedAt: CREATED_AT,
+        closedReason: 'REFRESH_REUSE_DETECTED',
+      });
+    }
+  });
+});
+
 describe('IdentitySessionFamily generic revocation', (): void => {
   it.each(IDENTITY_SESSION_FAMILY_GENERIC_REVOCATION_REASONS)(
     'records terminal %s revocation with an exact frozen fact',
@@ -1020,21 +2202,23 @@ describe('IdentitySessionFamily generic revocation', (): void => {
     }
   });
 
-  it('rejects aggregate-version exhaustion without partially revoking', (): void => {
-    const sessionFamily = IdentitySessionFamily.rehydrate(
-      initialSnapshot({ version: MAX_IDENTITY_AGGREGATE_VERSION }),
+  it('uses the reserved final version for terminal revocation', (): void => {
+    const maximumOpen = IdentitySessionFamily.rehydrate(
+      initialSnapshot({ version: MAX_IDENTITY_AGGREGATE_VERSION - 1 }),
     );
+    const result = maximumOpen.revoke({ closedReason: 'LOGOUT', occurredAt: ROTATED_AT });
 
-    expectSafeImmutableRejection(
-      sessionFamily,
-      () => sessionFamily.revoke({ closedReason: 'LOGOUT', occurredAt: ROTATED_AT }),
-      IdentityAggregateVersionExhaustedError,
-    );
+    expect(result.kind).toBe('changed');
+    expect(result.sessionFamily.toSnapshot()).toMatchObject({
+      version: MAX_IDENTITY_AGGREGATE_VERSION,
+      revokedAt: ROTATED_AT,
+      closedReason: 'LOGOUT',
+    });
   });
 
-  it('enforces reason, no-op lifecycle, occurrence, then version-capacity precedence', (): void => {
+  it('enforces reason then occurrence precedence at the maximum open version', (): void => {
     const maximum = IdentitySessionFamily.rehydrate(
-      initialSnapshot({ version: MAX_IDENTITY_AGGREGATE_VERSION }),
+      initialSnapshot({ version: MAX_IDENTITY_AGGREGATE_VERSION - 1 }),
     );
 
     expectSafeImmutableRejection(
@@ -1053,11 +2237,6 @@ describe('IdentitySessionFamily generic revocation', (): void => {
       maximum,
       () => maximum.revoke({ closedReason: 'LOGOUT', occurredAt: BEFORE_CREATED_AT }),
       IdentitySessionFamilyTimestampRegressionError,
-    );
-    expectSafeImmutableRejection(
-      maximum,
-      () => maximum.revoke({ closedReason: 'LOGOUT', occurredAt: ROTATED_AT }),
-      IdentityAggregateVersionExhaustedError,
     );
   });
 });

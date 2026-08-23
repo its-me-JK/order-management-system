@@ -24,6 +24,11 @@ export type IdentitySessionFamilyCreatedFact = IdentitySessionFamilyFact<
   'AUTHENTICATING'
 >;
 
+export type IdentitySessionFamilyRefreshRotatedFact = IdentitySessionFamilyFact<
+  'SESSION_FAMILY_REFRESH_ROTATED',
+  'AUTHENTICATING'
+>;
+
 export type IdentitySessionFamilyRevokedFact<
   ClosedReason extends IdentitySessionFamilyClosedReason = IdentitySessionFamilyClosedReason,
 > = IdentitySessionFamilyFact<'SESSION_FAMILY_REVOKED', 'REVOKED'> &
@@ -32,7 +37,9 @@ export type IdentitySessionFamilyRevokedFact<
   }>;
 
 export type IdentitySessionFamilyDomainFact =
-  IdentitySessionFamilyCreatedFact | IdentitySessionFamilyRevokedFact;
+  | IdentitySessionFamilyCreatedFact
+  | IdentitySessionFamilyRefreshRotatedFact
+  | IdentitySessionFamilyRevokedFact;
 
 export type IdentitySessionFamilyFactTuple = readonly [
   IdentitySessionFamilyDomainFact,
@@ -40,6 +47,12 @@ export type IdentitySessionFamilyFactTuple = readonly [
 ];
 
 export type IdentitySessionFamilyCreationFacts = readonly [IdentitySessionFamilyCreatedFact];
+export type IdentitySessionFamilyRefreshRotationFacts = readonly [
+  IdentitySessionFamilyRefreshRotatedFact,
+];
+export type IdentitySessionFamilyRefreshReuseFacts = readonly [
+  IdentitySessionFamilyRevokedFact<'REFRESH_REUSE_DETECTED'>,
+];
 export type IdentitySessionFamilyGenericRevocationFacts = readonly [
   IdentitySessionFamilyRevokedFact<IdentitySessionFamilyGenericRevocationReason>,
 ];

@@ -18,3 +18,31 @@ export class IdentitySessionFamilyTimestampRegressionError extends Error {
     this.name = 'IdentitySessionFamilyTimestampRegressionError';
   }
 }
+
+export class InvalidIdentitySessionFamilyRefreshStateError extends Error {
+  public constructor() {
+    super('Expected a valid Identity Session Family refresh state');
+    this.name = 'InvalidIdentitySessionFamilyRefreshStateError';
+  }
+}
+
+export class IdentitySessionFamilyRefreshTimestampRegressionError extends Error {
+  public constructor() {
+    super('The Identity Session Family refresh time precedes locked state');
+    this.name = 'IdentitySessionFamilyRefreshTimestampRegressionError';
+  }
+}
+
+export class IdentitySessionFamilyRefreshSuccessorConflictError extends Error {
+  public constructor() {
+    super('The Identity Session Family refresh successor conflicts with its predecessor');
+    this.name = 'IdentitySessionFamilyRefreshSuccessorConflictError';
+  }
+}
+
+export class IdentitySessionFamilyRefreshCapacityExhaustedError extends Error {
+  public constructor() {
+    super('The Identity Session Family refresh rotation capacity is exhausted');
+    this.name = 'IdentitySessionFamilyRefreshCapacityExhaustedError';
+  }
+}
