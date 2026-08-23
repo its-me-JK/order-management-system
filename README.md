@@ -190,6 +190,12 @@ a credential. Each candidate pair's attempt admission is one-shot: the first
 admission synchronously takes ownership before digest verification, so a
 concurrent or failed admission burns that pair and a retry must generate fresh
 credentials.
+The complementary non-delivery settlement now consumes an authentic committed
+rejection or reuse-detected completion exactly once and returns only its frozen
+terminal classification. It refuses rotations, forgeries, Proxies, and replay
+without consuming a rightful completion, so rejected flows cannot retain a
+live private registration and successful rotations keep their sole delivery
+path.
 Identity now also owns the refresh-specific pre-transaction identifier bundle:
 one separately branded successor-refresh ID, issued-access ID, and security-event
 ID. The restricted Node identifiers subpath exposes only a zero-argument

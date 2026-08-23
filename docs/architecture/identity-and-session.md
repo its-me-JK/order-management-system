@@ -1320,6 +1320,16 @@ No HTTP response, cookie operation, route, or transport policy is part of this
 increment. Purpose-specific access-response and refresh-cookie sinks remain a
 future boundary to introduce only with the reviewed public refresh use case.
 
+The eleventh application increment closes the complementary committed
+non-delivery lifecycle. One package-internal synchronous transition accepts
+only a runtime-authentic committed `rejected` or `reuse-detected` completion,
+removes its registration exactly once, and returns only a frozen terminal-kind
+classification. A rotated completion, structural value, clone, Proxy, pending
+evidence, or replay fails with the existing fixed cause-free workflow error
+without consuming a rightful registration. This gives future orchestration a
+terminal handoff for every committed branch while preserving the rotated
+completion exclusively for the exact-pair credential-delivery gate.
+
 Identity uses a hybrid boundary rather than repositories per aggregate. A
 small `IdentitySessionRefreshUnitOfWork` owns transaction completion. Separate purpose-built
 reads operate outside a transaction, while workflow-scoped loaders and writers
@@ -2054,6 +2064,10 @@ rejection, and redaction. Future channel sinks and transport tests must
 separately prove that each credential is disclosed only through its intended
 response or cookie channel; neither a committed completion nor the opaque
 delivery capability directly serializes a wire value.
+The complementary settlement tests prove one-shot consumption for authentic
+committed rejection and reuse, frozen safe classifications, replay closure,
+and non-consuming failure for rotations, pending evidence, clones, and
+hostile Proxies.
 
 The rejected alternatives are public aggregate repositories and one Unit of
 Work containing every query and mutation. Repositories make partial refresh
@@ -3136,6 +3150,10 @@ commit and program close, and implements the Identity-owned two-sided command
 cleanup rendezvous for deadline-driven `indeterminate`. The package-internal
 one-shot delivery gate now authenticates and consumes the committed
 completion-to-attempt-to-exact-pair chain into a redacting opaque capability.
+Its complementary package-internal settlement consumes an authentic committed
+rejection or reuse completion once, returns only the terminal classification,
+and leaves every rotated completion exclusively eligible for the delivery
+gate.
 The guarded production composition now proves atomic failure for each of six
 exact root-installed, fixture-scoped rotation mutation statements, cumulative
 rollback of every earlier successful write, rollback at an invalid post-write
@@ -3268,6 +3286,11 @@ process recycle policy.
   permit deterministic stop-on-first-failure behavior. In return, the adapter
   deliberately accepts equal bytes across nominal namespaces and makes no
   monotonic-order promise; neither property is part of Identity authority.
+- Separate rotated-delivery and committed-non-delivery consumers add two
+  narrow terminal operations, but prevent a generic completion consumer from
+  discarding credential-delivery authority. Inspecting rejection or reuse
+  without consuming it would instead retain a live private registration for no
+  future purpose.
 - A refresh replay grace period improves concurrency UX but weakens theft
   detection or requires recoverable successor storage.
 - Fail-closed Redis protects credential issuance but deliberately reduces auth
@@ -3486,6 +3509,12 @@ process recycle policy.
     locality but grants no chronology or authorization authority; MySQL writer
     time remains authoritative, and equal bytes in distinct nominal namespaces
     remain valid.
+41. **Why not use one generic function to consume every committed refresh
+    completion?** Rotation is the only branch that can authorize credential
+    delivery and must retain its exact completion-to-attempt-to-pair chain until
+    that gate succeeds. A separate non-delivery consumer can retire rejection
+    and reuse exactly once while proving that an accidental or hostile call
+    cannot destroy a rightful rotated completion.
 
 ## Future improvements
 
@@ -3527,6 +3556,9 @@ process recycle policy.
   after Redis admission and before `BEGIN`; keep UUID timestamp/order out of
   lifecycle decisions, and add a separate adapter rather than widening this
   subpath if a future runtime cannot provide `randomUUIDv7`.
+- Make the future refresh orchestrator terminally consume every committed
+  rejection or reuse through the non-delivery transition, while sending a
+  committed rotation only to the exact-pair delivery gate.
 - Add a closed-cardinality metric and explicit unhealthy-process recycle policy
   for the Unit of Work's fail-stop cleanup quarantine before public refresh
   ingress; never expose command, attempt, or evidence identity in telemetry.

@@ -265,6 +265,9 @@ export type IdentitySessionRefreshCommittedCompletion = Readonly<{
   readonly [identitySessionRefreshCommittedCompletionBrand]: true;
 }>;
 
+export type IdentitySessionRefreshCommittedNonDeliveryOutcome =
+  Readonly<{ kind: 'rejected' }> | Readonly<{ kind: 'reuse-detected' }>;
+
 export class InvalidIdentitySessionRefreshWorkflowError extends Error {
   public constructor() {
     super('Expected a valid Identity session refresh workflow transition');
@@ -374,6 +377,10 @@ const decisionRegistrations = new WeakMap<object, DecisionRegistration>();
 const terminalActionRegistrations = new WeakMap<object, TerminalActionRegistration>();
 const evidenceRegistrations = new WeakMap<object, EvidenceRegistration>();
 const completionRegistrations = new WeakMap<object, CompletionRegistration>();
+const COMMITTED_REJECTED_NON_DELIVERY_OUTCOME: IdentitySessionRefreshCommittedNonDeliveryOutcome =
+  capturedFreeze({ kind: 'rejected' });
+const COMMITTED_REUSE_DETECTED_NON_DELIVERY_OUTCOME: IdentitySessionRefreshCommittedNonDeliveryOutcome =
+  capturedFreeze({ kind: 'reuse-detected' });
 
 function invalidWorkflow(): never {
   throw new InvalidIdentitySessionRefreshWorkflowError();
@@ -1683,6 +1690,41 @@ export function inspectIdentitySessionRefreshCommittedCompletion(
   }
 
   return completionValue as IdentitySessionRefreshCommittedCompletion;
+}
+
+/**
+ * Consumes one committed outcome that can never authorize credential delivery.
+ * A rotated completion remains untouched so only the exact-pair delivery gate
+ * can consume it.
+ *
+ * @internal Identity refresh application composition is the only production caller.
+ */
+export function consumeIdentitySessionRefreshCommittedNonDelivery(
+  completionValue: unknown,
+): IdentitySessionRefreshCommittedNonDeliveryOutcome {
+  const registration = isObject(completionValue)
+    ? readWeakMap(completionRegistrations, completionValue)
+    : undefined;
+
+  if (
+    registration?.status !== 'committed' ||
+    registration.state !== undefined ||
+    registration.pendingEvidence !== undefined ||
+    registration.attempt !== undefined ||
+    (registration.kind !== 'rejected' && registration.kind !== 'reuse-detected')
+  ) {
+    invalidWorkflow();
+  }
+
+  if (!deleteWeakMapValue(completionRegistrations, completionValue as object)) {
+    invalidWorkflow();
+  }
+
+  registration.status = 'consumed';
+
+  return registration.kind === 'rejected'
+    ? COMMITTED_REJECTED_NON_DELIVERY_OUTCOME
+    : COMMITTED_REUSE_DETECTED_NON_DELIVERY_OUTCOME;
 }
 
 /**

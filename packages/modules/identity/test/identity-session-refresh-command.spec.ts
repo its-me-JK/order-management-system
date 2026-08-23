@@ -46,6 +46,7 @@ import {
   completeIdentitySessionRefreshLockedLoadNotFound,
   completeIdentitySessionRefreshReusePersistence,
   completeIdentitySessionRefreshRotatedPersistence,
+  consumeIdentitySessionRefreshCommittedNonDelivery,
   consumeIdentityTransactionPendingEvidence,
   inspectIdentitySessionRefreshCommittedCompletion,
   inspectIdentitySessionRefreshRotatedPersistence,
@@ -67,6 +68,10 @@ import { IdentityAccount } from '../src/domain/identity-account';
 import { IdentityRefreshCredential } from '../src/domain/identity-refresh-credential';
 import { IdentitySessionFamily } from '../src/domain/identity-session-family';
 import type {
+  // @ts-expect-error Committed non-delivery consumption remains package-internal.
+  consumeIdentitySessionRefreshCommittedNonDelivery as LeakedIdentitySessionRefreshCommittedNonDeliveryConsumer,
+  // @ts-expect-error Committed non-delivery outcomes remain package-internal.
+  IdentitySessionRefreshCommittedNonDeliveryOutcome as LeakedIdentitySessionRefreshCommittedNonDeliveryOutcome,
   // @ts-expect-error Refresh commands remain package-internal.
   IdentitySessionRefreshCommand as LeakedIdentitySessionRefreshCommand,
   // @ts-expect-error Refresh credential deliveries remain package-internal.
@@ -88,6 +93,7 @@ const REUSE_DETECTED_AT = '2026-08-23T10:06:00.000003Z';
 const ACCESS_WIRE = `oms_at_v1_${'A'.repeat(42)}E`;
 const REFRESH_WIRE = `oms_rt_v1_${'E'.repeat(42)}M`;
 const COMMAND_ERROR_MESSAGE = 'Expected a valid Identity session refresh command transition';
+const WORKFLOW_ERROR_MESSAGE = 'Expected a valid Identity session refresh workflow transition';
 const DELIVERY_ERROR_MESSAGE =
   'Expected an authorized Identity session refresh credential delivery';
 const DELIVERY_REDACTION = '[IdentitySessionRefreshCredentialDelivery]';
@@ -390,6 +396,21 @@ function expectCommandError(action: () => unknown, forbidden: readonly string[] 
   expect(error).toMatchObject({
     name: 'InvalidIdentitySessionRefreshCommandError',
     message: COMMAND_ERROR_MESSAGE,
+  });
+  expect(error).not.toHaveProperty('cause');
+
+  const rendered = inspect(error, { showHidden: true });
+  for (const value of forbidden) {
+    expect(rendered).not.toContain(value);
+  }
+}
+
+function expectWorkflowError(action: () => unknown, forbidden: readonly string[] = []): void {
+  const error = captureError(action);
+  expect(error).toBeInstanceOf(InvalidIdentitySessionRefreshWorkflowError);
+  expect(error).toMatchObject({
+    name: 'InvalidIdentitySessionRefreshWorkflowError',
+    message: WORKFLOW_ERROR_MESSAGE,
   });
   expect(error).not.toHaveProperty('cause');
 
@@ -866,11 +887,11 @@ describe('Identity session refresh command', (): void => {
   });
 
   it.each([
-    ['rejected', 'not-found', ROTATED_AT],
-    ['reuse', 'reuse-detected', REUSE_DETECTED_AT],
+    ['rejected', 'not-found', ROTATED_AT, 'rejected'],
+    ['reuse', 'reuse-detected', REUSE_DETECTED_AT, 'reuse-detected'],
   ] as const)(
-    'refuses %s committed completions without consuming their registration',
-    async (_branch, mode, dbNow): Promise<void> => {
+    'refuses delivery for and then consumes a committed %s completion exactly once',
+    async (_branch, mode, dbNow, expectedKind): Promise<void> => {
       const prepared = await prepareCommand(dbNow);
       const completion = await committedCompletion(prepared, mode);
 
@@ -883,8 +904,89 @@ describe('Identity session refresh command', (): void => {
         [ACCESS_WIRE, REFRESH_WIRE],
       );
       expect(inspectIdentitySessionRefreshCommittedCompletion(completion)).toBe(completion);
+
+      const outcome = consumeIdentitySessionRefreshCommittedNonDelivery(completion);
+
+      expect(outcome).toEqual({ kind: expectedKind });
+      expect(Object.isFrozen(outcome)).toBe(true);
+      expect(Reflect.ownKeys(outcome)).toEqual(['kind']);
+      expectWorkflowError(
+        () => inspectIdentitySessionRefreshCommittedCompletion(completion),
+        [ACCESS_WIRE, REFRESH_WIRE],
+      );
+      expectWorkflowError(
+        () => consumeIdentitySessionRefreshCommittedNonDelivery(completion),
+        [ACCESS_WIRE, REFRESH_WIRE],
+      );
     },
   );
+
+  it('rejects non-delivery consumption of a rotated completion without consuming delivery authority', async (): Promise<void> => {
+    const prepared = await prepareCommand();
+    const completion = await committedCompletion(prepared, 'rotated');
+
+    expectWorkflowError(
+      () => consumeIdentitySessionRefreshCommittedNonDelivery(completion),
+      [ACCESS_WIRE, REFRESH_WIRE],
+    );
+    expect(inspectIdentitySessionRefreshCommittedCompletion(completion)).toBe(completion);
+    expect(
+      createIdentitySessionRefreshCredentialDelivery(
+        completion,
+        prepared.credentialAttempt.candidates,
+      ),
+    ).toBeDefined();
+  });
+
+  it('rejects structural, cloned, proxied, and pending-evidence values without consuming the rightful completion', async (): Promise<void> => {
+    const prepared = await prepareCommand();
+    const completion = await committedCompletion(prepared, 'not-found');
+    const forgedCompletion = Object.freeze({
+      kind: 'committed',
+      evidence: completion.evidence,
+    });
+    const clonedCompletion = structuredClone(completion);
+    const pending = await prepareCommand();
+    const pendingEvidence = await runIdentitySessionRefreshCommand(
+      pending.boundary.controller,
+      pending.context,
+      transactionStore(pending, 'not-found').store,
+    );
+    const hostileSecret = 'hostile-non-delivery-completion-secret';
+    let trapCalls = 0;
+    const hostileCompletion = new Proxy(completion, {
+      get(): never {
+        trapCalls += 1;
+        throw new Error(hostileSecret);
+      },
+      getPrototypeOf(): never {
+        trapCalls += 1;
+        throw new Error(hostileSecret);
+      },
+      ownKeys(): never {
+        trapCalls += 1;
+        throw new Error(hostileSecret);
+      },
+    });
+
+    for (const invalidCompletion of [
+      forgedCompletion,
+      clonedCompletion,
+      hostileCompletion,
+      pendingEvidence,
+    ]) {
+      expectWorkflowError(
+        () => consumeIdentitySessionRefreshCommittedNonDelivery(invalidCompletion),
+        [ACCESS_WIRE, REFRESH_WIRE, hostileSecret],
+      );
+      expect(inspectIdentitySessionRefreshCommittedCompletion(completion)).toBe(completion);
+    }
+
+    expect(trapCalls).toBe(0);
+    closeAndRevokePendingEvidence(pending, pendingEvidence);
+    expect(() => consumeIdentitySessionRefreshCommittedNonDelivery(completion)).not.toThrow();
+    expectWorkflowError(() => inspectIdentitySessionRefreshCommittedCompletion(completion));
+  });
 
   it('rejects authentic pending evidence without preventing later close, promotion, and delivery', async (): Promise<void> => {
     const prepared = await prepareCommand();
@@ -1333,9 +1435,17 @@ describe('Identity session refresh command', (): void => {
     expect(identityPublicApi).not.toHaveProperty(
       'consumeIdentitySessionRefreshCommittedCredentialPair',
     );
+    expect(identityPublicApi).not.toHaveProperty(
+      'consumeIdentitySessionRefreshCommittedNonDelivery',
+    );
     expect(identityPublicApi).not.toHaveProperty('createIdentitySessionRefreshCredentialDelivery');
     expect(identityPublicApi).not.toHaveProperty(
       'InvalidIdentitySessionRefreshCredentialDeliveryError',
     );
   });
 });
+
+export type _LeakedIdentitySessionRefreshCommittedNonDeliveryConsumer =
+  typeof LeakedIdentitySessionRefreshCommittedNonDeliveryConsumer;
+export type _LeakedIdentitySessionRefreshCommittedNonDeliveryOutcome =
+  LeakedIdentitySessionRefreshCommittedNonDeliveryOutcome;
