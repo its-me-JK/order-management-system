@@ -1330,6 +1330,38 @@ without consuming a rightful registration. This gives future orchestration a
 terminal handoff for every committed branch while preserving the rotated
 completion exclusively for the exact-pair credential-delivery gate.
 
+The twelfth application increment establishes the refresh abuse-control input
+and decision boundary without pretending that Redis or trusted HTTP ingress is
+already composed. A package-internal network factory receives an address family
+and already-parsed binary address from a future transport adapter, immediately
+copies it, maps IPv4-mapped IPv6 into the IPv4 namespace, retains all four IPv4
+bytes or the first eight native-IPv6 bytes, and prefixes the result with an
+algorithm-version and family tag. The resulting frozen, redacting capability
+has no address property; its package-internal extractor returns a new ordinary
+fixed-buffer copy on every call. Detached, shared, resizable, forged, proxied,
+wrong-kind, and wrong-length address views cannot be admitted. Structural,
+cloned, or proxied capability shells cannot authenticate or reveal retained key
+material. The capability proves canonical grouping only. It does not prove
+which forwarding hop supplied the address; trusted-proxy-chain resolution
+remains an ingress responsibility.
+
+The adjacent narrow `IdentitySessionRefreshCredentialAbuseControl` port declares
+only that network capability and the authentic presented refresh-wire value.
+The TypeScript interface does not authenticate a structural input record at
+runtime; the future orchestrator must authenticate both values before invoking
+the captured adapter operation. Its registered exact results are either
+`allowed` or `denied` with one branded whole-second `retryAfterSeconds` value
+from 1 through 180. Runtime authentication rejects structural, cloned, proxied,
+or foreign results, and
+fixed cause-free errors distinguish provider unavailability from an invalid
+application/adapter contract. These decisions are reusable classifications,
+not downstream authorization tickets: the future orchestrator must call the
+port once and authenticate and branch on that exact result within the same
+execution. If a later design needs to carry admission authority across an
+asynchronous or package boundary, it must introduce an input-bound one-shot
+capability instead of widening these records. No Redis client, key HMAC, token
+bucket, retry, route, or root export is part of this increment.
+
 Identity uses a hybrid boundary rather than repositories per aggregate. A
 small `IdentitySessionRefreshUnitOfWork` owns transaction completion. Separate purpose-built
 reads operate outside a transaction, while workflow-scoped loaders and writers
@@ -2888,7 +2920,11 @@ must not start preserving `WWW-Authenticate` or `Set-Cookie` globally.
 
 ## Redis abuse control
 
-The Identity application owns a `CredentialAbuseControl` port. A technical
+The Identity application now owns the package-internal,
+refresh-specific `IdentitySessionRefreshCredentialAbuseControl` port described
+above. Login will receive a separate narrow facet instead of a generic
+route-discriminated rate-limiter API; one Identity Redis adapter may implement
+both facets. The current contract does not connect to Redis. A future technical
 Redis package owns connection lifecycle, TLS, authentication, timeouts, and
 shutdown; the Identity Redis adapter owns the atomic algorithm and key schema.
 One Lua/function operation refills and conditionally consumes every applicable
@@ -2943,10 +2979,15 @@ actor, or session value. Key TTL is the bounded time to refill. Secret rotation
 changes the namespace and temporarily resets throttle history, so it is an
 explicit operational event rather than an ad hoc environment change.
 
-Network normalization uses the canonical individual IPv4 address and the
-canonical IPv6 `/64` prefix. This balances IPv6 privacy-address rotation
-against over-broad blocking; carrier or enterprise NAT still creates a known
-shared-bucket trade-off that load and false-positive tests must measure.
+Network normalization is binary rather than textual: a version/family tag
+precedes the canonical individual IPv4 address or native IPv6 `/64` prefix,
+and IPv4-mapped IPv6 collapses into the IPv4 namespace. This avoids multiple
+text spellings of the same address becoming different buckets. Grouping native
+IPv6 by `/64` balances privacy-address rotation against over-broad blocking;
+carrier or enterprise NAT still creates a known shared-bucket trade-off that
+load and false-positive tests must measure. The transport adapter must resolve
+the permitted proxy chain and parse the complete address before this
+normalization; the network capability cannot establish that provenance itself.
 
 Apart from the explicit pre-execution `NOSCRIPT` recovery above, the client
 performs no retry inside one HTTP request. Timeout, connection loss, script
@@ -3154,6 +3195,11 @@ Its complementary package-internal settlement consumes an authentic committed
 rejection or reuse completion once, returns only the terminal classification,
 and leaves every rotated completion exclusively eligible for the delivery
 gate.
+The package-internal refresh abuse-control boundary is also delivered: it owns
+the opaque binary IPv4/IPv6 network grouping, the refresh-specific port, exact
+registered allow/deny decisions, bounded retry delay, and fixed safe failures.
+It deliberately adds no Redis runtime or adapter, performs no decision, and
+does not establish trusted proxy provenance.
 The guarded production composition now proves atomic failure for each of six
 exact root-installed, fixture-scoped rotation mutation statements, cumulative
 rollback of every earlier successful write, rollback at an invalid post-write
@@ -3210,6 +3256,10 @@ process recycle policy.
   repositories and makes atomic event/state invariants testable.
 - Redis contains attack cost across replicas without becoming session state or
   global readiness.
+- A refresh-specific abuse port prevents route policy and login-only inputs
+  from leaking into refresh orchestration. Binary, versioned network grouping
+  avoids textual-address ambiguity while leaving proxy trust at the ingress
+  boundary that can actually prove it.
 - Same-origin deployment turns a security property into an explicit topology
   requirement instead of weakening cookies for whichever free hosts happen to
   be available.
@@ -3296,6 +3346,22 @@ process recycle policy.
 - Fail-closed Redis protects credential issuance but deliberately reduces auth
   availability during a cache outage. Existing sessions and public reads keep
   a narrower failure domain.
+- A generic `rateLimit(route, keys)` port would be easier to reuse, but would
+  let application callers choose bucket dimensions and couple Identity policy
+  to Redis-shaped primitives. Separate login and refresh facets duplicate a
+  small interface while keeping their allowed inputs reviewable. Text IP values
+  would simplify adapters but create normalization ambiguity and make secrets
+  easier to log; copied binary key material costs stricter typed-array handling.
+  Native IPv6 `/128` buckets would be more precise but are easy to evade with
+  privacy-address rotation, while prefixes broader than `/64` increase shared
+  denial. The selected `/64` remains an operating assumption to validate with
+  false-positive and abuse data.
+- Reusable registered allow/deny records are sufficient only because they are
+  classifications authenticated immediately after the future port call, not
+  permission to begin MySQL work on their own. A one-shot decision bound to the
+  exact network and credential would add stronger transferable authority at
+  the cost of another state machine. Introduce that form if admission ever
+  crosses an asynchronous or package boundary.
 - Disabling the password authenticator at 100 consecutive failures satisfies
   the hard guessing ceiling but lets a sufficiently persistent known-login
   attacker force an offline operator rebind. Lower distributed limits, alerts,
@@ -3515,6 +3581,15 @@ process recycle policy.
     that gate succeeds. A separate non-delivery consumer can retire rejection
     and reuse exactly once while proving that an accidental or hostile call
     cannot destroy a rightful rotated completion.
+42. **Why does a canonical network capability not prove a trusted client IP,
+    and why group native IPv6 by `/64`?** Binary family-tagged normalization
+    proves stable bucket material, but only the HTTP edge knows which forwarding
+    hops are trusted and which address belongs to the client. Treating parsing
+    as provenance would let spoofed forwarding data become security input. A
+    `/64` groups privacy addresses that commonly rotate within one network and
+    is harder to evade than `/128`, but may deny unrelated users behind a shared
+    prefix; bounded limits, telemetry, and false-positive tests must validate
+    that trade-off.
 
 ## Future improvements
 
@@ -3559,6 +3634,12 @@ process recycle policy.
 - Make the future refresh orchestrator terminally consume every committed
   rejection or reuse through the non-delivery transition, while sending a
   committed rotation only to the exact-pair delivery gate.
+- Add the technical Redis runtime and refresh adapter behind the delivered
+  abuse-control port. Prove the atomic multi-bucket script, HMAC key schema,
+  authoritative Redis time, `NOSCRIPT`-only recovery, fail-closed ambiguity,
+  and real-Redis concurrency before composing one decision ahead of credential
+  verification and MySQL. Add trusted proxy-chain resolution separately and
+  feed only its fully parsed address bytes into the delivered network factory.
 - Add a closed-cardinality metric and explicit unhealthy-process recycle policy
   for the Unit of Work's fail-stop cleanup quarantine before public refresh
   ingress; never expose command, attempt, or evidence identity in telemetry.
@@ -3570,6 +3651,7 @@ process recycle policy.
 
 ## References
 
+- [RFC 4291: IP Version 6 Addressing Architecture](https://www.rfc-editor.org/rfc/rfc4291.html)
 - [RFC 9562: Universally Unique IDentifiers (UUIDs)](https://www.rfc-editor.org/rfc/rfc9562.html)
 - [RFC 6750: Bearer Token Usage](https://www.rfc-editor.org/rfc/rfc6750.html)
 - [RFC 6749: OAuth 2.0 token error semantics](https://www.rfc-editor.org/rfc/rfc6749.html#section-5.2)

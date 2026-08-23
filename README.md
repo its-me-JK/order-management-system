@@ -196,6 +196,14 @@ terminal classification. It refuses rotations, forgeries, Proxies, and replay
 without consuming a rightful completion, so rejected flows cannot retain a
 live private registration and successful rotations keep their sole delivery
 path.
+The next package-internal boundary now owns a copied binary abuse-network
+capability and a refresh-specific abuse-control port. IPv4 remains individual,
+native IPv6 is grouped by `/64`, and IPv4-mapped IPv6 shares the IPv4 namespace.
+The capability shell is redacting; its extracted version/family-tagged
+key-material copies are visible but isolated. Exact registered results expose
+only `allowed` or `denied` with a bounded 1-through-180-second retry. This slice
+establishes no proxy trust by itself and adds no Redis runtime, adapter, route,
+or public export; those remain later composition work.
 Identity now also owns the refresh-specific pre-transaction identifier bundle:
 one separately branded successor-refresh ID, issued-access ID, and security-event
 ID. The restricted Node identifiers subpath exposes only a zero-argument
