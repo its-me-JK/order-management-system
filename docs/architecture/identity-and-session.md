@@ -966,6 +966,16 @@ the writes and `COMMIT`; a caller-selected object or pending workflow result is
 never commit authority. This avoids turning a structurally convincing test
 double into a security boundary.
 
+The second executable increment remains application-only and explicitly
+pending. An attempt-bound workflow claims the verified candidate attempt with
+the private controller before activation. It authenticates one matching
+rejected, rotated, or reuse terminal action; validates the canonical security
+event ID before a write action starts; exposes only the exact writer plan; and
+mints one runtime-authentic pending evidence value. Rotation alone exposes the
+two authenticated digest wrapper identities, while reuse exposes no credential
+material and rejection has no persistence action. The increment adds no
+commit, transaction-outcome, retry, candidate-delivery, or wire-value API.
+
 Identity uses a hybrid boundary rather than repositories per aggregate. A
 small `IdentityUnitOfWork` owns transaction completion. Separate purpose-built
 reads operate outside a transaction, while workflow-scoped loaders and writers
@@ -1137,6 +1147,16 @@ and digests, and candidates from a different issuance attempt. Thus one
 successful transaction cannot authorize a different candidate pair even when
 its public metadata or digest wrapper identities happen to match.
 
+Consuming pending evidence is the one-shot handoff from callback execution to
+private commit handling; it is not commit proof. Callback close invalidates the
+transaction scope and clears aggregate, decision, and action registrations.
+Unconsumed evidence and every other pre-handoff path retire the claimed
+candidate attempt. Consumed evidence and its exact admitted attempt survive
+scope close only under the private controller while the outer transaction
+outcome is unresolved. The future Unit of Work must promote or revoke that
+registration and remove every retained reference after confirmed commit,
+confirmed non-commit, or an indeterminate outcome.
+
 The outer result is one exact frozen completion union:
 
 ```text
@@ -1236,20 +1256,21 @@ freezing, one-shot attempt admission and retirement, candidate-attempt
 correlation, mixed-wire/digest rejection and temporary-copy overwrite,
 discovery-ticket authenticity and minimization, and the authentic
 one-load/one-decision workflow through rotation, reuse, rejection, failure, and
-scope closure. They also prove conditional issuance-input reads, fixed
-cause-free workflow errors, strict result binding, and no root export.
+scope closure. They also prove terminal-action kind and scope binding,
+rotation-only digest access, canonical event IDs, principal-to-aggregate
+binding, exact frozen pending evidence, one-shot consumption, explicit
+revocation, unconsumed-evidence retirement, re-entrant attempt invalidation,
+fixed cause-free errors, and no root export.
 
-The evidence and Unit of Work increment must additionally prove scope-bound
-one-shot pending evidence, commit promotion and revocation, cross-kind terminal
-actions, strict principal construction, and that raw credentials cannot become
-transaction evidence. Its orchestration-failure tests must reject a raw wire,
-candidate pair, digest, `Error` with a secret cause, Proxy, hostile getter, and
-coercion trap while exposing only the fresh fixed error. The Prisma increment
-must then prove zero orchestration before a valid context, one orchestration
-otherwise, one writer time, one connection, operation tracking and bounded
-drain, lock and DML order, affected-row checks, rollback injection after every
-statement, exact statement-and-constraint allowlisting, commit ambiguity,
-connection quarantine, no retry, escaped-scope rejection, and
+The Unit of Work increment must still prove commit promotion and revocation,
+final attempt retirement, exact-pair delivery binding, raw-credential rejection
+at orchestration settlement, and that caught values with hostile getters,
+Proxies, coercion traps, or secret causes never escape. The Prisma increment
+must additionally prove zero orchestration before a valid context, one
+orchestration otherwise, one writer time, one connection, operation tracking
+and bounded drain, lock and DML order, affected-row checks, rollback injection
+after every statement, exact statement-and-constraint allowlisting, commit
+ambiguity, connection quarantine, no retry, escaped-scope rejection, and
 competing-refresh behavior against real MySQL.
 
 The rejected alternatives are public aggregate repositories and one Unit of
@@ -1258,6 +1279,19 @@ writes and wrong lock order legal; a god Unit of Work moves workflow authority
 into one infrastructure-shaped interface. Workflow ports duplicate a small
 amount of mapping and SQL, but private infrastructure helpers can recover reuse
 without granting application code unsafe operations.
+
+The tempting evidence alternative is `execute<T>(callback): Promise<T>` or a
+plain persistence DTO. It is shorter, but it permits a callback to return a raw
+credential or structurally forged result and cannot prove scope, decision, or
+attempt ownership. Runtime identity registries and the closed terminal state
+machine cost additional code and retain the exact attempt for one bounded
+commit-resolution window; in return they reject replay, cross-scope, and
+wrong-kind writes before SQL. An interview-level consequence is that consumed
+pending evidence must survive callback-scope close: the scope must be invalid
+before `COMMIT`, while confirmed commit still needs the exact attempt binding
+for later delivery. That retained registration grants neither SQL nor delivery
+authority. The next improvement is the concrete MySQL Unit of Work that alone
+can settle it from a real transaction trace.
 
 ## Credential and password representation
 

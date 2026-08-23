@@ -30,12 +30,31 @@ import {
   tryAddIdentitySeconds,
   type IdentityInstant,
 } from '../domain/identity-values';
-import type { IdentityRefreshCredentialDigest } from './identity-session-credential-digest.values';
+import {
+  createIdentityAuthenticatedPrincipalFromAuthority,
+  type IdentityAuthenticatedPrincipal,
+} from './identity-authenticated-principal';
+import { InvalidIdentityAuthenticatedPrincipalError } from './identity-authenticated-principal.errors';
+import {
+  claimIdentitySessionCredentialAttempt,
+  inspectIdentitySessionCredentialAttemptDigestView,
+  retireIdentitySessionCredentialAttempt,
+  type IdentitySessionCredentialAttempt,
+  type IdentitySessionCredentialAttemptDigestView,
+} from './identity-session-credential-attempt';
+import type {
+  IdentityAccessCredentialDigest,
+  IdentityRefreshCredentialDigest,
+} from './identity-session-credential-digest.values';
 import {
   consumeIdentitySessionRefreshDiscoveryFoundTicket,
   type IdentitySessionRefreshDiscoveryBoundaryAuthority,
   type IdentitySessionRefreshDiscoveryFoundTicket,
 } from './identity-session-refresh-discovery';
+import {
+  parseIdentitySecurityEventId,
+  type IdentitySecurityEventId,
+} from './identity-security-event.values';
 
 const objectPrototype = Object.prototype;
 const capturedFreeze = Object.freeze;
@@ -46,6 +65,7 @@ const capturedIsFrozen = Object.isFrozen;
 const capturedOwnKeys = Reflect.ownKeys;
 const capturedReflectApply = Reflect.apply;
 const capturedReflectGet = Reflect.get;
+const createAuthenticatedPrincipal = createIdentityAuthenticatedPrincipalFromAuthority;
 // Capturing these references prevents later prototype mutation from changing the trust boundary.
 // eslint-disable-next-line @typescript-eslint/unbound-method
 const accountSnapshot = IdentityAccount.prototype.toSnapshot;
@@ -80,6 +100,7 @@ const DECISION_INPUT_KEYS = capturedFreeze([
 type DecisionInputKey = (typeof DECISION_INPUT_KEYS)[number];
 type WorkflowPhase =
   | 'provisional'
+  | 'attempt-admitted'
   | 'awaiting-load'
   | 'loading'
   | 'loaded'
@@ -87,6 +108,8 @@ type WorkflowPhase =
   | 'decided-rejected'
   | 'decided-rotated'
   | 'decided-reuse-detected'
+  | 'terminal-action-started'
+  | 'terminal'
   | 'failed'
   | 'closed';
 
@@ -96,6 +119,9 @@ declare const identitySessionRefreshWorkflowControllerBrand: unique symbol;
 declare const identitySessionRefreshLockedLoadOperationBrand: unique symbol;
 declare const identitySessionRefreshLockedLoadResultBrand: unique symbol;
 declare const identitySessionRefreshDecisionBrand: unique symbol;
+declare const identitySessionRefreshRotatedPersistenceActionBrand: unique symbol;
+declare const identitySessionRefreshReusePersistenceActionBrand: unique symbol;
+declare const identityTransactionEvidenceBrand: unique symbol;
 
 /** Empty callback-visible identity for one future database transaction. */
 export type IdentityTransactionScope = Readonly<{
@@ -170,6 +196,54 @@ export type IdentitySessionRefreshDecision =
   | IdentitySessionRefreshRotatedDecision
   | IdentitySessionRefreshReuseDetectedDecision;
 
+/** Empty writer-owned authority for one already-authenticated rotation action. */
+export type IdentitySessionRefreshRotatedPersistenceAction = Readonly<{
+  readonly [identitySessionRefreshRotatedPersistenceActionBrand]: true;
+}>;
+
+/** Empty writer-owned authority for one already-authenticated reuse action. */
+export type IdentitySessionRefreshReusePersistenceAction = Readonly<{
+  readonly [identitySessionRefreshReusePersistenceActionBrand]: true;
+}>;
+
+export type IdentitySessionRefreshRotatedPersistencePlan = Readonly<{
+  result: IdentitySessionFamilyRefreshRotatedResult;
+  accessCredentialDigest: IdentityAccessCredentialDigest;
+  refreshCredentialDigest: IdentityRefreshCredentialDigest;
+  securityEventId: IdentitySecurityEventId;
+}>;
+
+export type IdentitySessionRefreshReusePersistencePlan = Readonly<{
+  result: IdentitySessionFamilyRefreshReuseDetectedResult;
+  securityEventId: IdentitySecurityEventId;
+}>;
+
+export type IdentityTransactionRejectedEvidence = Readonly<{
+  kind: 'rejected';
+  readonly [identityTransactionEvidenceBrand]: true;
+}>;
+
+export type IdentityTransactionRefreshReuseDetectedEvidence = Readonly<{
+  kind: 'reuse-detected';
+  readonly [identityTransactionEvidenceBrand]: true;
+}>;
+
+export type IdentityTransactionRefreshRotatedEvidence = Readonly<{
+  kind: 'rotated';
+  principal: IdentityAuthenticatedPrincipal;
+  accessCredentialIssuedAt: IdentityInstant;
+  accessCredentialExpiresAt: IdentityInstant;
+  refreshIdleExpiresAt: IdentityInstant;
+  refreshAbsoluteExpiresAt: IdentityInstant;
+  readonly [identityTransactionEvidenceBrand]: true;
+}>;
+
+/** Pending callback evidence. It is neither committed nor credential-delivery authority. */
+export type IdentityTransactionEvidence =
+  | IdentityTransactionRejectedEvidence
+  | IdentityTransactionRefreshReuseDetectedEvidence
+  | IdentityTransactionRefreshRotatedEvidence;
+
 export class InvalidIdentitySessionRefreshWorkflowError extends Error {
   public constructor() {
     super('Expected a valid Identity session refresh workflow transition');
@@ -196,6 +270,13 @@ interface WorkflowState {
   loadResult: IdentitySessionRefreshLockedLoadResult | undefined;
   locked: LockedState | undefined;
   decision: IdentitySessionRefreshDecision | undefined;
+  attempt: IdentitySessionCredentialAttempt | undefined;
+  attemptDigestView: IdentitySessionCredentialAttemptDigestView | undefined;
+  terminalAction:
+    | IdentitySessionRefreshRotatedPersistenceAction
+    | IdentitySessionRefreshReusePersistenceAction
+    | undefined;
+  evidence: IdentityTransactionEvidence | undefined;
 }
 
 type LoadRegistration = Readonly<{
@@ -224,12 +305,42 @@ type DecisionRegistration =
       domainResult: IdentitySessionFamilyRefreshReuseDetectedResult;
     }>;
 
+type TerminalActionRegistration =
+  | Readonly<{
+      state: WorkflowState;
+      kind: 'rotated';
+      decision: IdentitySessionRefreshRotatedDecision;
+      result: IdentitySessionFamilyRefreshRotatedResult;
+      digestView: IdentitySessionCredentialAttemptDigestView;
+      securityEventId: IdentitySecurityEventId;
+    }>
+  | Readonly<{
+      state: WorkflowState;
+      kind: 'reuse-detected';
+      decision: IdentitySessionRefreshReuseDetectedDecision;
+      result: IdentitySessionFamilyRefreshReuseDetectedResult;
+      securityEventId: IdentitySecurityEventId;
+    }>;
+
+type EvidenceStatus = 'pending' | 'consumed';
+
+interface EvidenceRegistration {
+  readonly state: WorkflowState;
+  readonly scope: IdentityTransactionScope;
+  readonly decision: IdentitySessionRefreshDecision;
+  readonly attempt: IdentitySessionCredentialAttempt;
+  readonly kind: IdentityTransactionEvidence['kind'];
+  status: EvidenceStatus;
+}
+
 const controllerStates = new WeakMap<object, WorkflowState>();
 const scopeStates = new WeakMap<object, WorkflowState>();
 const contextStates = new WeakMap<object, WorkflowState>();
 const loadRegistrations = new WeakMap<object, LoadRegistration>();
 const loadResultRegistrations = new WeakMap<object, LoadResultRegistration>();
 const decisionRegistrations = new WeakMap<object, DecisionRegistration>();
+const terminalActionRegistrations = new WeakMap<object, TerminalActionRegistration>();
+const evidenceRegistrations = new WeakMap<object, EvidenceRegistration>();
 
 function invalidWorkflow(): never {
   throw new InvalidIdentitySessionRefreshWorkflowError();
@@ -270,6 +381,34 @@ function authenticateActiveScope(state: WorkflowState, value: unknown): void {
   }
 }
 
+function authenticateAdmittedAttempt(
+  state: WorkflowState,
+): IdentitySessionCredentialAttemptDigestView {
+  if (state.attempt === undefined || state.attemptDigestView === undefined) {
+    invalidWorkflow();
+  }
+
+  try {
+    return inspectIdentitySessionCredentialAttemptDigestView(
+      state.attemptDigestView,
+      state.controller,
+    );
+  } catch {
+    state.attempt = undefined;
+    state.attemptDigestView = undefined;
+    failWorkflow(state);
+    invalidWorkflow();
+  }
+}
+
+function clearTerminalAction(state: WorkflowState): void {
+  if (state.terminalAction !== undefined) {
+    terminalActionRegistrations.delete(state.terminalAction);
+  }
+
+  state.terminalAction = undefined;
+}
+
 function clearWorkflowReferences(state: WorkflowState): void {
   if (state.activeLoad !== undefined) {
     loadRegistrations.delete(state.activeLoad);
@@ -283,10 +422,49 @@ function clearWorkflowReferences(state: WorkflowState): void {
     decisionRegistrations.delete(state.decision);
   }
 
+  clearTerminalAction(state);
+
   state.activeLoad = undefined;
   state.loadResult = undefined;
   state.locked = undefined;
   state.decision = undefined;
+}
+
+function revokePendingEvidence(state: WorkflowState): boolean {
+  if (state.evidence === undefined) {
+    return true;
+  }
+
+  const registration = evidenceRegistrations.get(state.evidence);
+  let cleanupSucceeded = true;
+
+  if (registration?.state === state && registration.status === 'pending') {
+    cleanupSucceeded = retireAdmittedAttempt(state);
+    evidenceRegistrations.delete(state.evidence);
+  }
+
+  state.evidence = undefined;
+  return cleanupSucceeded;
+}
+
+function retireAdmittedAttempt(state: WorkflowState): boolean {
+  if (state.attempt === undefined) {
+    state.attemptDigestView = undefined;
+    return true;
+  }
+
+  const attempt = state.attempt;
+  let retired = true;
+
+  try {
+    retireIdentitySessionCredentialAttempt(attempt, state.controller);
+  } catch {
+    retired = false;
+  }
+
+  state.attempt = undefined;
+  state.attemptDigestView = undefined;
+  return retired;
 }
 
 function failWorkflow(state: WorkflowState): void {
@@ -308,6 +486,12 @@ function snapshotOfSessionFamily(value: unknown): IdentitySessionFamilySnapshot 
 
 function snapshotOfRefreshCredential(value: unknown): IdentityRefreshCredentialSnapshot {
   return capturedReflectApply(refreshCredentialSnapshot, value, []);
+}
+
+function snapshotOfAccessCredential(
+  value: unknown,
+): ReturnType<IdentityAccessCredential['toSnapshot']> {
+  return capturedReflectApply(accessCredentialSnapshot, value, []);
 }
 
 function assertLoadedRelationships(
@@ -683,12 +867,41 @@ export function createIdentitySessionRefreshWorkflow(): IdentitySessionRefreshWo
     loadResult: undefined,
     locked: undefined,
     decision: undefined,
+    attempt: undefined,
+    attemptDigestView: undefined,
+    terminalAction: undefined,
+    evidence: undefined,
   };
 
   controllerStates.set(controller, state);
   scopeStates.set(scope, state);
 
   return capturedFreeze({ controller, scope });
+}
+
+/**
+ * Creates the only workflow variant eligible to mint transaction evidence.
+ * The verified credential attempt is claimed synchronously by the private controller.
+ */
+export function createIdentitySessionRefreshAttemptBoundWorkflow(
+  attemptValue: IdentitySessionCredentialAttempt,
+): IdentitySessionRefreshWorkflowBoundary {
+  const boundary = createIdentitySessionRefreshWorkflow();
+  const state = stateForController(boundary.controller);
+
+  state.phase = 'failed';
+
+  try {
+    const digestView = claimIdentitySessionCredentialAttempt(attemptValue, boundary.controller);
+    state.attempt = attemptValue;
+    state.attemptDigestView = digestView;
+    state.phase = 'attempt-admitted';
+    return boundary;
+  } catch (error) {
+    clearWorkflowReferences(state);
+    scopeStates.delete(state.scope);
+    throw error;
+  }
 }
 
 /** Activates a provisional workflow only after the future adapter has BEGIN and writer time. */
@@ -698,7 +911,7 @@ export function activateIdentitySessionRefreshWorkflow(
 ): IdentityTransactionContext {
   const state = stateForController(controllerValue);
 
-  if (state.phase !== 'provisional') {
+  if (state.phase !== 'provisional' && state.phase !== 'attempt-admitted') {
     invalidWorkflow();
   }
 
@@ -924,6 +1137,405 @@ export function decideIdentitySessionRefresh(
   return createDecision(state, result);
 }
 
+function registerPendingEvidence<Evidence extends IdentityTransactionEvidence>(
+  state: WorkflowState,
+  decision: IdentitySessionRefreshDecision,
+  evidence: Evidence,
+): Evidence {
+  if (
+    state.evidence !== undefined ||
+    state.attempt === undefined ||
+    state.decision !== decision ||
+    scopeStates.get(state.scope) !== state
+  ) {
+    invalidWorkflow();
+  }
+
+  authenticateAdmittedAttempt(state);
+
+  const registration: EvidenceRegistration = {
+    state,
+    scope: state.scope,
+    decision,
+    attempt: state.attempt,
+    kind: evidence.kind,
+    status: 'pending',
+  };
+
+  evidenceRegistrations.set(evidence, registration);
+  state.evidence = evidence;
+  state.phase = 'terminal';
+  decisionRegistrations.delete(decision);
+  state.decision = undefined;
+  clearTerminalAction(state);
+  return evidence;
+}
+
+function authenticateRotatedAction(
+  controllerValue: unknown,
+  actionValue: unknown,
+): Readonly<{
+  state: WorkflowState;
+  registration: Extract<TerminalActionRegistration, Readonly<{ kind: 'rotated' }>>;
+}> {
+  const state = stateForController(controllerValue);
+  const registration = isObject(actionValue)
+    ? terminalActionRegistrations.get(actionValue)
+    : undefined;
+
+  if (
+    state.phase !== 'terminal-action-started' ||
+    state.terminalAction !== actionValue ||
+    registration?.state !== state ||
+    registration.kind !== 'rotated'
+  ) {
+    invalidWorkflow();
+  }
+
+  return capturedFreeze({ state, registration });
+}
+
+function authenticateReuseAction(
+  controllerValue: unknown,
+  actionValue: unknown,
+): Readonly<{
+  state: WorkflowState;
+  registration: Extract<TerminalActionRegistration, Readonly<{ kind: 'reuse-detected' }>>;
+}> {
+  const state = stateForController(controllerValue);
+  const registration = isObject(actionValue)
+    ? terminalActionRegistrations.get(actionValue)
+    : undefined;
+
+  if (
+    state.phase !== 'terminal-action-started' ||
+    state.terminalAction !== actionValue ||
+    registration?.state !== state ||
+    registration.kind !== 'reuse-detected'
+  ) {
+    invalidWorkflow();
+  }
+
+  return capturedFreeze({ state, registration });
+}
+
+function isStillCompletingRotatedAction(
+  state: WorkflowState,
+  action: IdentitySessionRefreshRotatedPersistenceAction,
+  registration: Extract<TerminalActionRegistration, Readonly<{ kind: 'rotated' }>>,
+): boolean {
+  return (
+    state.phase === 'failed' &&
+    state.terminalAction === action &&
+    terminalActionRegistrations.get(action) === registration
+  );
+}
+
+/** Completes the only terminal path that deliberately performs no persistence. */
+export function completeIdentitySessionRefreshRejected(
+  controllerValue: IdentitySessionRefreshWorkflowController,
+  scopeValue: IdentityTransactionScope,
+  decisionValue: IdentitySessionRefreshRejectedDecision,
+): IdentityTransactionRejectedEvidence {
+  const state = stateForController(controllerValue);
+  const registration = isObject(decisionValue)
+    ? decisionRegistrations.get(decisionValue)
+    : undefined;
+
+  if (
+    state.phase !== 'decided-rejected' ||
+    state.decision !== decisionValue ||
+    registration?.state !== state ||
+    registration.kind !== 'rejected' ||
+    state.attempt === undefined ||
+    state.attemptDigestView === undefined
+  ) {
+    invalidWorkflow();
+  }
+
+  authenticateActiveScope(state, scopeValue);
+  authenticateAdmittedAttempt(state);
+  const evidence = capturedFreeze({
+    kind: 'rejected' as const,
+  }) as IdentityTransactionRejectedEvidence;
+  return registerPendingEvidence(state, decisionValue, evidence);
+}
+
+/** Authenticates and starts the single rotation persistence action. */
+export function beginIdentitySessionRefreshRotatedPersistence(
+  controllerValue: IdentitySessionRefreshWorkflowController,
+  scopeValue: IdentityTransactionScope,
+  decisionValue: IdentitySessionRefreshRotatedDecision,
+  securityEventIdValue: unknown,
+): IdentitySessionRefreshRotatedPersistenceAction {
+  const state = stateForController(controllerValue);
+  const registration = isObject(decisionValue)
+    ? decisionRegistrations.get(decisionValue)
+    : undefined;
+
+  if (
+    state.phase !== 'decided-rotated' ||
+    state.decision !== decisionValue ||
+    registration?.state !== state ||
+    registration.kind !== 'rotated' ||
+    state.attempt === undefined ||
+    state.attemptDigestView === undefined
+  ) {
+    invalidWorkflow();
+  }
+
+  authenticateActiveScope(state, scopeValue);
+  const securityEventId = parseIdentitySecurityEventId(securityEventIdValue);
+  const digestView = authenticateAdmittedAttempt(state);
+
+  const action = capturedFreeze({}) as IdentitySessionRefreshRotatedPersistenceAction;
+  terminalActionRegistrations.set(
+    action,
+    capturedFreeze({
+      state,
+      kind: 'rotated' as const,
+      decision: decisionValue,
+      result: registration.domainResult,
+      digestView,
+      securityEventId,
+    }),
+  );
+  state.terminalAction = action;
+  state.phase = 'terminal-action-started';
+  return action;
+}
+
+/** Returns the exact write material registered to one authentic rotation action. */
+export function inspectIdentitySessionRefreshRotatedPersistence(
+  controllerValue: IdentitySessionRefreshWorkflowController,
+  actionValue: IdentitySessionRefreshRotatedPersistenceAction,
+): IdentitySessionRefreshRotatedPersistencePlan {
+  const { state, registration } = authenticateRotatedAction(controllerValue, actionValue);
+  let digestView: IdentitySessionCredentialAttemptDigestView;
+
+  try {
+    digestView = inspectIdentitySessionCredentialAttemptDigestView(
+      registration.digestView,
+      state.controller,
+    );
+  } catch {
+    failWorkflow(state);
+    invalidWorkflow();
+  }
+
+  return capturedFreeze({
+    result: registration.result,
+    accessCredentialDigest: digestView.accessCredentialDigest,
+    refreshCredentialDigest: digestView.refreshCredentialDigest,
+    securityEventId: registration.securityEventId,
+  });
+}
+
+/** Mints pending rotation evidence only after the future writer reports all statements complete. */
+export function completeIdentitySessionRefreshRotatedPersistence(
+  controllerValue: IdentitySessionRefreshWorkflowController,
+  actionValue: IdentitySessionRefreshRotatedPersistenceAction,
+  authorityProjectionValue: unknown,
+): IdentityTransactionRefreshRotatedEvidence {
+  const { state, registration } = authenticateRotatedAction(controllerValue, actionValue);
+  authenticateAdmittedAttempt(state);
+  state.phase = 'failed';
+  let principal: IdentityAuthenticatedPrincipal;
+
+  try {
+    principal = createAuthenticatedPrincipal(authorityProjectionValue);
+  } catch {
+    clearWorkflowReferences(state);
+    throw new InvalidIdentityAuthenticatedPrincipalError();
+  }
+
+  if (!isStillCompletingRotatedAction(state, actionValue, registration)) {
+    invalidWorkflow();
+  }
+
+  if (
+    principal.actorId !== registration.result.basis.accountId ||
+    principal.sessionId !== registration.result.basis.sessionId
+  ) {
+    clearWorkflowReferences(state);
+    throw new InvalidIdentityAuthenticatedPrincipalError();
+  }
+
+  let access: ReturnType<typeof snapshotOfAccessCredential>;
+  let family: IdentitySessionFamilySnapshot;
+
+  try {
+    access = snapshotOfAccessCredential(registration.result.issuedAccessCredential);
+    family = snapshotOfSessionFamily(registration.result.sessionFamily);
+  } catch {
+    failWorkflow(state);
+    invalidWorkflow();
+  }
+
+  const evidence = capturedFreeze({
+    kind: 'rotated' as const,
+    principal,
+    accessCredentialIssuedAt: access.issuedAt,
+    accessCredentialExpiresAt: access.expiresAt,
+    refreshIdleExpiresAt: family.refreshIdleExpiresAt,
+    refreshAbsoluteExpiresAt: family.refreshAbsoluteExpiresAt,
+  }) as IdentityTransactionRefreshRotatedEvidence;
+
+  return registerPendingEvidence(state, registration.decision, evidence);
+}
+
+/** Authenticates and starts the single refresh-reuse persistence action. */
+export function beginIdentitySessionRefreshReusePersistence(
+  controllerValue: IdentitySessionRefreshWorkflowController,
+  scopeValue: IdentityTransactionScope,
+  decisionValue: IdentitySessionRefreshReuseDetectedDecision,
+  securityEventIdValue: unknown,
+): IdentitySessionRefreshReusePersistenceAction {
+  const state = stateForController(controllerValue);
+  const registration = isObject(decisionValue)
+    ? decisionRegistrations.get(decisionValue)
+    : undefined;
+
+  if (
+    state.phase !== 'decided-reuse-detected' ||
+    state.decision !== decisionValue ||
+    registration?.state !== state ||
+    registration.kind !== 'reuse-detected' ||
+    state.attempt === undefined ||
+    state.attemptDigestView === undefined
+  ) {
+    invalidWorkflow();
+  }
+
+  authenticateActiveScope(state, scopeValue);
+  const securityEventId = parseIdentitySecurityEventId(securityEventIdValue);
+  authenticateAdmittedAttempt(state);
+  const action = capturedFreeze({}) as IdentitySessionRefreshReusePersistenceAction;
+  terminalActionRegistrations.set(
+    action,
+    capturedFreeze({
+      state,
+      kind: 'reuse-detected' as const,
+      decision: decisionValue,
+      result: registration.domainResult,
+      securityEventId,
+    }),
+  );
+  state.terminalAction = action;
+  state.phase = 'terminal-action-started';
+  return action;
+}
+
+/** Returns one reuse result and event identifier, with no credential digest material. */
+export function inspectIdentitySessionRefreshReusePersistence(
+  controllerValue: IdentitySessionRefreshWorkflowController,
+  actionValue: IdentitySessionRefreshReusePersistenceAction,
+): IdentitySessionRefreshReusePersistencePlan {
+  const { registration } = authenticateReuseAction(controllerValue, actionValue);
+  return capturedFreeze({
+    result: registration.result,
+    securityEventId: registration.securityEventId,
+  });
+}
+
+/** Mints pending reuse evidence only after its state and event writes succeed. */
+export function completeIdentitySessionRefreshReusePersistence(
+  controllerValue: IdentitySessionRefreshWorkflowController,
+  actionValue: IdentitySessionRefreshReusePersistenceAction,
+): IdentityTransactionRefreshReuseDetectedEvidence {
+  const { state, registration } = authenticateReuseAction(controllerValue, actionValue);
+  authenticateAdmittedAttempt(state);
+  const evidence = capturedFreeze({
+    kind: 'reuse-detected' as const,
+  }) as IdentityTransactionRefreshReuseDetectedEvidence;
+  return registerPendingEvidence(state, registration.decision, evidence);
+}
+
+/** Permanently fails an authentic persistence action whose writer did not complete. */
+export function failIdentitySessionRefreshPersistence(
+  controllerValue: IdentitySessionRefreshWorkflowController,
+  actionValue:
+    IdentitySessionRefreshRotatedPersistenceAction | IdentitySessionRefreshReusePersistenceAction,
+): void {
+  const state = stateForController(controllerValue);
+  const registration = isObject(actionValue)
+    ? terminalActionRegistrations.get(actionValue)
+    : undefined;
+
+  if (
+    state.phase !== 'terminal-action-started' ||
+    state.terminalAction !== actionValue ||
+    registration?.state !== state
+  ) {
+    invalidWorkflow();
+  }
+
+  failWorkflow(state);
+}
+
+/**
+ * Authenticates callback evidence exactly once before scope settlement.
+ * Consumption is not commit, outcome, or credential-delivery authority.
+ */
+export function consumeIdentityTransactionPendingEvidence(
+  controllerValue: IdentitySessionRefreshWorkflowController,
+  evidenceValue: IdentityTransactionEvidence,
+): IdentityTransactionEvidence {
+  const state = stateForController(controllerValue);
+  const registration = isObject(evidenceValue)
+    ? evidenceRegistrations.get(evidenceValue)
+    : undefined;
+
+  if (
+    state.phase !== 'terminal' ||
+    scopeStates.get(state.scope) !== state ||
+    state.evidence !== evidenceValue ||
+    registration?.state !== state ||
+    registration.scope !== state.scope ||
+    registration.attempt !== state.attempt ||
+    registration.kind !== evidenceValue.kind ||
+    registration.status !== 'pending'
+  ) {
+    invalidWorkflow();
+  }
+
+  registration.status = 'consumed';
+  return evidenceValue;
+}
+
+/**
+ * Permanently revokes pending evidence and retires its admitted credential attempt.
+ * This is safe for rollback, failure, and indeterminate outcomes; it cannot promote delivery.
+ */
+export function revokeIdentityTransactionPendingEvidence(
+  controllerValue: IdentitySessionRefreshWorkflowController,
+  evidenceValue: IdentityTransactionEvidence,
+): void {
+  const state = stateForController(controllerValue);
+  const registration = isObject(evidenceValue)
+    ? evidenceRegistrations.get(evidenceValue)
+    : undefined;
+
+  if (
+    (state.phase !== 'terminal' && state.phase !== 'closed') ||
+    registration?.state !== state ||
+    registration.scope !== state.scope ||
+    registration.attempt !== state.attempt ||
+    registration.kind !== evidenceValue.kind
+  ) {
+    invalidWorkflow();
+  }
+
+  const retired = retireAdmittedAttempt(state);
+  evidenceRegistrations.delete(evidenceValue);
+  if (state.evidence === evidenceValue) {
+    state.evidence = undefined;
+  }
+  if (!retired) {
+    invalidWorkflow();
+  }
+}
+
 /** Privileged writer-only extractor; the callback-visible decision remains kind-only. */
 export function inspectIdentitySessionRefreshRotatedDecision(
   controllerValue: IdentitySessionRefreshWorkflowController,
@@ -936,6 +1548,7 @@ export function inspectIdentitySessionRefreshRotatedDecision(
 
   if (
     state.phase !== 'decided-rotated' ||
+    state.attempt !== undefined ||
     state.decision !== decisionValue ||
     registration?.state !== state ||
     registration.kind !== 'rotated'
@@ -958,6 +1571,7 @@ export function inspectIdentitySessionRefreshReuseDetectedDecision(
 
   if (
     state.phase !== 'decided-reuse-detected' ||
+    state.attempt !== undefined ||
     state.decision !== decisionValue ||
     registration?.state !== state ||
     registration.kind !== 'reuse-detected'
@@ -982,8 +1596,36 @@ export function closeIdentitySessionRefreshWorkflow(
     contextStates.delete(state.context);
   }
 
+  const pendingEvidence = state.evidence;
+  const evidenceRegistration =
+    pendingEvidence === undefined ? undefined : evidenceRegistrations.get(pendingEvidence);
+  let preservesConsumedEvidence =
+    evidenceRegistration?.state === state && evidenceRegistration.status === 'consumed';
+  let cleanupSucceeded = true;
+
+  if (preservesConsumedEvidence) {
+    try {
+      authenticateAdmittedAttempt(state);
+    } catch {
+      preservesConsumedEvidence = false;
+      cleanupSucceeded = false;
+    }
+  }
+
+  scopeStates.delete(state.scope);
+  cleanupSucceeded = revokePendingEvidence(state) && cleanupSucceeded;
+  if (!preservesConsumedEvidence) {
+    if (pendingEvidence !== undefined && evidenceRegistration?.state === state) {
+      evidenceRegistrations.delete(pendingEvidence);
+    }
+    cleanupSucceeded = retireAdmittedAttempt(state) && cleanupSucceeded;
+  }
   state.phase = 'closed';
   state.context = undefined;
   state.dbNow = undefined;
   clearWorkflowReferences(state);
+
+  if (!cleanupSucceeded) {
+    invalidWorkflow();
+  }
 }
