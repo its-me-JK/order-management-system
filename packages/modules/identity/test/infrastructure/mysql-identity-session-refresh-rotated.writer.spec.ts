@@ -265,7 +265,7 @@ function refreshCredential(): IdentityRefreshCredential {
 async function writerFixture(context = contextFixture()): Promise<WriterFixture> {
   const attempt = await credentialAttempt();
   const boundary = createIdentitySessionRefreshAttemptBoundWorkflow(attempt);
-  const activated = activateIdentitySessionRefreshWorkflow(boundary.controller, ROTATED_AT);
+  const activated = activateIdentitySessionRefreshWorkflow(boundary.controller);
   const authority = createIdentitySessionRefreshDiscoveryBoundaryAuthority();
   const discoveryDigest = createIdentityRefreshCredentialDigestFromBytes(bytes(23));
   const ticket = createIdentitySessionRefreshDiscoveryFoundTicket(authority, discoveryDigest, {
@@ -285,6 +285,7 @@ async function writerFixture(context = contextFixture()): Promise<WriterFixture>
     account(),
     sessionFamily(),
     refreshCredential(),
+    ROTATED_AT,
   );
   const decision = decideIdentitySessionRefresh(
     activated,
@@ -642,7 +643,7 @@ describe('direct MySQL Identity refresh rotated writer', (): void => {
     const fixture = await writerFixture();
     const foreignAttempt = await credentialAttempt();
     const foreignBoundary = createIdentitySessionRefreshAttemptBoundWorkflow(foreignAttempt);
-    const foreign = activateIdentitySessionRefreshWorkflow(foreignBoundary.controller, ROTATED_AT);
+    const foreign = activateIdentitySessionRefreshWorkflow(foreignBoundary.controller);
 
     await expect(
       fixture.writer.persistRotated(foreign.scope, fixture.input),

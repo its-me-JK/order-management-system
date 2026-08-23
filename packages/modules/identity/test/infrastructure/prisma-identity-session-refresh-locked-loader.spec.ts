@@ -138,6 +138,10 @@ function refreshRow(overrides: Readonly<Record<string, unknown>> = {}): UnknownR
   };
 }
 
+function writerTimeRow(writerTime = DB_NOW): UnknownRow {
+  return { writer_time: writerTime };
+}
+
 function retainedReplayRows(): readonly [UnknownRow, UnknownRow, UnknownRow] {
   return [
     accountRow({
@@ -174,7 +178,7 @@ function writerFixture(result: unknown = [discoveryRow()]): WriterFixture {
 }
 
 function transactionFixture(
-  results: readonly unknown[] = [[accountRow()], [familyRow()], [refreshRow()]],
+  results: readonly unknown[] = [[accountRow()], [familyRow()], [refreshRow()], [writerTimeRow()]],
 ): TransactionFixture {
   const queryRaw = jest.fn<ReturnType<QueryRawOperation>, Parameters<QueryRawOperation>>();
 
@@ -205,14 +209,13 @@ async function foundTicket(
 
 async function lockedLoaderFixture(
   transaction = transactionFixture(),
-  dbNow = DB_NOW,
 ): Promise<LockedLoaderFixture> {
   const writer = writerFixture();
   const digest = refreshDigest();
   const discovery = createPrismaIdentitySessionRefreshDiscovery(writer.client);
   const ticket = await foundTicket(discovery, digest);
   const boundary = createIdentitySessionRefreshWorkflow();
-  const context = activateIdentitySessionRefreshWorkflow(boundary.controller, dbNow);
+  const context = activateIdentitySessionRefreshWorkflow(boundary.controller);
   const loader = createPrismaIdentitySessionRefreshLockedLoader(
     writer.client,
     transaction.client,
@@ -324,9 +327,9 @@ function expectFixedError(
   }
 }
 
-function queryFailureFixture(stage: 0 | 1 | 2, error: Error): TransactionFixture {
+function queryFailureFixture(stage: 0 | 1 | 2 | 3, error: Error): TransactionFixture {
   const transaction = transactionFixture([]);
-  const preceding = [[accountRow()], [familyRow()]];
+  const preceding = [[accountRow()], [familyRow()], [refreshRow()]];
 
   for (let index = 0; index < stage; index += 1) {
     transaction.queryRaw.mockResolvedValueOnce(preceding[index]);
@@ -363,18 +366,20 @@ describe('Prisma Identity session refresh locked loader', (): void => {
       expect(values[3]).toBe(2);
       return Promise.resolve([refreshRow()]);
     });
+    fixture.transaction.queryRaw.mockResolvedValueOnce([writerTimeRow()]);
 
     const result = await fixture.loader.loadForUpdate(fixture.scope, fixture.ticket);
 
     expect(result.kind).toBe('found');
     expect(Object.isFrozen(result)).toBe(true);
-    expect(fixture.transaction.queryRaw).toHaveBeenCalledTimes(3);
+    expect(fixture.transaction.queryRaw).toHaveBeenCalledTimes(4);
     expect(observedDigestDuringQuery).toEqual(expectedDigest);
     expectDigestWiped(fixture.transaction.queryRaw);
 
     const accountQuery = invocationOf(fixture.transaction.queryRaw, 0);
     const familyQuery = invocationOf(fixture.transaction.queryRaw, 1);
     const refreshQuery = invocationOf(fixture.transaction.queryRaw, 2);
+    const writerTimeQuery = invocationOf(fixture.transaction.queryRaw, 3);
 
     expect(accountQuery.sql).toContain('FROM identity_accounts AS account FORCE INDEX (PRIMARY)');
     expect(accountQuery.sql).toContain('WHERE account.id = UUID_TO_BIN(?, 0) LIMIT ? FOR UPDATE');
@@ -390,6 +395,10 @@ describe('Prisma Identity session refresh locked loader', (): void => {
     expect(refreshQuery.sql).toContain(
       'WHERE refresh.id = UUID_TO_BIN(?, 0) AND refresh.family_id = UUID_TO_BIN(?, 0) AND refresh.digest = ? LIMIT ? FOR UPDATE',
     );
+    expect(writerTimeQuery).toEqual({
+      sql: "SELECT DATE_FORMAT( UTC_TIMESTAMP(6), '%Y-%m-%dT%H:%i:%s.%fZ' ) AS writer_time",
+      values: [],
+    });
 
     for (const query of [accountQuery, familyQuery, refreshQuery]) {
       expect(query.sql.match(/FORCE INDEX \(PRIMARY\)/gu)).toHaveLength(1);
@@ -441,8 +450,11 @@ describe('Prisma Identity session refresh locked loader', (): void => {
   });
 
   it('loads retained replay evidence without lifecycle predicates', async (): Promise<void> => {
-    const transaction = transactionFixture(retainedReplayRows().map((row) => [row]));
-    const fixture = await lockedLoaderFixture(transaction, EXPIRED_DB_NOW);
+    const transaction = transactionFixture([
+      ...retainedReplayRows().map((row) => [row]),
+      [writerTimeRow(EXPIRED_DB_NOW)],
+    ]);
+    const fixture = await lockedLoaderFixture(transaction);
     const result = await fixture.loader.loadForUpdate(fixture.scope, fixture.ticket);
 
     expect(result.kind).toBe('found');
@@ -465,11 +477,15 @@ describe('Prisma Identity session refresh locked loader', (): void => {
       const sql = invocationOf(transaction.queryRaw, index).sql;
       const predicate = sql.slice(sql.indexOf('WHERE'));
 
-      expect(sql).not.toContain('CURRENT_TIMESTAMP');
+      expect(sql).not.toContain('UTC_TIMESTAMP');
       expect(predicate).not.toMatch(
         /account\.status|family\.(?:revoked_at|idle_expires_at|absolute_expires_at)|refresh\.(?:consumed_at|expires_at|active_slot|successor_id)/iu,
       );
     }
+    expect(invocationOf(transaction.queryRaw, 3)).toEqual({
+      sql: "SELECT DATE_FORMAT( UTC_TIMESTAMP(6), '%Y-%m-%dT%H:%i:%s.%fZ' ) AS writer_time",
+      values: [],
+    });
     expectDigestWiped(transaction.queryRaw);
   });
 
@@ -478,26 +494,58 @@ describe('Prisma Identity session refresh locked loader', (): void => {
     async (emptyStage): Promise<void> => {
       const rows: unknown[] = [[accountRow()], [familyRow()], [refreshRow()]];
       rows[emptyStage] = [];
-      const transaction = transactionFixture(rows);
+      const transaction = transactionFixture([...rows.slice(0, emptyStage + 1), [writerTimeRow()]]);
       const fixture = await lockedLoaderFixture(transaction);
 
       await expect(fixture.loader.loadForUpdate(fixture.scope, fixture.ticket)).resolves.toEqual({
         kind: 'not-found',
       });
-      expect(transaction.queryRaw).toHaveBeenCalledTimes(emptyStage + 1);
+      expect(transaction.queryRaw).toHaveBeenCalledTimes(emptyStage + 2);
+      expect(invocationOf(transaction.queryRaw, emptyStage + 1)).toEqual({
+        sql: "SELECT DATE_FORMAT( UTC_TIMESTAMP(6), '%Y-%m-%dT%H:%i:%s.%fZ' ) AS writer_time",
+        values: [],
+      });
       if (emptyStage === 2) {
         expectDigestWiped(transaction.queryRaw);
       }
     },
   );
 
+  it.each([
+    ['non-array envelope', { writer_time: DB_NOW }],
+    ['missing row', []],
+    ['overflow row set', [writerTimeRow(), writerTimeRow()]],
+    ['extra row field', [{ ...writerTimeRow(), provider_secret: 'clock-secret' }]],
+    ['invalid instant', [writerTimeRow('clock-secret')]],
+  ] as const)(
+    'fails closed on a %s from the writer-time query',
+    async (_scenario, clockResult): Promise<void> => {
+      const transaction = transactionFixture([
+        [accountRow()],
+        [familyRow()],
+        [refreshRow()],
+        clockResult,
+      ]);
+      const fixture = await lockedLoaderFixture(transaction);
+      const error = await captureRejection(() =>
+        fixture.loader.loadForUpdate(fixture.scope, fixture.ticket),
+      );
+
+      expectFixedError(
+        error,
+        IdentitySessionRefreshLockedLoadPersistenceError,
+        PERSISTENCE_MESSAGE,
+        ['clock-secret'],
+      );
+      expect(transaction.queryRaw).toHaveBeenCalledTimes(4);
+      expectDigestWiped(transaction.queryRaw);
+    },
+  );
+
   it('authenticates scope and ticket identity before transaction SQL', async (): Promise<void> => {
     const fixture = await lockedLoaderFixture();
     const foreignBoundary = createIdentitySessionRefreshWorkflow();
-    const foreignContext = activateIdentitySessionRefreshWorkflow(
-      foreignBoundary.controller,
-      DB_NOW,
-    );
+    const foreignContext = activateIdentitySessionRefreshWorkflow(foreignBoundary.controller);
 
     await expect(
       fixture.loader.loadForUpdate(foreignContext.scope, fixture.ticket),
@@ -516,7 +564,7 @@ describe('Prisma Identity session refresh locked loader', (): void => {
     await expect(
       fixture.loader.loadForUpdate(fixture.scope, fixture.ticket),
     ).resolves.toMatchObject({ kind: 'found' });
-    expect(fixture.transaction.queryRaw).toHaveBeenCalledTimes(3);
+    expect(fixture.transaction.queryRaw).toHaveBeenCalledTimes(4);
   });
 
   it('rejects a ticket from another discovery before SQL without consuming the paired ticket', async (): Promise<void> => {
@@ -540,7 +588,7 @@ describe('Prisma Identity session refresh locked loader', (): void => {
     const transaction = transactionFixture();
     const discovery = createPrismaIdentitySessionRefreshDiscovery(writer.client);
     const boundary = createIdentitySessionRefreshWorkflow();
-    const context = activateIdentitySessionRefreshWorkflow(boundary.controller, DB_NOW);
+    const context = activateIdentitySessionRefreshWorkflow(boundary.controller);
     const ticket = await foundTicket(discovery, refreshDigest());
 
     const error = captureSynchronousError(() =>
@@ -683,6 +731,7 @@ describe('Prisma Identity session refresh locked loader', (): void => {
     ['Account', 0],
     ['SessionFamily', 1],
     ['RefreshCredential', 2],
+    ['writer-time', 3],
   ] as const)(
     'distinguishes unavailable and unexpected %s query failures',
     async (_stageName, stage): Promise<void> => {
@@ -709,7 +758,7 @@ describe('Prisma Identity session refresh locked loader', (): void => {
           'vendor sql and digest details',
         ]);
         expect(transaction.queryRaw).toHaveBeenCalledTimes(stage + 1);
-        if (stage === 2) {
+        if (stage >= 2) {
           expectDigestWiped(transaction.queryRaw);
         }
       }
@@ -746,6 +795,7 @@ describe('Prisma Identity session refresh locked loader', (): void => {
     transaction.queryRaw.mockReturnValueOnce(pendingAccount);
     transaction.queryRaw.mockResolvedValueOnce([familyRow()]);
     transaction.queryRaw.mockResolvedValueOnce([refreshRow()]);
+    transaction.queryRaw.mockResolvedValueOnce([writerTimeRow()]);
     const fixture = await lockedLoaderFixture(transaction);
     const firstLoad = fixture.loader.loadForUpdate(fixture.scope, fixture.ticket);
 
@@ -760,12 +810,12 @@ describe('Prisma Identity session refresh locked loader', (): void => {
     }
     releaseAccount([accountRow()]);
     await expect(firstLoad).resolves.toMatchObject({ kind: 'found' });
-    expect(transaction.queryRaw).toHaveBeenCalledTimes(3);
+    expect(transaction.queryRaw).toHaveBeenCalledTimes(4);
 
     await expect(
       fixture.loader.loadForUpdate(fixture.scope, fixture.ticket),
     ).rejects.toBeInstanceOf(InvalidIdentitySessionRefreshWorkflowError);
-    expect(transaction.queryRaw).toHaveBeenCalledTimes(3);
+    expect(transaction.queryRaw).toHaveBeenCalledTimes(4);
   });
 
   it('captures the transaction query method and preserves its receiver', async (): Promise<void> => {
@@ -773,7 +823,7 @@ describe('Prisma Identity session refresh locked loader', (): void => {
     const discovery = createPrismaIdentitySessionRefreshDiscovery(writer.client);
     const ticket = await foundTicket(discovery, refreshDigest());
     const boundary = createIdentitySessionRefreshWorkflow();
-    const context = activateIdentitySessionRefreshWorkflow(boundary.controller, DB_NOW);
+    const context = activateIdentitySessionRefreshWorkflow(boundary.controller);
     const capturedQueryRaw = jest.fn<
       ReturnType<QueryRawOperation>,
       Parameters<QueryRawOperation>
@@ -781,7 +831,8 @@ describe('Prisma Identity session refresh locked loader', (): void => {
     capturedQueryRaw
       .mockResolvedValueOnce([accountRow()])
       .mockResolvedValueOnce([familyRow()])
-      .mockResolvedValueOnce([refreshRow()]);
+      .mockResolvedValueOnce([refreshRow()])
+      .mockResolvedValueOnce([writerTimeRow()]);
     const transactionClient: { $queryRaw: QueryRawOperation } = {
       $queryRaw: capturedQueryRaw,
     };
@@ -797,8 +848,9 @@ describe('Prisma Identity session refresh locked loader', (): void => {
     await expect(loader.loadForUpdate(context.scope, ticket)).resolves.toMatchObject({
       kind: 'found',
     });
-    expect(capturedQueryRaw).toHaveBeenCalledTimes(3);
+    expect(capturedQueryRaw).toHaveBeenCalledTimes(4);
     expect(capturedQueryRaw.mock.contexts).toEqual([
+      transactionClient,
       transactionClient,
       transactionClient,
       transactionClient,

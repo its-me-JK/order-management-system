@@ -13,7 +13,6 @@ export type {
   MySqlTransactionDirective,
   MySqlTransactionExecutor,
   MySqlTransactionExecutorOptions,
-  MySqlTransactionInstant,
   MySqlTransactionOutcome,
   MySqlTransactionParameter,
   MySqlTransactionProgram,

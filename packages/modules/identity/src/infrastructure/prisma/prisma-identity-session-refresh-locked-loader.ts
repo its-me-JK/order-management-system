@@ -61,6 +61,7 @@ const REFRESH_CREDENTIAL_ROW_KEYS = Object.freeze([
   'refresh_successor_id',
   'refresh_active_slot',
 ] as const);
+const WRITER_TIME_ROW_KEYS = Object.freeze(['writer_time'] as const);
 const LOCKED_LOAD_OVERFLOW_PROBE_ROW_COUNT = 2;
 const MYSQL_UNSIGNED_INTEGER_MAX = 4_294_967_295n;
 const LOCKED_LOADER_CONSTRUCTION_CAPABILITY = Object.freeze({});
@@ -331,12 +332,54 @@ function failQuery(
   persistenceFailed();
 }
 
-function completeNotFound(
+async function queryWriterTime(
   state: LockedLoaderState,
   operation: IdentitySessionRefreshLockedLoadOperation,
-): IdentitySessionRefreshLockedLoadResult {
+): Promise<unknown> {
   try {
-    return completeIdentitySessionRefreshLockedLoadNotFound(state.controller, operation);
+    return await state.queryRaw`
+      SELECT DATE_FORMAT(
+        UTC_TIMESTAMP(6),
+        '%Y-%m-%dT%H:%i:%s.%fZ'
+      ) AS writer_time
+    `;
+  } catch (error: unknown) {
+    failQuery(state, operation, error);
+  }
+}
+
+async function readWriterTime(
+  state: LockedLoaderState,
+  operation: IdentitySessionRefreshLockedLoadOperation,
+): Promise<unknown> {
+  const writerTimeResult = await queryWriterTime(state, operation);
+  let writerTimeRow: UnknownRecord | null;
+
+  try {
+    writerTimeRow = readExactRow(writerTimeResult, WRITER_TIME_ROW_KEYS);
+  } catch {
+    failPersistence(state, operation);
+  }
+
+  if (writerTimeRow === null) {
+    failPersistence(state, operation);
+  }
+
+  return writerTimeRow['writer_time'];
+}
+
+async function completeNotFound(
+  state: LockedLoaderState,
+  operation: IdentitySessionRefreshLockedLoadOperation,
+): Promise<IdentitySessionRefreshLockedLoadResult> {
+  const writerTime = await readWriterTime(state, operation);
+
+  try {
+    return completeIdentitySessionRefreshLockedLoadNotFound(
+      state.controller,
+      operation,
+      writerTime,
+    );
   } catch {
     failLoadBestEffort(state, operation);
     persistenceFailed();
@@ -537,6 +580,8 @@ class PrismaIdentitySessionRefreshLockedLoaderRuntime implements IdentitySession
       failPersistence(state, operation);
     }
 
+    const writerTime = await readWriterTime(state, operation);
+
     try {
       return completeIdentitySessionRefreshLockedLoadFound(
         state.controller,
@@ -544,6 +589,7 @@ class PrismaIdentitySessionRefreshLockedLoaderRuntime implements IdentitySession
         account,
         sessionFamily,
         refreshCredential,
+        writerTime,
       );
     } catch {
       failLoadBestEffort(state, operation);

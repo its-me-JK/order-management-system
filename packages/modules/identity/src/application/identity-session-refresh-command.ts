@@ -370,7 +370,6 @@ export function admitIdentitySessionRefreshCommand(
 /** Activates only the workflow admitted by this command and binds its exact context identity. */
 export function activateIdentitySessionRefreshCommand(
   controllerValue: IdentitySessionRefreshWorkflowBoundary['controller'],
-  dbNowValue: unknown,
 ): IdentityTransactionContext {
   const state = stateForController(controllerValue);
 
@@ -381,7 +380,7 @@ export function activateIdentitySessionRefreshCommand(
   state.status = 'activating';
 
   try {
-    const context = activateIdentitySessionRefreshWorkflow(controllerValue, dbNowValue);
+    const context = activateIdentitySessionRefreshWorkflow(controllerValue);
 
     authenticateStatus(state, 'activating');
 

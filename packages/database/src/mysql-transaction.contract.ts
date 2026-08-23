@@ -2,14 +2,8 @@ import type { DatabaseRuntime } from './database.contract';
 
 export type MySqlTransactionParameter = null | string | number | bigint | boolean | Uint8Array;
 
-declare const mySqlTransactionInstantBrand: unique symbol;
 declare const mySqlTransactionStatementBrand: unique symbol;
 declare const mySqlTransactionDirectiveBrand: unique symbol;
-
-/** Lossless UTC writer time read after transaction start on the exact connection. */
-export type MySqlTransactionInstant = string & {
-  readonly [mySqlTransactionInstantBrand]: true;
-};
 
 /** Opaque static statement identity; SQL and mappings remain registry-private. */
 export type MySqlTransactionStatement<
@@ -68,8 +62,6 @@ export interface MySqlTransactionProgramContext<
   Failure extends string,
   Statements extends AnyMySqlTransactionStatement<Failure>,
 > {
-  readonly writerTime: MySqlTransactionInstant;
-
   executeStatement<Statement extends Statements>(
     statement: Statement,
     parameters: MySqlTransactionStatementParameters<Statement>,

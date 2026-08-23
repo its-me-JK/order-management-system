@@ -15,7 +15,6 @@ import { defineMySqlTransactionStatement } from '../src/mysql-transaction.statem
 import { createMySqlTransactionExecutor } from '../src/mysql-transaction';
 import { createDatabaseResourcesRuntime } from '../src/prisma-database.runtime';
 
-const WRITER_TIME = '2026-08-23T18:41:09.123456Z';
 const SET_UTC = "SET SESSION time_zone = '+00:00'";
 const SET_READ_COMMITTED = 'SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED';
 const START_TRANSACTION = 'START TRANSACTION READ WRITE';
@@ -138,17 +137,16 @@ function normalizeSql(sql: string): string {
   return sql.replace(/\s+/gu, ' ').trim();
 }
 
-function isClockRead(sql: string): boolean {
-  return sql.includes('CURRENT_TIMESTAMP(6)');
+function isSessionCharacteristicsRead(sql: string): boolean {
+  return sql.includes('@@SESSION.time_zone') && sql.includes('@@SESSION.transaction_isolation');
 }
 
 function defaultQueryResult(sql: string, values: readonly unknown[] | undefined): Promise<unknown> {
-  if (isClockRead(sql)) {
+  if (isSessionCharacteristicsRead(sql)) {
     return Promise.resolve([
       {
         transaction_isolation: 'READ-COMMITTED',
         time_zone: '+00:00',
-        writer_time: WRITER_TIME,
       },
     ]);
   }
@@ -453,7 +451,7 @@ describe('ManagedMySqlTransactionExecutor', (): void => {
       SET_UTC,
       SET_READ_COMMITTED,
       START_TRANSACTION,
-      "SELECT DATE_FORMAT(CURRENT_TIMESTAMP(6), '%Y-%m-%dT%H:%i:%s.%fZ') AS writer_time, @@SESSION.time_zone AS time_zone, @@SESSION.transaction_isolation AS transaction_isolation",
+      'SELECT @@SESSION.time_zone AS time_zone, @@SESSION.transaction_isolation AS transaction_isolation',
       VALUE_SQL,
       COMMIT,
     ]);
@@ -471,12 +469,10 @@ describe('ManagedMySqlTransactionExecutor', (): void => {
     expect(observedContext).toBeDefined();
     expect(Object.isFrozen(observedContext)).toBe(true);
     expect(Reflect.ownKeys(observedContext ?? {})).toEqual([
-      'writerTime',
       'executeStatement',
       'requestCommit',
       'requestRollback',
     ]);
-    expect(observedContext?.writerTime).toBe(WRITER_TIME);
     expect(observedContext).not.toHaveProperty('query');
     expect(observedContext).not.toHaveProperty('commit');
     expect(observedContext).not.toHaveProperty('rollback');
@@ -585,12 +581,11 @@ describe('ManagedMySqlTransactionExecutor', (): void => {
 
   it('rolls back unavailable when the same-connection UTC or isolation assertion fails', async (): Promise<void> => {
     const connection = connectionHarness((sql, values) =>
-      isClockRead(sql)
+      isSessionCharacteristicsRead(sql)
         ? Promise.resolve([
             {
               transaction_isolation: 'REPEATABLE-READ',
               time_zone: '+00:00',
-              writer_time: WRITER_TIME,
             },
           ])
         : defaultQueryResult(sql, values),

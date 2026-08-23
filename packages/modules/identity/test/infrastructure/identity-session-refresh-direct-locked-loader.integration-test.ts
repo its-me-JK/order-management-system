@@ -103,7 +103,7 @@ const EXECUTION_WATCHDOG_TIMEOUT_MILLISECONDS = 6_000;
 const COORDINATION_TIMEOUT_MILLISECONDS = 10_000;
 const BLOCKER_TRANSACTION_TIMEOUT_MILLISECONDS = 20_000;
 const INTEGRATION_TEST_TIMEOUT_MILLISECONDS = 60_000;
-const ACCOUNT_LOCK_QUERY_OBSERVATION_ATTEMPTS = 150;
+const ACCOUNT_LOCK_QUERY_OBSERVATION_ATTEMPTS = 300;
 const ACCOUNT_LOCK_QUERY_OBSERVATION_INTERVAL_MILLISECONDS = 10;
 const ROTATION_SUCCESS_FIXTURE_INDEX = 85;
 const ROTATION_CREDENTIAL_COLLISION_FIXTURE_INDEX = 86;
@@ -114,6 +114,7 @@ const ROTATION_CONSTRAINT_TARGET_FIXTURE_INDEX = 90;
 const ROTATION_CONSTRAINT_ACCESS_TARGET_FIXTURE_INDEX = 97;
 const ROTATION_DEADLINE_FIXTURE_INDEX = 98;
 const ROTATION_DEADLINE_RECOVERY_FIXTURE_INDEX = 99;
+const ROTATION_COMPETING_FIXTURE_INDEX = 100;
 const FIXTURE_INDEXES = Object.freeze([
   81,
   82,
@@ -128,9 +129,16 @@ const FIXTURE_INDEXES = Object.freeze([
   ROTATION_CONSTRAINT_ACCESS_TARGET_FIXTURE_INDEX,
   ROTATION_DEADLINE_FIXTURE_INDEX,
   ROTATION_DEADLINE_RECOVERY_FIXTURE_INDEX,
+  ROTATION_COMPETING_FIXTURE_INDEX,
 ] as const);
 const ACCESS_WIRE_VALUE = parseIdentityAccessCredentialWireValue(`oms_at_v1_${'A'.repeat(42)}E`);
 const REFRESH_WIRE_VALUE = parseIdentityRefreshCredentialWireValue(`oms_rt_v1_${'E'.repeat(42)}M`);
+const COMPETING_ACCESS_WIRE_VALUE = parseIdentityAccessCredentialWireValue(
+  `oms_at_v1_${'B'.repeat(42)}E`,
+);
+const COMPETING_REFRESH_WIRE_VALUE = parseIdentityRefreshCredentialWireValue(
+  `oms_rt_v1_${'F'.repeat(42)}M`,
+);
 
 type StoredRefreshCredential = Readonly<{
   digest: IdentityRefreshCredentialDigest;
@@ -284,14 +292,12 @@ type UnexpectedRotationConstraintWrite = Readonly<{ kind: 'unexpected-write' }>;
 type LoadedProjection =
   | Readonly<{
       kind: 'not-found';
-      writerTime: IdentityInstant;
     }>
   | Readonly<{
       account: IdentityAccountSnapshot;
       kind: 'found';
       presentedRefreshCredential: IdentityRefreshCredentialSnapshot;
       sessionFamily: IdentitySessionFamilySnapshot;
-      writerTime: IdentityInstant;
     }>;
 
 type IntegrationContext = Readonly<{
@@ -314,6 +320,20 @@ type PreparedRotatedExecution = Readonly<{
   candidates: IdentitySessionCredentialCandidates;
   command: IdentitySessionRefreshCommand;
 }>;
+
+type RotationWireValues = Readonly<{
+  access: ReturnType<typeof parseIdentityAccessCredentialWireValue>;
+  refresh: ReturnType<typeof parseIdentityRefreshCredentialWireValue>;
+}>;
+
+const DEFAULT_ROTATION_WIRE_VALUES: RotationWireValues = Object.freeze({
+  access: ACCESS_WIRE_VALUE,
+  refresh: REFRESH_WIRE_VALUE,
+});
+const COMPETING_ROTATION_WIRE_VALUES: RotationWireValues = Object.freeze({
+  access: COMPETING_ACCESS_WIRE_VALUE,
+  refresh: COMPETING_REFRESH_WIRE_VALUE,
+});
 
 type ProcessListRow = Readonly<{
   db: string | null;
@@ -406,13 +426,22 @@ function observePromise<T>(promise: Promise<T>): Promise<PromiseOutcome<T>> {
   );
 }
 
-async function waitForProductionAccountLockQuery(client: PrismaClient): Promise<void> {
+function fulfilledPromiseValue<T>(outcome: PromiseOutcome<T>, operation: string): T {
+  if (outcome.kind === 'fulfilled') return outcome.value;
+  if (outcome.error instanceof Error) throw outcome.error;
+  throw new Error(`${operation} rejected with a non-Error value`);
+}
+
+async function waitForProductionAccountLockQueries(
+  client: PrismaClient,
+  expectedCount: number,
+): Promise<void> {
   for (let attempt = 0; attempt < ACCOUNT_LOCK_QUERY_OBSERVATION_ATTEMPTS; attempt += 1) {
     // Polling is observation only; the held row lock remains the causal blocker.
     const rows = await client.$queryRaw<readonly ProcessListRow[]>`
       SHOW FULL PROCESSLIST
     `;
-    const observed = rows.some((row): boolean => {
+    const observedCount = rows.filter((row): boolean => {
       if (row.db !== LOCKED_LOADER_INTEGRATION_DATABASE || typeof row.Info !== 'string') {
         return false;
       }
@@ -424,9 +453,9 @@ async function waitForProductionAccountLockQuery(client: PrismaClient): Promise<
         statement.includes('WHERE account.id = UUID_TO_BIN(') &&
         statement.endsWith('FOR UPDATE')
       );
-    });
+    }).length;
 
-    if (observed) {
+    if (observedCount === expectedCount) {
       return;
     }
 
@@ -435,7 +464,9 @@ async function waitForProductionAccountLockQuery(client: PrismaClient): Promise<
     });
   }
 
-  throw new Error('Production refresh Account lock was not observed before its deadline');
+  throw new Error(
+    `Expected ${String(expectedCount)} production refresh Account locks before the observation deadline`,
+  );
 }
 
 function fixtureUuid(index: number, discriminator: number): string {
@@ -820,6 +851,26 @@ async function createRotatedFixture(
   });
 }
 
+function competingRotatedFixture(fixture: RotatedFixture, index: number): RotatedFixture {
+  const accessDigestBytes = digestBytes(index + 101);
+  const refreshDigestBytes = digestBytes(index + 151);
+
+  return Object.freeze({
+    ...fixture,
+    accessCandidate: Object.freeze({
+      digest: createIdentityAccessCredentialDigestFromBytes(accessDigestBytes),
+      digestBytes: accessDigestBytes,
+    }),
+    decisionAccessCredentialId: fixtureUuid(index, 18),
+    decisionSuccessorCredentialId: fixtureUuid(index, 17),
+    eventId: parseIdentitySecurityEventId(fixtureUuid(index, 16)),
+    refreshCandidate: Object.freeze({
+      digest: createIdentityRefreshCredentialDigestFromBytes(refreshDigestBytes),
+      digestBytes: refreshDigestBytes,
+    }),
+  });
+}
+
 async function insertRotationFamilySequenceCollision(
   context: IntegrationContext,
   fixture: RotatedFixture,
@@ -968,7 +1019,10 @@ async function credentialAttempt(
   return createIdentitySessionCredentialAttempt(candidates, crypto);
 }
 
-async function rotatedCredentialAttempt(fixture: RotatedFixture): Promise<
+async function rotatedCredentialAttempt(
+  fixture: RotatedFixture,
+  wireValues: RotationWireValues = DEFAULT_ROTATION_WIRE_VALUES,
+): Promise<
   Readonly<{
     attempt: IdentitySessionCredentialAttempt;
     candidates: IdentitySessionCredentialCandidates;
@@ -976,11 +1030,11 @@ async function rotatedCredentialAttempt(fixture: RotatedFixture): Promise<
 > {
   const candidates = createIdentitySessionCredentialCandidates({
     access: {
-      wireValue: ACCESS_WIRE_VALUE,
+      wireValue: wireValues.access,
       digest: fixture.accessCandidate.digest,
     },
     refresh: {
-      wireValue: REFRESH_WIRE_VALUE,
+      wireValue: wireValues.refresh,
       digest: fixture.refreshCandidate.digest,
     },
   });
@@ -1186,12 +1240,9 @@ async function insertPreexistingRotationSecurityEvent(
   assert.equal(affectedRows, 1);
 }
 
-function projectLockedResult(
-  writerTime: IdentityInstant,
-  result: IdentitySessionRefreshLockedLoadResult,
-): LoadedProjection {
+function projectLockedResult(result: IdentitySessionRefreshLockedLoadResult): LoadedProjection {
   if (result.kind === 'not-found') {
-    return Object.freeze({ kind: 'not-found' as const, writerTime });
+    return Object.freeze({ kind: 'not-found' as const });
   }
 
   return Object.freeze({
@@ -1199,7 +1250,6 @@ function projectLockedResult(
     kind: 'found' as const,
     presentedRefreshCredential: result.presentedRefreshCredential.toSnapshot(),
     sessionFamily: result.sessionFamily.toSnapshot(),
-    writerTime,
   });
 }
 
@@ -1224,10 +1274,7 @@ function createDirectLockedLoadProgram(
       const workflow = createIdentitySessionRefreshWorkflow();
 
       try {
-        const transaction = activateIdentitySessionRefreshWorkflow(
-          workflow.controller,
-          context.writerTime,
-        );
+        const transaction = activateIdentitySessionRefreshWorkflow(workflow.controller);
         const loader = createMySqlIdentitySessionRefreshLockedLoader(
           client,
           context,
@@ -1236,7 +1283,7 @@ function createDirectLockedLoadProgram(
         );
         const result = await loader.loadForUpdate(transaction.scope, ticket);
 
-        return context.requestCommit(projectLockedResult(transaction.dbNow, result));
+        return context.requestCommit(projectLockedResult(result));
       } finally {
         closeIdentitySessionRefreshWorkflow(workflow.controller);
       }
@@ -1305,9 +1352,10 @@ async function executeRotated(
 async function prepareRotatedExecution(
   context: IntegrationContext,
   fixture: RotatedFixture,
+  wireValues: RotationWireValues = DEFAULT_ROTATION_WIRE_VALUES,
 ): Promise<PreparedRotatedExecution> {
   const ticket = await discoverTicket(context, fixture.credential);
-  const credentialAttemptFixture = await rotatedCredentialAttempt(fixture);
+  const credentialAttemptFixture = await rotatedCredentialAttempt(fixture, wireValues);
 
   return Object.freeze({
     candidates: credentialAttemptFixture.candidates,
@@ -1464,13 +1512,11 @@ void test(
             kind: 'found',
             presentedRefreshCredential: fixture.credential.snapshot,
             sessionFamily: fixture.sessionFamily,
-            writerTime: loaded.writerTime,
           });
           assert.equal(loaded.kind, 'found');
           assert.equal(loaded.account.version, 3);
           assert.equal(loaded.sessionFamily.version, 7);
           assert.equal(loaded.presentedRefreshCredential.sequence, 7);
-          assert.match(loaded.writerTime, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/u);
           assert.match(loaded.account.createdAt, /\.123456Z$/u);
           assert.match(loaded.sessionFamily.lastRotatedAt, /\.123456Z$/u);
           assert.match(loaded.presentedRefreshCredential.expiresAt, /\.123456Z$/u);
@@ -1492,8 +1538,7 @@ void test(
           const loaded = await executeDirectLockedLoad(integration, ticket);
 
           assert.equal(loaded.kind, 'not-found');
-          assert.deepEqual(Object.keys(loaded).sort(), ['kind', 'writerTime']);
-          assert.match(loaded.writerTime, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/u);
+          assert.deepEqual(Object.keys(loaded), ['kind']);
         },
       );
 
@@ -1789,7 +1834,7 @@ void test(
 
             try {
               await withTimeout(
-                waitForProductionAccountLockQuery(integration.client),
+                waitForProductionAccountLockQueries(integration.client, 1),
                 'Production refresh Account-lock observation',
                 EXECUTION_WATCHDOG_TIMEOUT_MILLISECONDS,
               );
@@ -1934,6 +1979,336 @@ void test(
             await readRotatedPersistenceSnapshot(integration, deadlineFixture),
             deadlineBefore,
           );
+        },
+      );
+
+      await testContext.test(
+        'serializes competing refreshes into one rotation and one committed reuse closure',
+        async () => {
+          const firstFixture = await createRotatedFixture(
+            integration,
+            ROTATION_COMPETING_FIXTURE_INDEX,
+          );
+          const secondFixture = competingRotatedFixture(
+            firstFixture,
+            ROTATION_COMPETING_FIXTURE_INDEX,
+          );
+          const competingContext = await openContext();
+
+          try {
+            const [firstPrepared, secondPrepared] = await Promise.all([
+              prepareRotatedExecution(integration, firstFixture),
+              prepareRotatedExecution(
+                competingContext,
+                secondFixture,
+                COMPETING_ROTATION_WIRE_VALUES,
+              ),
+            ]);
+            const accountLockAcquired = deferred();
+            const releaseAccountLock = deferred();
+            const blockerOutcome = observePromise(
+              integration.client.$transaction(
+                async (transaction): Promise<void> => {
+                  const rows = await transaction.$queryRaw<
+                    readonly Readonly<{ account_id: string }>[]
+                  >`
+                    SELECT LOWER(BIN_TO_UUID(id, 0)) AS account_id
+                    FROM identity_accounts FORCE INDEX (PRIMARY)
+                    WHERE id = UUID_TO_BIN(${firstFixture.account.id}, 0)
+                    LIMIT ${2}
+                    FOR UPDATE
+                  `;
+
+                  assert.deepEqual(rows, [{ account_id: firstFixture.account.id }]);
+                  accountLockAcquired.resolve();
+                  await releaseAccountLock.promise;
+                },
+                { timeout: BLOCKER_TRANSACTION_TIMEOUT_MILLISECONDS },
+              ),
+            );
+            let firstOperation: Promise<PromiseOutcome<IdentitySessionRefreshOutcome>> | undefined;
+            let secondOperation: Promise<PromiseOutcome<IdentitySessionRefreshOutcome>> | undefined;
+            let operationsJoined = false;
+            let blockerJoined = false;
+            let accountLockReleased = false;
+            let bodyFailure: unknown;
+            let cleanupFailure: unknown;
+
+            try {
+              await withTimeout(
+                Promise.race([
+                  accountLockAcquired.promise,
+                  blockerOutcome.then((settlement): never => {
+                    if (settlement.kind === 'rejected' && settlement.error instanceof Error) {
+                      throw settlement.error;
+                    }
+
+                    throw new Error('Competing-refresh blocker settled before lock acquisition');
+                  }),
+                ]),
+                'Competing-refresh Account-lock blocker acquisition',
+              );
+
+              firstOperation = observePromise(
+                integration.unitOfWork.execute(firstPrepared.command),
+              );
+              secondOperation = observePromise(
+                competingContext.unitOfWork.execute(secondPrepared.command),
+              );
+
+              try {
+                await withTimeout(
+                  waitForProductionAccountLockQueries(integration.client, 2),
+                  'Two production refresh Account-lock observations',
+                  EXECUTION_WATCHDOG_TIMEOUT_MILLISECONDS,
+                );
+              } catch (error: unknown) {
+                await withTimeout(
+                  Promise.all([firstOperation, secondOperation]),
+                  'Blocked competing-refresh operation retirement',
+                  EXECUTION_WATCHDOG_TIMEOUT_MILLISECONDS,
+                );
+                operationsJoined = true;
+                throw error;
+              }
+
+              releaseAccountLock.resolve();
+              accountLockReleased = true;
+              const [blockerSettlement, firstSettlement, secondSettlement] = await withTimeout(
+                Promise.all([blockerOutcome, firstOperation, secondOperation]),
+                'Competing-refresh settlement',
+                COORDINATION_TIMEOUT_MILLISECONDS,
+              );
+              blockerJoined = true;
+              operationsJoined = true;
+              fulfilledPromiseValue(blockerSettlement, 'Competing-refresh blocker');
+              const firstOutcome = fulfilledPromiseValue(
+                firstSettlement,
+                'First competing refresh',
+              );
+              const secondOutcome = fulfilledPromiseValue(
+                secondSettlement,
+                'Second competing refresh',
+              );
+
+              if (firstOutcome.kind !== 'committed' || secondOutcome.kind !== 'committed') {
+                throw new Error(
+                  `Expected two committed competing refreshes, received ${firstOutcome.kind}/${secondOutcome.kind}`,
+                );
+              }
+
+              const firstCompletion =
+                inspectIdentitySessionRefreshCommittedCompletion(firstOutcome);
+              const secondCompletion =
+                inspectIdentitySessionRefreshCommittedCompletion(secondOutcome);
+              const firstRotated = firstCompletion.evidence.kind === 'rotated';
+
+              assert.notEqual(firstCompletion.evidence.kind, secondCompletion.evidence.kind);
+              assert.deepEqual(
+                [firstCompletion.evidence.kind, secondCompletion.evidence.kind].sort(),
+                ['reuse-detected', 'rotated'],
+              );
+
+              const winnerCompletion = firstRotated ? firstCompletion : secondCompletion;
+              const winnerFixture = firstRotated ? firstFixture : secondFixture;
+              const winnerPrepared = firstRotated ? firstPrepared : secondPrepared;
+              const loserCompletion = firstRotated ? secondCompletion : firstCompletion;
+              const loserFixture = firstRotated ? secondFixture : firstFixture;
+              const loserPrepared = firstRotated ? secondPrepared : firstPrepared;
+
+              if (winnerCompletion.evidence.kind !== 'rotated') {
+                throw new Error('Expected the normalized competing-refresh winner to rotate');
+              }
+              assert.equal(loserCompletion.evidence.kind, 'reuse-detected');
+              assert.throws(
+                () =>
+                  createIdentitySessionRefreshCredentialDelivery(
+                    winnerCompletion,
+                    loserPrepared.candidates,
+                  ),
+                InvalidIdentitySessionRefreshCredentialDeliveryError,
+              );
+              const winnerDelivery = createIdentitySessionRefreshCredentialDelivery(
+                winnerCompletion,
+                winnerPrepared.candidates,
+              );
+
+              assert.equal(Object.isFrozen(winnerDelivery), true);
+              assert.deepEqual(Reflect.ownKeys(winnerDelivery), []);
+              assert.throws(
+                () =>
+                  createIdentitySessionRefreshCredentialDelivery(
+                    loserCompletion,
+                    loserPrepared.candidates,
+                  ),
+                InvalidIdentitySessionRefreshCredentialDeliveryError,
+              );
+
+              const winnerTime = winnerCompletion.evidence.accessCredentialIssuedAt;
+              const refreshIdleExpiresAt = offsetInstant(winnerTime, 900);
+              const accessExpiresAt = offsetInstant(winnerTime, 300);
+              const persisted = await readRotatedPersistenceSnapshot(integration, firstFixture);
+              const loserTime = persisted.family.revoked_at;
+
+              if (loserTime === null) {
+                throw new Error('Expected the competing-refresh loser to revoke the family');
+              }
+
+              assert.ok(loserTime >= winnerTime);
+              assert.deepEqual(persisted.family, {
+                absolute_expires_at: firstFixture.sessionFamily.refreshAbsoluteExpiresAt,
+                closed_reason: 'REFRESH_REUSE_DETECTED',
+                idle_expires_at: refreshIdleExpiresAt,
+                last_rotated_at: winnerTime,
+                revoked_at: loserTime,
+                session_id: firstFixture.sessionFamily.id,
+                version: 9n,
+              });
+              assert.deepEqual(persisted.credentials, {
+                access: [
+                  {
+                    credential_id: winnerFixture.decisionAccessCredentialId,
+                    digest_hex: digestHex(winnerFixture.accessCandidate.digestBytes),
+                    expires_at: accessExpiresAt,
+                    issued_at: winnerTime,
+                    sequence: 8n,
+                    session_id: firstFixture.sessionFamily.id,
+                  },
+                ],
+                refresh: [
+                  {
+                    active_slot: null,
+                    consumed_at: winnerTime,
+                    credential_id: firstFixture.credential.snapshot.id,
+                    digest_hex: digestHex(firstFixture.credential.digestBytes),
+                    expires_at: firstFixture.credential.snapshot.expiresAt,
+                    issued_at: firstFixture.credential.snapshot.issuedAt,
+                    sequence: 7n,
+                    session_id: firstFixture.sessionFamily.id,
+                    successor_id: winnerFixture.decisionSuccessorCredentialId,
+                  },
+                  {
+                    active_slot: 1,
+                    consumed_at: null,
+                    credential_id: winnerFixture.decisionSuccessorCredentialId,
+                    digest_hex: digestHex(winnerFixture.refreshCandidate.digestBytes),
+                    expires_at: refreshIdleExpiresAt,
+                    issued_at: winnerTime,
+                    sequence: 8n,
+                    session_id: firstFixture.sessionFamily.id,
+                    successor_id: null,
+                  },
+                ],
+              });
+              assert.equal(
+                persisted.credentials.access.some(
+                  (row) => row.credential_id === loserFixture.decisionAccessCredentialId,
+                ),
+                false,
+              );
+              assert.equal(
+                persisted.credentials.refresh.some(
+                  (row) => row.credential_id === loserFixture.decisionSuccessorCredentialId,
+                ),
+                false,
+              );
+
+              const winnerEvent = persisted.events.find(
+                (event) => event.event_id === winnerFixture.eventId,
+              );
+              const loserEvent = persisted.events.find(
+                (event) => event.event_id === loserFixture.eventId,
+              );
+
+              assert.equal(persisted.events.length, 2);
+              assert.deepEqual(winnerEvent, {
+                actor_account_id: firstFixture.account.id,
+                correlation_id: null,
+                event_id: winnerFixture.eventId,
+                event_type: 'SESSION_REFRESH',
+                occurred_at: winnerTime,
+                operator_reference: null,
+                outcome: 'SUCCEEDED',
+                permission_code: null,
+                reason_code: null,
+                request_id: null,
+                role_id: null,
+                session_id: firstFixture.sessionFamily.id,
+                subject_account_id: firstFixture.account.id,
+              });
+              assert.deepEqual(loserEvent, {
+                actor_account_id: null,
+                correlation_id: null,
+                event_id: loserFixture.eventId,
+                event_type: 'SESSION_REFRESH',
+                occurred_at: loserTime,
+                operator_reference: null,
+                outcome: 'REJECTED',
+                permission_code: null,
+                reason_code: 'REFRESH_REUSE_DETECTED',
+                request_id: null,
+                role_id: null,
+                session_id: firstFixture.sessionFamily.id,
+                subject_account_id: firstFixture.account.id,
+              });
+            } catch (error: unknown) {
+              bodyFailure = error;
+            } finally {
+              const startedOperations = [firstOperation, secondOperation].filter(
+                (operation): operation is Promise<PromiseOutcome<IdentitySessionRefreshOutcome>> =>
+                  operation !== undefined,
+              );
+
+              if (!accountLockReleased && !operationsJoined && startedOperations.length > 0) {
+                try {
+                  await withTimeout(
+                    Promise.all(startedOperations),
+                    'Blocked competing-refresh cleanup',
+                    EXECUTION_WATCHDOG_TIMEOUT_MILLISECONDS,
+                  );
+                  operationsJoined = true;
+                } catch (error: unknown) {
+                  cleanupFailure = error;
+                }
+              }
+
+              releaseAccountLock.resolve();
+              accountLockReleased = true;
+
+              if (!blockerJoined) {
+                try {
+                  await withTimeout(blockerOutcome, 'Competing-refresh blocker cleanup');
+                  blockerJoined = true;
+                } catch (error: unknown) {
+                  cleanupFailure ??= error;
+                }
+              }
+
+              if (!operationsJoined && startedOperations.length > 0) {
+                try {
+                  await withTimeout(
+                    Promise.all(startedOperations),
+                    'Competing-refresh operation cleanup',
+                    COORDINATION_TIMEOUT_MILLISECONDS,
+                  );
+                  operationsJoined = true;
+                } catch (error: unknown) {
+                  cleanupFailure ??= error;
+                }
+              }
+            }
+
+            if (bodyFailure !== undefined) {
+              if (bodyFailure instanceof Error) throw bodyFailure;
+              throw new Error('Competing-refresh proof failed with a non-Error value');
+            }
+            if (cleanupFailure !== undefined) {
+              if (cleanupFailure instanceof Error) throw cleanupFailure;
+              throw new Error('Competing-refresh cleanup failed with a non-Error value');
+            }
+          } finally {
+            await competingContext.runtime.close();
+          }
         },
       );
 

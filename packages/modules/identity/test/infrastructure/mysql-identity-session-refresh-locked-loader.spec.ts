@@ -25,6 +25,7 @@ import {
   decodeIdentitySessionRefreshLockedAccountMySqlRows,
   decodeIdentitySessionRefreshLockedPresentedCredentialMySqlRows,
   decodeIdentitySessionRefreshLockedSessionFamilyMySqlRows,
+  decodeIdentitySessionRefreshWriterTimeMySqlRows,
   IDENTITY_SESSION_REFRESH_LOCKED_LOAD_MYSQL_STATEMENTS,
   type IdentitySessionRefreshLockedLoadMySqlRowResult,
   type IdentitySessionRefreshLockedLoadMySqlStatement,
@@ -154,6 +155,10 @@ function refreshRow(overrides: Readonly<Record<string, unknown>> = {}): UnknownR
   };
 }
 
+function writerTimeRow(overrides: Readonly<Record<string, unknown>> = {}): UnknownRow {
+  return { writer_time: DB_NOW, ...overrides };
+}
+
 function withMariaDbMeta<Row>(rows: Row[]): Row[] {
   Object.defineProperty(rows, 'meta', {
     configurable: false,
@@ -196,6 +201,7 @@ function defaultResponses(): readonly StageResponse[] {
     raw(withMariaDbMeta([accountRow()])),
     raw(withMariaDbMeta([familyRow()])),
     raw(withMariaDbMeta([refreshRow()])),
+    raw(withMariaDbMeta([writerTimeRow()])),
   ];
 }
 
@@ -229,6 +235,9 @@ function decodeStatementResult(
   }
   if (statement === IDENTITY_SESSION_REFRESH_LOCKED_LOAD_MYSQL_STATEMENTS[2]) {
     return decodeIdentitySessionRefreshLockedPresentedCredentialMySqlRows.call(undefined, value);
+  }
+  if (statement === IDENTITY_SESSION_REFRESH_LOCKED_LOAD_MYSQL_STATEMENTS[3]) {
+    return decodeIdentitySessionRefreshWriterTimeMySqlRows.call(undefined, value);
   }
 
   throw new Error('Unexpected direct locked-loader statement identity');
@@ -288,7 +297,7 @@ async function loaderFixture(
   const discovery = createPrismaIdentitySessionRefreshDiscovery(writer.client);
   const ticket = await foundTicket(discovery, digest);
   const boundary = createIdentitySessionRefreshWorkflow();
-  const activated = activateIdentitySessionRefreshWorkflow(boundary.controller, DB_NOW);
+  const activated = activateIdentitySessionRefreshWorkflow(boundary.controller);
   const loader = createMySqlIdentitySessionRefreshLockedLoader(
     writer.client,
     context.context,
@@ -366,7 +375,7 @@ describe('direct MySQL Identity session refresh locked loader', (): void => {
     expect(fixture.context.calls.map(({ statement }) => statement)).toEqual(
       IDENTITY_SESSION_REFRESH_LOCKED_LOAD_MYSQL_STATEMENTS,
     );
-    expect(fixture.context.calls).toHaveLength(3);
+    expect(fixture.context.calls).toHaveLength(4);
     expect(fixture.context.calls[0]?.parameters).toEqual([ACCOUNT_ID]);
     expect(fixture.context.calls[1]?.parameters).toEqual([SESSION_ID, ACCOUNT_ID]);
     expect(fixture.context.calls[2]?.observedParameters).toEqual([
@@ -375,6 +384,7 @@ describe('direct MySQL Identity session refresh locked loader', (): void => {
       expectedDigest,
     ]);
     expect(fixture.context.calls[2]?.parameters.slice(0, 2)).toEqual([CREDENTIAL_ID, SESSION_ID]);
+    expect(fixture.context.calls[3]?.parameters).toEqual([]);
 
     const boundDigest = fixture.context.calls[2]?.parameters[2];
     expect(boundDigest).toBeInstanceOf(Uint8Array);
@@ -423,6 +433,7 @@ describe('direct MySQL Identity session refresh locked loader', (): void => {
       raw(withMariaDbMeta([accountRow()])),
       raw(withMariaDbMeta([familyRow()])),
       pending(credentialRows.promise),
+      raw(withMariaDbMeta([writerTimeRow()])),
     ]);
     const fixture = await loaderFixture(context);
     const expectedDigest = digestBytes();
@@ -451,18 +462,20 @@ describe('direct MySQL Identity session refresh locked loader', (): void => {
   it.each([0, 1, 2] as const)(
     'short-circuits with authentic not-found at lock stage %i',
     async (emptyStage): Promise<void> => {
-      const responses = [...defaultResponses()];
+      const responses = [...defaultResponses().slice(0, emptyStage + 1)];
       responses[emptyStage] = raw(withMariaDbMeta([]));
+      responses.push(raw(withMariaDbMeta([writerTimeRow()])));
       const context = contextFixture(responses);
       const fixture = await loaderFixture(context);
 
       await expect(fixture.loader.loadForUpdate(fixture.scope, fixture.ticket)).resolves.toEqual({
         kind: 'not-found',
       });
-      expect(context.executeStatement).toHaveBeenCalledTimes(emptyStage + 1);
-      expect(context.calls.map(({ statement }) => statement)).toEqual(
-        IDENTITY_SESSION_REFRESH_LOCKED_LOAD_MYSQL_STATEMENTS.slice(0, emptyStage + 1),
-      );
+      expect(context.executeStatement).toHaveBeenCalledTimes(emptyStage + 2);
+      expect(context.calls.map(({ statement }) => statement)).toEqual([
+        ...IDENTITY_SESSION_REFRESH_LOCKED_LOAD_MYSQL_STATEMENTS.slice(0, emptyStage + 1),
+        IDENTITY_SESSION_REFRESH_LOCKED_LOAD_MYSQL_STATEMENTS[3],
+      ]);
       if (emptyStage === 2) {
         expect([...(context.calls[2]?.parameters[2] as Uint8Array)]).toEqual(
           Array.from({ length: 32 }, () => 0),
@@ -614,13 +627,13 @@ describe('direct MySQL Identity session refresh locked loader', (): void => {
     [
       'mismatched Family relationship',
       1,
-      3,
+      4,
       (): unknown => familyRow({ session_account_id: OTHER_ACCOUNT_ID }),
     ],
     [
       'mismatched credential relationship',
       2,
-      3,
+      4,
       (): unknown => refreshRow({ refresh_family_id: OTHER_SESSION_ID }),
     ],
     ['invalid credential sequence', 2, 3, (): unknown => refreshRow({ refresh_sequence: 0 })],
@@ -629,6 +642,12 @@ describe('direct MySQL Identity session refresh locked loader', (): void => {
       2,
       3,
       (): unknown => refreshRow({ refresh_active_slot: null }),
+    ],
+    [
+      'invalid post-lock writer time',
+      3,
+      4,
+      (): unknown => writerTimeRow({ writer_time: 'writer-time-secret' }),
     ],
   ] as const)(
     'fails closed during mapping or rehydration for %s',
@@ -656,7 +675,7 @@ describe('direct MySQL Identity session refresh locked loader', (): void => {
     },
   );
 
-  it.each([0, 1, 2] as const)(
+  it.each([0, 1, 2, 3] as const)(
     'fails the workflow and hides an escaped statement failure at stage %i',
     async (failureStage): Promise<void> => {
       const providerSecret = 'vendor SQL and credential details';
@@ -675,7 +694,7 @@ describe('direct MySQL Identity session refresh locked loader', (): void => {
         [providerSecret],
       );
       expect(context.executeStatement).toHaveBeenCalledTimes(failureStage + 1);
-      if (failureStage === 2) {
+      if (failureStage >= 2) {
         expect([...(context.calls[2]?.parameters[2] as Uint8Array)]).toEqual(
           Array.from({ length: 32 }, () => 0),
         );
@@ -709,10 +728,7 @@ describe('direct MySQL Identity session refresh locked loader', (): void => {
   it('authenticates workflow scope and ticket identity before statements, then rejects replay', async (): Promise<void> => {
     const fixture = await loaderFixture();
     const foreignBoundary = createIdentitySessionRefreshWorkflow();
-    const foreignContext = activateIdentitySessionRefreshWorkflow(
-      foreignBoundary.controller,
-      DB_NOW,
-    );
+    const foreignContext = activateIdentitySessionRefreshWorkflow(foreignBoundary.controller);
     const foreignDiscovery = createPrismaIdentitySessionRefreshDiscovery(fixture.writer.client);
     const foreignTicket = await foundTicket(foreignDiscovery, refreshDigest(71));
 
@@ -736,7 +752,7 @@ describe('direct MySQL Identity session refresh locked loader', (): void => {
     await expect(
       fixture.loader.loadForUpdate(fixture.scope, fixture.ticket),
     ).rejects.toBeInstanceOf(InvalidIdentitySessionRefreshWorkflowError);
-    expect(fixture.context.executeStatement).toHaveBeenCalledTimes(3);
+    expect(fixture.context.executeStatement).toHaveBeenCalledTimes(4);
   });
 
   it('seals the private runtime and keeps it and statement identities out of package barrels', async (): Promise<void> => {
@@ -750,7 +766,7 @@ describe('direct MySQL Identity session refresh locked loader', (): void => {
     expect(typeof recoveredConstructor).toBe('function');
     expect(Object.isFrozen(recoveredConstructor)).toBe(true);
     expect(Object.isFrozen(IDENTITY_SESSION_REFRESH_LOCKED_LOAD_MYSQL_STATEMENTS)).toBe(true);
-    expect(new Set(IDENTITY_SESSION_REFRESH_LOCKED_LOAD_MYSQL_STATEMENTS).size).toBe(3);
+    expect(new Set(IDENTITY_SESSION_REFRESH_LOCKED_LOAD_MYSQL_STATEMENTS).size).toBe(4);
     for (const statement of IDENTITY_SESSION_REFRESH_LOCKED_LOAD_MYSQL_STATEMENTS) {
       expect(Object.isFrozen(statement)).toBe(true);
       expect(Reflect.ownKeys(statement)).toEqual([]);

@@ -124,6 +124,7 @@ type PreparedCommand = Readonly<{
   discoveryAuthority: IdentitySessionRefreshDiscoveryBoundaryAuthority;
   discoveryTicket: IdentitySessionRefreshDiscoveryFoundTicket;
   credentialAttempt: CredentialAttemptFixture;
+  dbNow: string;
 }>;
 
 function bytes(fill: number): Uint8Array<ArrayBuffer> {
@@ -213,7 +214,7 @@ async function prepareCommand(dbNow = ROTATED_AT): Promise<PreparedCommand> {
     commandInput(attempt.attempt, discovery.ticket),
   );
   const boundary = admitIdentitySessionRefreshCommand(command);
-  const context = activateIdentitySessionRefreshCommand(boundary.controller, dbNow);
+  const context = activateIdentitySessionRefreshCommand(boundary.controller);
 
   return Object.freeze({
     command,
@@ -222,6 +223,7 @@ async function prepareCommand(dbNow = ROTATED_AT): Promise<PreparedCommand> {
     discoveryAuthority: discovery.authority,
     discoveryTicket: discovery.ticket,
     credentialAttempt: attempt,
+    dbNow,
   });
 }
 
@@ -309,6 +311,7 @@ function transactionStore(
           ? completeIdentitySessionRefreshLockedLoadNotFound(
               prepared.boundary.controller,
               operation,
+              prepared.dbNow,
             )
           : completeIdentitySessionRefreshLockedLoadFound(
               prepared.boundary.controller,
@@ -316,6 +319,7 @@ function transactionStore(
               account(),
               sessionFamily(mode),
               refreshCredential(mode),
+              prepared.dbNow,
             );
 
       return Promise.resolve(result);
@@ -533,12 +537,12 @@ describe('Identity session refresh command', (): void => {
     expectCommandError(() => admitIdentitySessionRefreshCommand(structuredClone(command)));
     expectCommandError(() => admitIdentitySessionRefreshCommand(secondCommand));
 
-    const context = activateIdentitySessionRefreshCommand(boundary.controller, ROTATED_AT);
+    const context = activateIdentitySessionRefreshCommand(boundary.controller);
     expect(context.scope).toBe(boundary.scope);
     closeIdentitySessionRefreshCommand(boundary.controller);
   });
 
-  it('clears activation material and retires the claimed attempt after invalid writer time', async (): Promise<void> => {
+  it('binds transaction activation exactly once and retires the claimed attempt on close', async (): Promise<void> => {
     const attempt = await credentialAttempt();
     const firstDiscovery = discoveryTicket();
     const command = createIdentitySessionRefreshCommand(
@@ -546,10 +550,10 @@ describe('Identity session refresh command', (): void => {
     );
     const boundary = admitIdentitySessionRefreshCommand(command);
 
-    expectCommandError(
-      () => activateIdentitySessionRefreshCommand(boundary.controller, 'invalid-db-now-secret'),
-      ['invalid-db-now-secret'],
-    );
+    const context = activateIdentitySessionRefreshCommand(boundary.controller);
+
+    expect(context.scope).toBe(boundary.scope);
+    expectCommandError(() => activateIdentitySessionRefreshCommand(boundary.controller));
     expect(() => {
       closeIdentitySessionRefreshCommand(boundary.controller);
     }).not.toThrow();

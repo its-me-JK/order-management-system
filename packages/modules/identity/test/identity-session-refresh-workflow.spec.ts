@@ -220,8 +220,8 @@ function discoveryTicket(
 
 function activeWorkflow(dbNow: string = ROTATED_AT) {
   const boundary = createIdentitySessionRefreshWorkflow();
-  const context = activateIdentitySessionRefreshWorkflow(boundary.controller, dbNow);
-  return { boundary, context };
+  const context = activateIdentitySessionRefreshWorkflow(boundary.controller);
+  return { boundary, context, dbNow };
 }
 
 function beginLoad(dbNow: string = ROTATED_AT) {
@@ -249,6 +249,7 @@ function foundLoad(
     loadedAccount,
     loadedFamily,
     loadedCredential,
+    dbNow,
   );
   return {
     ...workflow,
@@ -262,7 +263,7 @@ function foundLoad(
 async function attemptBoundBeginLoad(dbNow: string = ROTATED_AT) {
   const credentialAttempt = await authenticCredentialAttempt();
   const boundary = createIdentitySessionRefreshAttemptBoundWorkflow(credentialAttempt.attempt);
-  const context = activateIdentitySessionRefreshWorkflow(boundary.controller, dbNow);
+  const context = activateIdentitySessionRefreshWorkflow(boundary.controller);
   const authority = createIdentitySessionRefreshDiscoveryBoundaryAuthority();
   const ticket = createIdentitySessionRefreshDiscoveryFoundTicket(authority, digest(), {
     accountId: ACCOUNT_ID,
@@ -276,7 +277,7 @@ async function attemptBoundBeginLoad(dbNow: string = ROTATED_AT) {
     ticket,
   );
 
-  return { ...credentialAttempt, boundary, context, authority, ticket, operation };
+  return { ...credentialAttempt, boundary, context, authority, ticket, operation, dbNow };
 }
 
 async function attemptBoundFoundLoad(
@@ -292,6 +293,7 @@ async function attemptBoundFoundLoad(
     loadedAccount,
     loadedFamily,
     loadedCredential,
+    dbNow,
   );
 
   return {
@@ -420,23 +422,34 @@ describe('Identity refresh workflow boundary', (): void => {
     expect(Object.isFrozen(boundary.controller)).toBe(true);
     expect(Object.isFrozen(boundary.scope)).toBe(true);
 
-    const context = activateIdentitySessionRefreshWorkflow(boundary.controller, ROTATED_AT);
-    expect(context).toEqual({ scope: boundary.scope, dbNow: ROTATED_AT });
-    expect(Reflect.ownKeys(context)).toEqual(['scope', 'dbNow']);
+    const context = activateIdentitySessionRefreshWorkflow(boundary.controller);
+    expect(context).toEqual({ scope: boundary.scope });
+    expect(Reflect.ownKeys(context)).toEqual(['scope']);
     expect(Object.isFrozen(context)).toBe(true);
-    expectFixedError(() => activateIdentitySessionRefreshWorkflow(boundary.controller, ROTATED_AT));
+    expectFixedError(() => activateIdentitySessionRefreshWorkflow(boundary.controller));
   });
 
-  it('fails an authentic invalid activation permanently while preserving the domain error', (): void => {
-    const boundary = createIdentitySessionRefreshWorkflow();
+  it('fails an authentic invalid post-lock writer time permanently while preserving the domain error', (): void => {
+    const workflow = beginLoad();
 
     expectFixedError(
-      () => activateIdentitySessionRefreshWorkflow(boundary.controller, 'writer-time-secret'),
+      () =>
+        completeIdentitySessionRefreshLockedLoadNotFound(
+          workflow.boundary.controller,
+          workflow.operation,
+          'writer-time-secret',
+        ),
       InvalidIdentityInstantError,
       'Expected a valid UTC Identity instant with exactly six fractional digits',
       ['writer-time-secret'],
     );
-    expectFixedError(() => activateIdentitySessionRefreshWorkflow(boundary.controller, ROTATED_AT));
+    expectFixedError(() =>
+      completeIdentitySessionRefreshLockedLoadNotFound(
+        workflow.boundary.controller,
+        workflow.operation,
+        ROTATED_AT,
+      ),
+    );
   });
 
   it('invalidates escaped context and scope capabilities before settlement', (): void => {
@@ -519,6 +532,7 @@ describe('Identity refresh locked-load registration', (): void => {
     const load = completeIdentitySessionRefreshLockedLoadNotFound(
       workflow.boundary.controller,
       workflow.operation,
+      workflow.dbNow,
     );
 
     expect(load).toEqual({ kind: 'not-found' });
@@ -528,6 +542,7 @@ describe('Identity refresh locked-load registration', (): void => {
       completeIdentitySessionRefreshLockedLoadNotFound(
         workflow.boundary.controller,
         workflow.operation,
+        workflow.dbNow,
       ),
     );
   });
@@ -541,18 +556,21 @@ describe('Identity refresh locked-load registration', (): void => {
       completeIdentitySessionRefreshLockedLoadNotFound(
         foreign.boundary.controller,
         rightful.operation,
+        rightful.dbNow,
       ),
     );
     expectFixedError(() =>
       completeIdentitySessionRefreshLockedLoadNotFound(
         rightful.boundary.controller,
         operationClone,
+        rightful.dbNow,
       ),
     );
     expect(
       completeIdentitySessionRefreshLockedLoadNotFound(
         rightful.boundary.controller,
         rightful.operation,
+        rightful.dbNow,
       ),
     ).toEqual({ kind: 'not-found' });
   });
@@ -611,12 +629,14 @@ describe('Identity refresh locked-load registration', (): void => {
           loadedAccount,
           loadedFamily,
           loadedCredential,
+          workflow.dbNow,
         ),
       );
       expectFixedError(() =>
         completeIdentitySessionRefreshLockedLoadNotFound(
           workflow.boundary.controller,
           workflow.operation,
+          workflow.dbNow,
         ),
       );
     },
@@ -633,6 +653,7 @@ describe('Identity refresh locked-load registration', (): void => {
         account(),
         sessionFamily(),
         refreshCredential(),
+        workflow.dbNow,
       ),
     );
   });
@@ -755,6 +776,7 @@ describe('Identity refresh one-decision workflow', (): void => {
     const load = completeIdentitySessionRefreshLockedLoadNotFound(
       workflow.boundary.controller,
       workflow.operation,
+      workflow.dbNow,
     );
     const revoked = Proxy.revocable(command(), {});
     revoked.revoke();
@@ -1027,9 +1049,7 @@ describe('Identity refresh pending transaction evidence', (): void => {
       ['raw-attempt-secret'],
     );
 
-    expect(activateIdentitySessionRefreshWorkflow(boundary.controller, ROTATED_AT).scope).toBe(
-      boundary.scope,
-    );
+    expect(activateIdentitySessionRefreshWorkflow(boundary.controller).scope).toBe(boundary.scope);
   });
 
   it('requires an attempt-bound workflow before any terminal evidence can be minted', (): void => {
@@ -1037,6 +1057,7 @@ describe('Identity refresh pending transaction evidence', (): void => {
     const load = completeIdentitySessionRefreshLockedLoadNotFound(
       workflow.boundary.controller,
       workflow.operation,
+      workflow.dbNow,
     );
     const decision = decideIdentitySessionRefresh(workflow.context, load, command());
     assertDecisionKind(decision, 'rejected');
@@ -1055,6 +1076,7 @@ describe('Identity refresh pending transaction evidence', (): void => {
     const load = completeIdentitySessionRefreshLockedLoadNotFound(
       workflow.boundary.controller,
       workflow.operation,
+      workflow.dbNow,
     );
     const decision = decideIdentitySessionRefresh(workflow.context, load, command());
     assertDecisionKind(decision, 'rejected');
@@ -1273,6 +1295,7 @@ describe('Identity refresh pending transaction evidence', (): void => {
     const foreignLoad = completeIdentitySessionRefreshLockedLoadNotFound(
       foreign.boundary.controller,
       foreign.operation,
+      foreign.dbNow,
     );
     const foreignDecision = decideIdentitySessionRefresh(foreign.context, foreignLoad, command());
     assertDecisionKind(foreignDecision, 'rejected');
@@ -1461,6 +1484,7 @@ describe('Identity refresh pending transaction evidence', (): void => {
     const load = completeIdentitySessionRefreshLockedLoadNotFound(
       workflow.boundary.controller,
       workflow.operation,
+      workflow.dbNow,
     );
     const decision = decideIdentitySessionRefresh(workflow.context, load, command());
     assertDecisionKind(decision, 'rejected');
@@ -1494,6 +1518,7 @@ describe('Identity refresh pending transaction evidence', (): void => {
     const load = completeIdentitySessionRefreshLockedLoadNotFound(
       workflow.boundary.controller,
       workflow.operation,
+      workflow.dbNow,
     );
     const decision = decideIdentitySessionRefresh(workflow.context, load, command());
     assertDecisionKind(decision, 'rejected');

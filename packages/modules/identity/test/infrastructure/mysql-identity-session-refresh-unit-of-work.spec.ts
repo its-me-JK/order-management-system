@@ -6,7 +6,6 @@ import type {
   AnyMySqlTransactionStatement,
   MySqlTransactionDirective,
   MySqlTransactionExecutor,
-  MySqlTransactionInstant,
   MySqlTransactionProgram,
   MySqlTransactionProgramContext,
   MySqlTransactionStatementResult,
@@ -51,7 +50,10 @@ import {
   type IdentityTransactionEvidence,
 } from '../../src/application/identity-session-refresh-workflow';
 import type * as RefreshWorkflowModule from '../../src/application/identity-session-refresh-workflow';
-import { IDENTITY_SESSION_REFRESH_LOCK_ACCOUNT_MYSQL_STATEMENT } from '../../src/infrastructure/mysql/identity-session-refresh-locked-load.statements';
+import {
+  IDENTITY_SESSION_REFRESH_LOCK_ACCOUNT_MYSQL_STATEMENT,
+  IDENTITY_SESSION_REFRESH_READ_WRITER_TIME_MYSQL_STATEMENT,
+} from '../../src/infrastructure/mysql/identity-session-refresh-locked-load.statements';
 import type { IdentitySessionRefreshMySqlTransactionFailure } from '../../src/infrastructure/mysql/identity-session-refresh-mysql.contract';
 import { createMySqlIdentitySessionRefreshUnitOfWork } from '../../src/infrastructure/mysql/mysql-identity-session-refresh-unit-of-work';
 import {
@@ -167,11 +169,15 @@ const PRESENTED_CREDENTIAL_ID = '01890f3a-8bcd-7def-8bcd-0123456789ab';
 const SUCCESSOR_CREDENTIAL_ID = '01890f3a-8bcd-7def-9bcd-0123456789ab';
 const ACCESS_CREDENTIAL_ID = '01890f3a-8bcd-7def-abcd-0123456789ab';
 const SECURITY_EVENT_ID = '01890f3a-8bcd-7def-8cde-0123456789ab';
-const WRITER_TIME = '2026-08-24T10:05:00.000002Z' as MySqlTransactionInstant;
+const WRITER_TIME = '2026-08-24T10:05:00.000002Z';
 const ACCESS_WIRE = `oms_at_v1_${'A'.repeat(42)}E`;
 const REFRESH_WIRE = `oms_rt_v1_${'E'.repeat(42)}M`;
 const TRANSACTION_OPTIONS = Object.freeze({ timeoutMilliseconds: 1_000 });
 const NOT_FOUND_STATEMENT_RESULT = Object.freeze({ kind: 'not-found' as const });
+const WRITER_TIME_STATEMENT_RESULT = Object.freeze({
+  kind: 'found' as const,
+  row: Object.freeze({ writer_time: WRITER_TIME }),
+});
 const FAKE_DIRECTIVE = Object.freeze({}) as MySqlTransactionDirective<
   IdentityTransactionEvidence,
   IdentitySessionRefreshMySqlTransactionFailure
@@ -293,14 +299,19 @@ function createRejectedProgramInvocation(
     IdentitySessionRefreshMySqlTransactionFailure,
     AnyMySqlTransactionStatement<IdentitySessionRefreshMySqlTransactionFailure>
   > = Object.freeze({
-    writerTime: WRITER_TIME,
     async executeStatement<
       Statement extends AnyMySqlTransactionStatement<IdentitySessionRefreshMySqlTransactionFailure>,
     >(statement: Statement): Promise<MySqlTransactionStatementResult<Statement>> {
       statementCallCount += 1;
-      expect(statement).toBe(IDENTITY_SESSION_REFRESH_LOCK_ACCOUNT_MYSQL_STATEMENT);
-      if (stalled) await statementGate;
-      return NOT_FOUND_STATEMENT_RESULT as MySqlTransactionStatementResult<Statement>;
+
+      if (statementCallCount === 1) {
+        expect(statement).toBe(IDENTITY_SESSION_REFRESH_LOCK_ACCOUNT_MYSQL_STATEMENT);
+        if (stalled) await statementGate;
+        return NOT_FOUND_STATEMENT_RESULT as MySqlTransactionStatementResult<Statement>;
+      }
+
+      expect(statement).toBe(IDENTITY_SESSION_REFRESH_READ_WRITER_TIME_MYSQL_STATEMENT);
+      return WRITER_TIME_STATEMENT_RESULT as MySqlTransactionStatementResult<Statement>;
     },
     requestCommit(
       evidence: IdentityTransactionEvidence,
@@ -351,7 +362,7 @@ beforeEach((): void => {
 });
 
 describe('MySQL Identity session refresh Unit of Work', (): void => {
-  it('constructs one fixed closed program over the twelve reviewed statements', async (): Promise<void> => {
+  it('constructs one fixed closed program over the thirteen reviewed statements', async (): Promise<void> => {
     const prepared = await fixture();
     const unitOfWork = createUnitOfWork(prepared);
     const fixedProgram = program();
@@ -374,8 +385,8 @@ describe('MySQL Identity session refresh Unit of Work', (): void => {
       'execution-defect',
     ]);
     expect(Object.isFrozen(fixedProgram.failures)).toBe(true);
-    expect(fixedProgram.statements).toHaveLength(12);
-    expect(new Set(fixedProgram.statements)).toHaveProperty('size', 12);
+    expect(fixedProgram.statements).toHaveLength(13);
+    expect(new Set(fixedProgram.statements)).toHaveProperty('size', 13);
     expect(fixedProgram.unavailableFailure).toBe('unavailable');
     expect(fixedProgram.defectFailure).toBe('execution-defect');
   });
@@ -386,7 +397,7 @@ describe('MySQL Identity session refresh Unit of Work', (): void => {
       const invocation = createRejectedProgramInvocation(programValue, input, false);
       await invocation.operation;
       events.push('program-settled');
-      expect(invocation.statementCalls()).toBe(1);
+      expect(invocation.statementCalls()).toBe(2);
       invokeObserver(programValue, input);
       events.push('program-observed');
       return Object.freeze({ kind: 'committed' as const, result: invocation.committedEvidence });

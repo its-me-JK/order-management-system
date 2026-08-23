@@ -4,6 +4,9 @@
 - **Date:** 2026-08-23
 - **Refines:** the direct-connection execution boundary accepted by
   [ADR-0018](0018-own-security-critical-mysql-connections.md)
+- **Partially superseded by:** [ADR-0020](0020-bind-transaction-clocks-at-causal-boundaries.md)
+  for the program-context writer clock, combined clock/session assertion, and
+  active-phase writer-time failure clauses
 
 ## Context
 

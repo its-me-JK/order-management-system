@@ -27,6 +27,7 @@ import {
 import { IdentityAccount } from '../../domain/identity-account';
 import { IdentityRefreshCredential } from '../../domain/identity-refresh-credential';
 import { IdentitySessionFamily } from '../../domain/identity-session-family';
+import { parseIdentityInstant, type IdentityInstant } from '../../domain/identity-values';
 import {
   inspectPrismaIdentitySessionRefreshDiscoveryAuthority,
   type IdentitySessionRefreshDiscoveryPrismaClient,
@@ -35,6 +36,7 @@ import {
   IDENTITY_SESSION_REFRESH_LOCK_ACCOUNT_MYSQL_STATEMENT,
   IDENTITY_SESSION_REFRESH_LOCK_PRESENTED_CREDENTIAL_MYSQL_STATEMENT,
   IDENTITY_SESSION_REFRESH_LOCK_SESSION_FAMILY_MYSQL_STATEMENT,
+  IDENTITY_SESSION_REFRESH_READ_WRITER_TIME_MYSQL_STATEMENT,
   type IdentitySessionRefreshLockedLoadMySqlRowResult,
   type IdentitySessionRefreshLockedLoadMySqlStatement,
 } from './identity-session-refresh-locked-load.statements';
@@ -70,6 +72,7 @@ const REFRESH_CREDENTIAL_ROW_KEYS = Object.freeze([
   'refresh_successor_id',
   'refresh_active_slot',
 ] as const);
+const WRITER_TIME_ROW_KEYS = Object.freeze(['writer_time'] as const);
 const NOT_FOUND_RESULT_KEYS = Object.freeze(['kind'] as const);
 const FOUND_RESULT_KEYS = Object.freeze(['kind', 'row'] as const);
 const MYSQL_UNSIGNED_INTEGER_MAX = 4_294_967_295;
@@ -370,12 +373,45 @@ async function executeStatement<Statement extends IdentitySessionRefreshLockedLo
   }
 }
 
-function completeNotFound(
+async function queryWriterTime(
   state: LockedLoaderState,
   operation: IdentitySessionRefreshLockedLoadOperation,
-): IdentitySessionRefreshLockedLoadResult {
+): Promise<IdentityInstant> {
+  const result = await executeStatement(
+    state,
+    operation,
+    IDENTITY_SESSION_REFRESH_READ_WRITER_TIME_MYSQL_STATEMENT,
+    [],
+  );
+  let row: UnknownRecord | null;
+
   try {
-    return completeIdentitySessionRefreshLockedLoadNotFound(state.controller, operation);
+    row = readDecodedRow(result, WRITER_TIME_ROW_KEYS);
+  } catch {
+    failPersistence(state, operation);
+  }
+
+  if (row === null) failPersistence(state, operation);
+
+  try {
+    return parseIdentityInstant(readDataProperty(row, 'writer_time'));
+  } catch {
+    failPersistence(state, operation);
+  }
+}
+
+async function completeNotFound(
+  state: LockedLoaderState,
+  operation: IdentitySessionRefreshLockedLoadOperation,
+): Promise<IdentitySessionRefreshLockedLoadResult> {
+  const writerTime = await queryWriterTime(state, operation);
+
+  try {
+    return completeIdentitySessionRefreshLockedLoadNotFound(
+      state.controller,
+      operation,
+      writerTime,
+    );
   } catch {
     failLoadBestEffort(state, operation);
     persistenceFailed();
@@ -498,6 +534,8 @@ class MySqlIdentitySessionRefreshLockedLoaderRuntime implements IdentitySessionR
       failPersistence(state, operation);
     }
 
+    const writerTime = await queryWriterTime(state, operation);
+
     try {
       return completeIdentitySessionRefreshLockedLoadFound(
         state.controller,
@@ -505,6 +543,7 @@ class MySqlIdentitySessionRefreshLockedLoaderRuntime implements IdentitySessionR
         account,
         sessionFamily,
         refreshCredential,
+        writerTime,
       );
     } catch {
       failLoadBestEffort(state, operation);

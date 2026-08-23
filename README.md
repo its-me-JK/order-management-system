@@ -86,14 +86,15 @@ JavaScript `Date` values. The discovery and loader both wipe their temporary
 digest copies and keep exact not-found, expected database unavailability, and
 persistence/integrity failure distinct. That Prisma loader remains a reference
 mapping and lock-invariant proof. A second private loader now executes the same
-three locks as opaque static prepared statements on the database executor's
+three locks plus one post-lock database clock read as opaque static prepared
+statements on the database executor's
 exact one-use connection. It strictly recognizes the pinned MariaDB result
 envelope without reading connector metadata, maps domain evidence only after
 statement settlement, and independently wipes its copied digest. No direct
 loader, statement, SQL, or transaction capability is added to an Identity
 package export.
 An isolated real-MySQL gate proves the DML-only application grant, exact
-three-statement trace and `PRIMARY`/`const` plans, retained consumed and expired
+three-lock-plus-clock trace and `PRIMARY`/`const` plans, retained consumed and expired
 lifecycle loads, six-digit projections, digest-drift not-found, and
 causal shared-Account first-lock contention on separate `READ-COMMITTED`
 transaction connections. The same guarded gate now runs the direct loader
@@ -158,10 +159,12 @@ even when `execute` already returned
 `indeterminate`. The observer receives only the original input and no result,
 error, transaction outcome, connection, SQL, or settlement authority.
 A concrete package-internal direct-MySQL refresh Unit of Work now captures one
-closed 12-statement program, requires the discovery adapter paired with the
+closed 13-statement program, requires the discovery adapter paired with the
 exact runtime-owned Prisma client, synchronously admits the opaque command, and
-composes the locked loader and both writers on the executor's one connection
-and writer time. Its module-owned start marker and the settlement observer form
+composes the locked loader and both writers on the executor's one connection.
+The loader binds one authoritative database time only after its last awaited
+row lock, so lock contention cannot make a stale transaction-start time fail
+chronology or extend credential validity. Its module-owned start marker and the settlement observer form
 a two-sided rendezvous with the independently returned database outcome. Only
 an acknowledged `COMMIT`, the exact returned evidence identity, and successful
 post-seal command close can promote the dormant completion. Proven non-commit
@@ -283,6 +286,9 @@ Significant decisions are recorded as Architecture Decision Records (ADRs):
 - [ADR-0015: Authenticate and authorize administrative APIs](docs/adr/0015-authenticate-and-authorize-administrative-apis.md)
 - [ADR-0016: Make retryable commands durably idempotent](docs/adr/0016-make-retryable-commands-durably-idempotent.md)
 - [ADR-0017: Use split browser session credentials](docs/adr/0017-use-split-browser-session-credentials.md)
+- [ADR-0018: Own connections for security-critical MySQL transactions](docs/adr/0018-own-security-critical-mysql-connections.md)
+- [ADR-0019: Seal exact-connection MySQL transaction programs](docs/adr/0019-seal-exact-connection-mysql-transaction-programs.md)
+- [ADR-0020: Bind transaction clocks at causal boundaries](docs/adr/0020-bind-transaction-clocks-at-causal-boundaries.md)
 
 The [ADR index](docs/adr/README.md) explains the lifecycle and format of these
 records.
@@ -409,7 +415,8 @@ semantics.
 The dedicated locked-loader command reuses one guarded disposable database for
 several sequential proofs. The Prisma reference suite establishes the global
 lock order, query plans, retained-lifecycle mapping, and causal Account contention;
-the direct read suite executes the same three locks as prepared statement tokens
+the direct read suite executes the same three locks plus one post-lock clock read
+as prepared statement tokens
 on the sealed executor's exact connection and proves the pinned connector
 result shape, numeric mapping, six-digit instants, and digest-drift not-found.
 The same runner invokes the production Unit of Work for the two-token reuse and
@@ -423,9 +430,14 @@ with one reserved direct connection. A bounded same-user process-list poll
 first observes the exact active production Account-lock query; the returned
 outcome then remains `indeterminate`, the original graph stays unchanged, its
 credential pair cannot mint delivery, and an independent rotation proves
-recovered execution capacity. These are transaction, completion, and
-delivery-denial proofs, not per-operation rollback injection, competing refresh,
-physical-session identity, or protocol-level commit-acknowledgement loss. The
+recovered execution capacity. A separate two-runtime case starts two authentic
+commands from the same predecessor, positively observes both production Account
+locks, and proves one winner-agnostic rotation followed by one committed reuse
+closure. Only the winner's generation persists, the family ends revoked, and
+only the exact winner completion/candidate pair can mint the opaque delivery
+capability. These are transaction, completion, and delivery-authority proofs,
+not per-operation rollback injection, physical-session identity, or
+protocol-level commit-acknowledgement loss. The
 runner drops and independently verifies both its database and temporary DML
 grant.
 The Catalog integration command verifies an initial-schema
@@ -478,7 +490,9 @@ Production and showcase configuration requires `DATABASE_TLS_MODE` to be
 certificate and hostname; there is no certificate-bypass option. The ownership
 and settlement rationale is recorded in
 [ADR-0018](docs/adr/0018-own-security-critical-mysql-connections.md) and
-[ADR-0019](docs/adr/0019-seal-exact-connection-mysql-transaction-programs.md).
+[ADR-0019](docs/adr/0019-seal-exact-connection-mysql-transaction-programs.md),
+with causal writer-time placement refined by
+[ADR-0020](docs/adr/0020-bind-transaction-clocks-at-causal-boundaries.md).
 
 Create a migration only after adding and reviewing a module-owned schema
 change:

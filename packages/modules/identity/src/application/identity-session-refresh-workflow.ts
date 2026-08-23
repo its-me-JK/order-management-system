@@ -145,7 +145,6 @@ export type IdentityTransactionScope = Readonly<{
 
 export type IdentityTransactionContext = Readonly<{
   scope: IdentityTransactionScope;
-  dbNow: IdentityInstant;
   readonly [identityTransactionContextBrand]: true;
 }>;
 
@@ -953,10 +952,9 @@ export function createIdentitySessionRefreshAttemptBoundWorkflow(
   }
 }
 
-/** Activates a provisional workflow only after the future adapter has BEGIN and writer time. */
+/** Activates a provisional workflow only after the future adapter has begun its transaction. */
 export function activateIdentitySessionRefreshWorkflow(
   controllerValue: IdentitySessionRefreshWorkflowController,
-  dbNowValue: unknown,
 ): IdentityTransactionContext {
   const state = stateForController(controllerValue);
 
@@ -964,19 +962,8 @@ export function activateIdentitySessionRefreshWorkflow(
     invalidWorkflow();
   }
 
-  state.phase = 'failed';
-  let dbNow: IdentityInstant;
-
-  try {
-    dbNow = parseIdentityInstant(dbNowValue);
-  } catch (error) {
-    clearWorkflowReferences(state);
-    throw error;
-  }
-
-  const context = capturedFreeze({ scope: state.scope, dbNow }) as IdentityTransactionContext;
+  const context = capturedFreeze({ scope: state.scope }) as IdentityTransactionContext;
   state.context = context;
-  state.dbNow = dbNow;
   state.phase = 'awaiting-load';
   contextStates.set(context, state);
 
@@ -1015,12 +1002,23 @@ export function beginIdentitySessionRefreshLockedLoad(
 export function completeIdentitySessionRefreshLockedLoadNotFound(
   controllerValue: IdentitySessionRefreshWorkflowController,
   operationValue: IdentitySessionRefreshLockedLoadOperation,
+  dbNowValue: unknown,
 ): IdentitySessionRefreshLockedNotFound {
   const state = authenticateActiveLoad(controllerValue, operationValue);
+  state.phase = 'failed';
+  let dbNow: IdentityInstant;
+
+  try {
+    dbNow = parseIdentityInstant(dbNowValue);
+  } catch (error) {
+    failWorkflow(state);
+    throw error;
+  }
   const result = capturedFreeze({
     kind: 'not-found' as const,
   }) as IdentitySessionRefreshLockedNotFound;
 
+  state.dbNow = dbNow;
   state.phase = 'loaded';
   loadRegistrations.delete(operationValue);
   state.activeLoad = undefined;
@@ -1036,6 +1034,7 @@ export function completeIdentitySessionRefreshLockedLoadFound(
   account: unknown,
   sessionFamily: unknown,
   presentedRefreshCredential: unknown,
+  dbNowValue: unknown,
 ): IdentitySessionRefreshLockedFound {
   const state = authenticateActiveLoad(controllerValue, operationValue);
   state.phase = 'failed';
@@ -1047,6 +1046,7 @@ export function completeIdentitySessionRefreshLockedLoadFound(
       sessionFamily,
       presentedRefreshCredential,
     );
+    const dbNow = parseIdentityInstant(dbNowValue);
     const result = capturedFreeze({
       kind: 'found' as const,
       account: locked.account,
@@ -1054,6 +1054,7 @@ export function completeIdentitySessionRefreshLockedLoadFound(
       presentedRefreshCredential: locked.presentedRefreshCredential,
     }) as IdentitySessionRefreshLockedFound;
 
+    state.dbNow = dbNow;
     state.phase = 'loaded';
     loadRegistrations.delete(operationValue);
     state.activeLoad = undefined;

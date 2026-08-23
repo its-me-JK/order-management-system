@@ -18,7 +18,6 @@ const mysqlTransactionContractTypeNames = [
   'MySqlTransactionDirective',
   'MySqlTransactionExecutor',
   'MySqlTransactionExecutorOptions',
-  'MySqlTransactionInstant',
   'MySqlTransactionOutcome',
   'MySqlTransactionParameter',
   'MySqlTransactionProgram',

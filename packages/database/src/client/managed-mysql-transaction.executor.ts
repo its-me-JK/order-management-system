@@ -13,7 +13,6 @@ import type {
   MySqlTransactionDirective,
   MySqlTransactionExecutor,
   MySqlTransactionExecutorOptions,
-  MySqlTransactionInstant,
   MySqlTransactionOutcome,
   MySqlTransactionProgram,
   MySqlTransactionProgramContext,
@@ -83,9 +82,8 @@ const capturedPromiseSpeciesGetter = promiseSpeciesDescriptor.get;
 const SET_UTC = "SET SESSION time_zone = '+00:00'";
 const SET_READ_COMMITTED = 'SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED';
 const START_TRANSACTION = 'START TRANSACTION READ WRITE';
-const READ_TRANSACTION_CLOCK = `
+const READ_TRANSACTION_CHARACTERISTICS = `
   SELECT
-    DATE_FORMAT(CURRENT_TIMESTAMP(6), '%Y-%m-%dT%H:%i:%s.%fZ') AS writer_time,
     @@SESSION.time_zone AS time_zone,
     @@SESSION.transaction_isolation AS transaction_isolation
 `;
@@ -159,10 +157,9 @@ type ManagedMySqlTransactionExecutorFactory = <
   options: MySqlTransactionExecutorOptions,
 ) => MySqlTransactionExecutor<Input, CommitResult, Failure>;
 
-interface TransactionClockRow {
+interface TransactionCharacteristicsRow {
   readonly transaction_isolation: unknown;
   readonly time_zone: unknown;
-  readonly writer_time: unknown;
 }
 
 const directiveRegistrations = new WeakMap<object, DirectiveRegistration<unknown, string>>();
@@ -506,84 +503,35 @@ function readProgram<
   };
 }
 
-function canonicalWriterTime(value: unknown): MySqlTransactionInstant | undefined {
-  if (typeof value !== 'string') return undefined;
-
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{6})Z$/u.exec(value);
-
-  if (match === null) return undefined;
-
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const hour = Number(match[4]);
-  const minute = Number(match[5]);
-  const second = Number(match[6]);
-  const microseconds = Number(match[7]);
-
-  if (
-    year < 1000 ||
-    year > 9999 ||
-    month < 1 ||
-    month > 12 ||
-    day < 1 ||
-    day > 31 ||
-    hour > 23 ||
-    minute > 59 ||
-    second > 59 ||
-    microseconds > 999_999
-  ) {
-    return undefined;
-  }
-
-  const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second, 0));
-
-  if (
-    date.getUTCFullYear() !== year ||
-    date.getUTCMonth() !== month - 1 ||
-    date.getUTCDate() !== day ||
-    date.getUTCHours() !== hour ||
-    date.getUTCMinutes() !== minute ||
-    date.getUTCSeconds() !== second
-  ) {
-    return undefined;
-  }
-
-  return value as MySqlTransactionInstant;
-}
-
-function readTransactionClock(value: unknown): MySqlTransactionInstant | undefined {
+function hasExpectedTransactionCharacteristics(value: unknown): boolean {
   try {
-    if (!capturedIsArray(value) || value.length !== 1) return undefined;
+    if (!capturedIsArray(value) || value.length !== 1) return false;
 
     const row: unknown = value[0];
 
-    if (!isPlainRecord(row)) return undefined;
+    if (!isPlainRecord(row)) return false;
 
     const keys = capturedOwnKeys(row);
 
     if (
-      keys.length !== 3 ||
-      !keys.includes('writer_time') ||
+      keys.length !== 2 ||
       !keys.includes('time_zone') ||
       !keys.includes('transaction_isolation')
     ) {
-      return undefined;
+      return false;
     }
 
-    const clockRow: TransactionClockRow = {
+    const characteristics: TransactionCharacteristicsRow = {
       transaction_isolation: ownDataValue(row, 'transaction_isolation'),
       time_zone: ownDataValue(row, 'time_zone'),
-      writer_time: ownDataValue(row, 'writer_time'),
     };
 
-    if (clockRow.time_zone !== '+00:00' || clockRow.transaction_isolation !== 'READ-COMMITTED') {
-      return undefined;
-    }
-
-    return canonicalWriterTime(clockRow.writer_time);
+    return (
+      characteristics.time_zone === '+00:00' &&
+      characteristics.transaction_isolation === 'READ-COMMITTED'
+    );
   } catch {
-    return undefined;
+    return false;
   }
 }
 
@@ -775,14 +723,20 @@ class ManagedMySqlTransactionExecutor<
       }
 
       state.phase = 'active';
-      const clock = await this.#control(state, deadline, READ_TRANSACTION_CLOCK);
-      const writerTime = clock.kind === 'fulfilled' ? readTransactionClock(clock.value) : undefined;
+      const characteristics = await this.#control(
+        state,
+        deadline,
+        READ_TRANSACTION_CHARACTERISTICS,
+      );
 
-      if (writerTime === undefined) {
+      if (
+        characteristics.kind !== 'fulfilled' ||
+        !hasExpectedTransactionCharacteristics(characteristics.value)
+      ) {
         return await this.#rollback(state, deadline, this.#unavailableOutcome);
       }
 
-      return await this.#runProgram(state, deadline, writerTime, input);
+      return await this.#runProgram(state, deadline, input);
     } finally {
       state.sessionStatus = 'sealed';
       deadline.close();
@@ -833,11 +787,10 @@ class ManagedMySqlTransactionExecutor<
   async #runProgram(
     state: ExecutionState<CommitResult, Failure>,
     deadline: TransactionDeadline,
-    writerTime: MySqlTransactionInstant,
     input: Input,
   ): Promise<MySqlTransactionOutcome<CommitResult, Failure>> {
     state.sessionStatus = 'active';
-    const context = this.#createProgramContext(state, deadline, writerTime);
+    const context = this.#createProgramContext(state, deadline);
     let operation: Promise<MySqlTransactionDirective<CommitResult, Failure>>;
 
     try {
@@ -984,10 +937,8 @@ class ManagedMySqlTransactionExecutor<
   #createProgramContext(
     state: ExecutionState<CommitResult, Failure>,
     deadline: TransactionDeadline,
-    writerTime: MySqlTransactionInstant,
   ): MySqlTransactionProgramContext<CommitResult, Failure, Statements> {
     return capturedFreeze({
-      writerTime,
       executeStatement: <Statement extends Statements>(
         statement: Statement,
         parameters: MySqlTransactionStatementParameters<Statement>,

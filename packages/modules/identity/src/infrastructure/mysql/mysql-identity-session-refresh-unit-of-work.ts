@@ -43,6 +43,7 @@ import {
 import {
   IDENTITY_SESSION_REFRESH_LOCK_ACCOUNT_MYSQL_STATEMENT,
   IDENTITY_SESSION_REFRESH_LOCK_PRESENTED_CREDENTIAL_MYSQL_STATEMENT,
+  IDENTITY_SESSION_REFRESH_READ_WRITER_TIME_MYSQL_STATEMENT,
   IDENTITY_SESSION_REFRESH_LOCK_SESSION_FAMILY_MYSQL_STATEMENT,
   type IdentitySessionRefreshLockedLoadMySqlStatement,
 } from './identity-session-refresh-locked-load.statements';
@@ -124,6 +125,7 @@ const PROGRAM_STATEMENTS: readonly IdentitySessionRefreshProgramMySqlStatement[]
   IDENTITY_SESSION_REFRESH_LOCK_ACCOUNT_MYSQL_STATEMENT,
   IDENTITY_SESSION_REFRESH_LOCK_SESSION_FAMILY_MYSQL_STATEMENT,
   IDENTITY_SESSION_REFRESH_LOCK_PRESENTED_CREDENTIAL_MYSQL_STATEMENT,
+  IDENTITY_SESSION_REFRESH_READ_WRITER_TIME_MYSQL_STATEMENT,
   IDENTITY_SESSION_REFRESH_CONSUME_PREDECESSOR_MYSQL_STATEMENT,
   IDENTITY_SESSION_REFRESH_INSERT_SUCCESSOR_REFRESH_CREDENTIAL_MYSQL_STATEMENT,
   IDENTITY_SESSION_REFRESH_INSERT_ACCESS_CREDENTIAL_MYSQL_STATEMENT,
@@ -352,7 +354,7 @@ async function runProgram(
   state.programPhase = 'running';
 
   try {
-    const transaction = activateRefreshCommand(state.controller, context.writerTime);
+    const transaction = activateRefreshCommand(state.controller);
     const store = createStore(client, discovery, context, state.controller);
     const evidence = await runRefreshCommand(state.controller, transaction, store);
 

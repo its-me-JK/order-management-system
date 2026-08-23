@@ -93,9 +93,8 @@ type IntegrationContext = Readonly<{
   runtime: DatabaseRuntime;
 }>;
 
-type TransactionClockRow = Readonly<{
+type TransactionMetadataRow = Readonly<{
   connection_id: bigint | number;
-  db_now: string;
   time_zone: string;
   transaction_isolation: string;
 }>;
@@ -573,16 +572,12 @@ async function discoverTicket(
   return result;
 }
 
-async function transactionClock(
+async function transactionMetadata(
   transaction: Prisma.TransactionClient,
-): Promise<Readonly<{ connectionId: string; dbNow: IdentityInstant }>> {
-  const rows = await transaction.$queryRaw<readonly TransactionClockRow[]>`
+): Promise<Readonly<{ connectionId: string }>> {
+  const rows = await transaction.$queryRaw<readonly TransactionMetadataRow[]>`
     SELECT
       CONNECTION_ID() AS connection_id,
-      DATE_FORMAT(
-        CURRENT_TIMESTAMP(6),
-        '%Y-%m-%dT%H:%i:%s.%fZ'
-      ) AS db_now,
       @@SESSION.time_zone AS time_zone,
       @@SESSION.transaction_isolation AS transaction_isolation
   `;
@@ -592,10 +587,7 @@ async function transactionClock(
   assert.equal(row.time_zone, '+00:00');
   assert.equal(row.transaction_isolation, 'READ-COMMITTED');
 
-  return Object.freeze({
-    connectionId: String(row.connection_id),
-    dbNow: parseIdentityInstant(row.db_now),
-  });
+  return Object.freeze({ connectionId: String(row.connection_id) });
 }
 
 function projectLockedResult(
@@ -628,15 +620,12 @@ async function executeLockedLoad(
 ): Promise<LoadedProjection> {
   return context.client.$transaction(
     async (transaction): Promise<LoadedProjection> => {
-      const clock = await transactionClock(transaction);
+      const metadata = await transactionMetadata(transaction);
 
       await hooks.prepareTransaction?.(transaction);
 
       const workflow = createIdentitySessionRefreshWorkflow();
-      const activeContext = activateIdentitySessionRefreshWorkflow(
-        workflow.controller,
-        clock.dbNow,
-      );
+      const activeContext = activateIdentitySessionRefreshWorkflow(workflow.controller);
       const loader = createPrismaIdentitySessionRefreshLockedLoader(
         context.client,
         tracedTransactionClient(transaction, hooks.statementTrace, hooks.rawFailureTrace),
@@ -645,9 +634,9 @@ async function executeLockedLoad(
       );
 
       try {
-        hooks.beforeLoad?.(clock.connectionId);
+        hooks.beforeLoad?.(metadata.connectionId);
         const result = await loader.loadForUpdate(activeContext.scope, ticket);
-        const projection = projectLockedResult(clock.connectionId, result);
+        const projection = projectLockedResult(metadata.connectionId, result);
 
         await hooks.afterLoad?.(projection);
 
@@ -799,10 +788,7 @@ async function assertRealOutageIsUnavailable(
     tls: { enabled: false },
   });
   const workflow = createIdentitySessionRefreshWorkflow();
-  const activeContext = activateIdentitySessionRefreshWorkflow(
-    workflow.controller,
-    context.fixtureNow,
-  );
+  const activeContext = activateIdentitySessionRefreshWorkflow(workflow.controller);
   const loader = createPrismaIdentitySessionRefreshLockedLoader(
     context.client,
     getPrismaClient(stalledRuntime),
@@ -860,7 +846,7 @@ void test(
           });
           assert.match(fixture.sessionFamily.createdAt, /\.123456Z$/u);
           assert.match(fixture.credential.snapshot.expiresAt, /\.123456Z$/u);
-          assert.equal(statementTrace.length, 3);
+          assert.equal(statementTrace.length, 4);
           assert.match(
             statementTrace[0] ?? '',
             /FROM identity_accounts AS account FORCE INDEX \(PRIMARY\).*FOR UPDATE/iu,
@@ -872,6 +858,10 @@ void test(
           assert.match(
             statementTrace[2] ?? '',
             /FROM identity_refresh_credentials AS refresh FORCE INDEX \(PRIMARY\).*refresh\.digest = \?.*FOR UPDATE/iu,
+          );
+          assert.equal(
+            statementTrace[3],
+            "SELECT DATE_FORMAT( UTC_TIMESTAMP(6), '%Y-%m-%dT%H:%i:%s.%fZ' ) AS writer_time",
           );
         },
       );
@@ -905,10 +895,17 @@ void test(
           `;
 
           assert.equal(changedRows, 1);
-          const loaded = await executeLockedLoad(integration, ticket);
+          const statementTrace: string[] = [];
+          const loaded = await executeLockedLoad(integration, ticket, { statementTrace });
 
           assert.equal(loaded.kind, 'not-found');
           assert.deepEqual(Object.keys(loaded).sort(), ['connectionId', 'kind']);
+          assert.equal(statementTrace.length, 4);
+          assert.match(statementTrace[2] ?? '', /FOR UPDATE/iu);
+          assert.equal(
+            statementTrace[3],
+            "SELECT DATE_FORMAT( UTC_TIMESTAMP(6), '%Y-%m-%dT%H:%i:%s.%fZ' ) AS writer_time",
+          );
         },
       );
 

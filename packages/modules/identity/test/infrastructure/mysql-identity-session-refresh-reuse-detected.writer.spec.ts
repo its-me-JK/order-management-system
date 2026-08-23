@@ -231,7 +231,7 @@ function reusedCredential(): IdentityRefreshCredential {
 async function writerFixture(context = contextFixture()): Promise<WriterFixture> {
   const attempt = await credentialAttempt();
   const boundary = createIdentitySessionRefreshAttemptBoundWorkflow(attempt);
-  const activated = activateIdentitySessionRefreshWorkflow(boundary.controller, REUSE_DETECTED_AT);
+  const activated = activateIdentitySessionRefreshWorkflow(boundary.controller);
   const authority = createIdentitySessionRefreshDiscoveryBoundaryAuthority();
   const discoveryDigest = createIdentityRefreshCredentialDigestFromBytes(bytes(23));
   const ticket = createIdentitySessionRefreshDiscoveryFoundTicket(authority, discoveryDigest, {
@@ -251,6 +251,7 @@ async function writerFixture(context = contextFixture()): Promise<WriterFixture>
     account(),
     sessionFamily(),
     reusedCredential(),
+    REUSE_DETECTED_AT,
   );
   const decision = decideIdentitySessionRefresh(
     activated,
@@ -473,10 +474,7 @@ describe('direct MySQL Identity refresh reuse-detected writer', (): void => {
     const fixture = await writerFixture();
     const foreignAttempt = await credentialAttempt();
     const foreignBoundary = createIdentitySessionRefreshAttemptBoundWorkflow(foreignAttempt);
-    const foreignContext = activateIdentitySessionRefreshWorkflow(
-      foreignBoundary.controller,
-      REUSE_DETECTED_AT,
-    );
+    const foreignContext = activateIdentitySessionRefreshWorkflow(foreignBoundary.controller);
 
     await expect(
       fixture.writer.persistReuseDetected(foreignContext.scope, fixture.input),

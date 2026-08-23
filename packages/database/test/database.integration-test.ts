@@ -16,7 +16,6 @@ import { createDatabaseRuntime } from '../src';
 import {
   createMySqlTransactionExecutor,
   defineMySqlTransactionStatement,
-  type MySqlTransactionInstant,
   type MySqlTransactionProgram,
 } from '../src/mysql-transaction';
 import { getPrismaClient } from '../src/prisma';
@@ -84,7 +83,7 @@ interface TransactionProbeInput {
 }
 
 interface TransactionProbeCommit {
-  readonly writerTime: MySqlTransactionInstant;
+  readonly writerTime: string;
 }
 
 interface TransactionProbeRow {
@@ -94,6 +93,41 @@ interface TransactionProbeRow {
   readonly status_changed_at: string;
   readonly updated_at: string;
 }
+
+const TRANSACTION_PROBE_WRITER_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/u;
+
+const readTransactionProbeWriterTime = defineMySqlTransactionStatement<
+  readonly [],
+  string,
+  TransactionProbeFailure
+>({
+  decode(value): string {
+    if (!Array.isArray(value) || value.length !== 1) {
+      throw new TypeError('Unexpected transaction probe writer-time result');
+    }
+
+    const row: unknown = value[0];
+
+    if (typeof row !== 'object' || row === null || Array.isArray(row)) {
+      throw new TypeError('Unexpected transaction probe writer-time row');
+    }
+
+    const writerTime: unknown = (row as Readonly<Record<string, unknown>>)['writer_time'];
+
+    if (typeof writerTime !== 'string' || !TRANSACTION_PROBE_WRITER_TIME_PATTERN.test(writerTime)) {
+      throw new TypeError('Unexpected transaction probe writer time');
+    }
+
+    return writerTime;
+  },
+  parameterCount: 0,
+  text: `
+    SELECT DATE_FORMAT(
+      CURRENT_TIMESTAMP(6),
+      '%Y-%m-%dT%H:%i:%s.%fZ'
+    ) AS writer_time
+  `,
+});
 
 const insertTransactionProbe = defineMySqlTransactionStatement<
   readonly [Uint8Array, string, string, string, string, string],
@@ -132,25 +166,27 @@ const transactionProbeProgram: MySqlTransactionProgram<
   TransactionProbeInput,
   TransactionProbeCommit,
   TransactionProbeFailure,
-  typeof insertTransactionProbe
+  typeof readTransactionProbeWriterTime | typeof insertTransactionProbe
 > = Object.freeze({
   defectFailure: 'defect',
   failures: Object.freeze(['collision', 'defect', 'requested', 'unavailable'] as const),
   async run(context, input) {
+    const writerTime = await context.executeStatement(readTransactionProbeWriterTime, []);
+
     await context.executeStatement(insertTransactionProbe, [
       input.id,
       input.name,
       'DRAFT',
-      context.writerTime,
-      context.writerTime,
-      context.writerTime,
+      writerTime,
+      writerTime,
+      writerTime,
     ]);
 
     return input.disposition === 'commit'
-      ? context.requestCommit(Object.freeze({ writerTime: context.writerTime }))
+      ? context.requestCommit(Object.freeze({ writerTime }))
       : context.requestRollback('requested');
   },
-  statements: Object.freeze([insertTransactionProbe]),
+  statements: Object.freeze([readTransactionProbeWriterTime, insertTransactionProbe]),
   unavailableFailure: 'unavailable',
 });
 

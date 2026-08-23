@@ -741,7 +741,9 @@ weaker rule that a successor implies consumption; the domain and Unit of Work
 require the final pair and access record, assert every affected-row count, and
 roll back every intermediate state on failure. Login similarly inserts family,
 initial refresh, then initial access. Real-MySQL failure-injection and
-two-refresh race tests are mandatory before any use case is exported.
+two-refresh race tests are mandatory before any use case is exported. The
+guarded suite now supplies the healthy competing-refresh race; exhaustive
+per-operation rollback injection remains open.
 
 A definite primary-key, digest, or successor collision during insertion also
 rolls back the complete transaction and discards every raw candidate. The
@@ -1156,14 +1158,22 @@ only committed, proven-non-committed, or indeterminate settlement. It does not
 implement Identity policy, rotation/reuse writers, security-event mapping,
 completion promotion, or credential delivery.
 
+[ADR-0020](../adr/0020-bind-transaction-clocks-at-causal-boundaries.md)
+partially supersedes ADR-0019's ambient writer-clock clauses: generic session
+attestation remains executor-owned, while each timestamped program reads time
+only at its reviewed causal boundary.
+
 The sixth prerequisite increment is the package-internal direct-MySQL locked
 loader and is delivered. It consumes the existing discovery ticket, then uses
 the executor-owned statement capability for three static prepared primary-key
 locks in the exact Account, SessionFamily, presented RefreshCredential order.
-The adapter receives neither a raw connection nor commit, rollback, deadline,
-or writer-time authority. Its statement identities and factory have no Identity
-barrel or package export; the Prisma loader remains only a reference mapping and
-lock-invariant proof.
+After the last awaited lock, one fourth allowlisted statement reads
+`UTC_TIMESTAMP(6)` and locked-load completion binds that exact value as the
+workflow's mutation time. The adapter receives neither a raw connection nor
+arbitrary query, commit, rollback, deadline, or clock-selection authority. Its
+statement identities and factory have no Identity barrel or package export;
+the Prisma loader remains the reference mapping and lock-invariant proof and
+uses the same post-lock clock rule.
 
 The direct MariaDB contract is explicit. A SELECT result must be a real array
 with only its indices, `length`, and the connector's own non-enumerable `meta`
@@ -1222,13 +1232,14 @@ The ninth executable increment is the package-internal direct-MySQL Unit of
 Work and is delivered. Its factory recovers the Prisma client owned by one
 authentic `DatabaseRuntime`, requires the supplied discovery capability to be
 paired with that exact client, and captures one executor program containing the
-12 reviewed lock, rotation, authority, event, and reuse statement tokens. It
+13 reviewed lock, post-lock-clock, rotation, authority, event, and reuse
+statement tokens. It
 adds no Identity root export or infrastructure package subpath. `execute`
 synchronously admits the opaque command before invoking the executor once. The
-fixed program activates that command with the executor's one writer time and
-composes the direct locked loader and both writers through its one statement
-context; callers cannot choose a callback, statement, branch, retry, or
-settlement.
+fixed program activates the command after `BEGIN`, then composes the direct
+locked loader and both writers through one statement context. The loader binds
+writer time only after its final awaited lock; callers cannot choose a callback,
+clock read, statement, branch, retry, or settlement.
 
 One private per-execution record joins the database outcome with program-side
 settlement. The synchronous start marker proves when the fixed program never
@@ -1297,22 +1308,26 @@ For this refresh slice, `IdentitySessionRefreshUnitOfWork.execute` accepts one a
 closed refresh command as its exact admission and invokes its fixed,
 package-owned asynchronous orchestration at most once. Synchronous command
 admission claims the command's verified credential attempt before the first
-await; the Unit of Work then begins the transaction, reads writer time,
-activates the admitted command, and runs it once. This is not an
+await; the Unit of Work then begins the transaction, activates the admitted
+command, and runs it once. The locked loader acquires Account, SessionFamily,
+and presented-credential locks before its fourth static statement reads writer
+time; locked-load completion validates and privately binds that value before
+the one decision. This is not an
 externally supplied plugin callback: validating its return value could not
 prevent hostile callback code from leaking credentials through side effects.
-The Unit of Work invokes database orchestration only after `BEGIN`, a valid
-writer-owned `dbNow`, and an active context have all been established. The
-orchestration receives one exact frozen context containing:
+The Unit of Work invokes database orchestration only after `BEGIN` and an active
+context have been established. The orchestration receives one exact frozen
+context containing:
 
 | Field | Contract |
 | --- | --- |
 | `scope` | Opaque nominal capability identifying only this active transaction. It has no query, commit, rollback, retry, serialization, or client method. |
-| `dbNow` | The one lossless `IdentityInstant` read with `CURRENT_TIMESTAMP(6)` from the writer after `BEGIN`; every domain decision in the callback uses this value. |
 
-The internal context factory copies and validates `dbNow`, authenticates the
-scope by identity rather than `instanceof` or a structural brand, and freezes
-both values. The concrete adapter invalidates the scope immediately when the
+The internal context factory authenticates the scope by identity rather than
+`instanceof` or a structural brand and freezes it. The exact post-lock clock
+row is not exposed on that context: locked-load completion parses one lossless
+`IdentityInstant`, binds it to the same workflow registration, and every domain
+decision and write uses it. The concrete adapter invalidates the scope immediately when the
 callback settles and before it begins `COMMIT` or rollback handling. A retained,
 forged, cloned, proxied, foreign-transaction, or already-closed scope must fail
 before another database operation. Nested transactions, concurrent operations
@@ -1329,8 +1344,9 @@ The adapter mints a provisional scope before `BEGIN` solely so a private
 run-controller capability can win the credential-attempt claim. The
 controller, not the callback-visible scope, owns claim inspection, retirement,
 and commit-promotion invocation; neither it nor the provisional scope is exposed to
-orchestration before activation. Only confirmed `BEGIN` plus the one valid
-writer time activates the context. A scoped operation synchronously acquires a
+orchestration before activation. Only confirmed `BEGIN` activates the context;
+the decision remains unavailable until locked-load completion has bound one
+valid post-lock writer time. A scoped operation synchronously acquires a
 one-shot lease before its first SQL statement, and at most one lease may be
 outstanding. It settles only after the actual driver Promise settles. An
 outstanding lease when orchestration settles is a contract failure even if it
@@ -1362,7 +1378,7 @@ DML.
 
 A package-internal decision function is the only production caller of
 `presentRefreshCredential`. It accepts that registered load result, uses the
-scope's `dbNow` as `occurredAt`, passes the exact loaded objects to the domain,
+workflow-bound post-lock `dbNow` as `occurredAt`, passes the exact loaded objects to the domain,
 preserves the domain's conditional issuance-input read order, validates the
 returned basis and every occurrence-derived instant, and registers the result
 to that scope. The callback-visible decision is a frozen thin capability
@@ -1680,13 +1696,13 @@ security order.
 
 The locked reads remain lifecycle-blind. They load suspended or deactivated
 Accounts, expired or revoked families, and consumed or expired presented
-credentials so the domain, using the transaction's one future `dbNow`, can
+credentials so the domain, using the transaction's one post-lock `dbNow`, can
 distinguish ordinary rejection from retained replay evidence. No query loads a
 credential history, AccessCredential, role, permission, event, or successor
-aggregate. Exact absence at any stage completes the authentic workflow as
-`not-found` and performs no further query or DML. That result covers deletion
-or relationship/digest drift between preliminary discovery and locking; it is
-never authority to issue a credential.
+aggregate. Exact absence at any stage is followed only by the same authoritative
+clock read, then completes the authentic workflow as `not-found` without DML.
+That result covers deletion or relationship/digest drift between preliminary
+discovery and locking; it is never authority to issue a credential.
 
 All persisted `DATETIME(6)` columns are projected with `DATE_FORMAT` directly
 to canonical `YYYY-MM-DDTHH:mm:ss.ffffffZ` strings. Prisma's MariaDB adapter
@@ -1721,12 +1737,13 @@ ambiguity; those classifications belong to the delivered scoped writers and
 concrete Unit of Work.
 
 This is intentionally not the Unit of Work. The loader neither starts nor
-settles a transaction, reads writer time, tracks or cancels concurrent scoped
-operations, decides lifecycle, performs DML, appends an event, classifies a
+settles a transaction, chooses arbitrary clock SQL, tracks or cancels concurrent
+scoped operations, decides lifecycle, performs DML, appends an event, classifies a
 write conflict, retries, commits, rolls back, or authorizes credential
-delivery. It assumes an already-active transaction and gives the concrete Unit
-of Work only the narrow locked-load mechanism that the application workflow
-can authenticate. Landing the complete writer and commit protocol in that same
+delivery. It assumes an already-active transaction and owns only the reviewed
+post-lock clock token needed to complete that authenticated load. The concrete
+Unit of Work still owns the surrounding execution and settlement. Landing the
+complete writer and commit protocol in that same
 earlier change would have mixed deterministic row mapping with rollback injection,
 constraint allowlisting, ambiguous commit, and secret-delivery authority,
 making failures harder to localize and review.
@@ -1866,7 +1883,8 @@ The isolated
 `pnpm test:integration:identity-refresh-locked-loader` real-MySQL gate proves
 the DML-only application grant and executes exactly three locking statements in
 Account, SessionFamily, RefreshCredential order, each with
-`FORCE INDEX (PRIMARY)` and `FOR UPDATE`. It confirms `PRIMARY`/`const` plans
+`FORCE INDEX (PRIMARY)` and `FOR UPDATE`, followed by one exact post-lock clock
+read. It confirms `PRIMARY`/`const` plans
 with `EXPLAIN`; exact `.123456` `DATETIME(6)` rehydration; current and retained
 consumed, expired, revoked, closed, and inactive state; and digest drift
 becoming locked not-found. Two asserted `READ-COMMITTED` interactive
@@ -1881,7 +1899,7 @@ settle the first transaction.
 
 The same guarded command also runs the private direct loader inside fixed
 database-executor programs. Its read-only cases prove that all three lock
-tokens execute through server-prepared binding on the exact transaction
+tokens and the post-lock clock token execute through server-prepared binding on the exact transaction
 connection, direct unsigned integers map without Prisma normalization,
 `.123456` instants survive, and a post-discovery digest change commits as
 locked not-found. Its reuse cases now invoke the production Unit of Work, which
@@ -1940,27 +1958,35 @@ independent rotation after the reserved capacity recovers. The focused
 Unit-of-Work suite separately proves that controlled post-deadline program
 settlement closes and revokes application authority; that observer is not
 database commit proof. Together these suites also prove successful rotation DML,
-natural constraint/event rollback, and real-commit completion promotion. They
-do not claim injected rollback after every operation, physical MySQL session
-identity in the Identity test, protocol-level commit-acknowledgement loss, or a
-competing-refresh transaction race.
+natural constraint/event rollback, and real-commit completion promotion. A
+second one-slot runtime supplies a separate authentic command from the same
+retained predecessor. While an external Account lock is held, the suite
+positively observes both production Account-lock statements. After release,
+winner identity is normalized from committed evidence rather than launch order:
+exactly one command rotates, the other reloads the consumed predecessor and
+commits reuse revocation, only the winner's successor/access generation is
+durable, and only the exact winner completion/candidate pair can mint delivery.
+The final family is revoked, so this does not claim that those credentials
+remain usable. These suites do not claim injected rollback after every
+operation, physical MySQL session identity in the Identity test, or
+protocol-level commit-acknowledgement loss.
 
 The concrete adapter now turns the previously dormant exact-attempt binding
 into database-gated promotion or revocation. Focused adversarial tests prove one
-closed 12-token program, synchronous admission, exact-evidence promotion after
+closed 13-token program, synchronous admission, exact-evidence promotion after
 program close and acknowledged commit, the three allowed no-start non-commit
 mappings, cause-free execution defects, accessor-backed and mismatched outcome
 rejection, unexpected executor rejection, failed-close and failed-transition
 quarantine, late-observer retirement, runtime/discovery pairing, and package
 surface isolation. The executor remains the only owner of one connection,
-writer time, operation drain, deadline, rollback, and commit ambiguity; the
-Identity adapter neither retries nor treats its observer as commit proof.
+operation drain, deadline, rollback, and commit ambiguity; the fixed Identity
+loader owns only its static post-lock writer-time statement. The Identity Unit
+of Work neither retries nor treats its observer as commit proof.
 
 The remaining transaction proof matrix is deliberately narrower than the
 delivered implementation. It must inject rollback after every participating
 operation, exercise escaped-scope attempts through the production composition,
-prove competing refresh behavior against real MySQL, and simulate
-protocol-level commit-acknowledgement loss. Focused application tests now prove
+and simulate protocol-level commit-acknowledgement loss. Focused application tests now prove
 the delivery gate's exact completion-to-attempt-to-pair authority, one-shot
 consumption, uniform rejection, and redaction. Future channel sinks and
 transport tests must separately prove that each credential is disclosed only
@@ -1985,6 +2011,16 @@ JavaScript `Date` would reduce raw mapping code but discard microseconds; the
 canonical formatted-string projection preserves the already accepted domain
 contract.
 
+Sampling mutation time immediately after `BEGIN` is also rejected. It saves
+one post-lock round trip, but a waiting transaction can then reload a family
+whose `lastRotatedAt` is later than its stale sample; weakening chronology or
+clamping that sample would hide clock and expiry defects. The generic executor
+therefore attests only UTC and `READ-COMMITTED` before invoking a program and
+exposes no ambient writer time. Each timestamped program must declare an opaque
+static clock statement at its causal write boundary. Refresh pays one local
+round trip after its final lock in exchange for correct expiry evaluation and
+arbitrary-winner replay closure under contention.
+
 The tempting evidence alternative is `execute<T>(callback): Promise<T>` or a
 plain persistence DTO. It is shorter, but it permits a callback to return a raw
 credential or structurally forged result and cannot prove scope, decision, or
@@ -1999,8 +2035,8 @@ the exact attempt binding for the later one-shot delivery exchange. That
 retained registration grants neither SQL nor raw credential access. The
 remaining improvements are channel-specific access-response and refresh-cookie
 sinks plus the real-MySQL fault matrix for the delivered Unit of Work:
-per-operation rollback injection, competing refresh, escaped scope, and
-protocol-level commit-acknowledgement loss.
+per-operation rollback injection, escaped scope, and protocol-level
+commit-acknowledgement loss.
 
 ## Credential and password representation
 
@@ -2370,9 +2406,10 @@ transaction `dbNow` and retain microsecond database precision.
 
 Identity never uses an API replica's wall clock for a credential, cooldown,
 session, or retention decision. Every Identity write transaction selects one
-`CURRENT_TIMESTAMP(6)` value from the MySQL writer after the transaction begins
-and names it `dbNow`; every deadline comparison and derived timestamp in that
-transaction uses that immutable value. The single-statement Bearer authority
+`UTC_TIMESTAMP(6)` value from the MySQL writer at its reviewed causal write
+boundary and names it `dbNow`; every deadline comparison and derived timestamp
+in that transaction uses that immutable value. Refresh selects it only after
+the Account, family, and presented-credential locks. The single-statement Bearer authority
 query and each cleanup batch similarly select the database time once in a
 one-row derived table and join against it. Issued responses calculate
 `expiresInSeconds` only from persisted `issuedAt`/`expiresAt` values derived
@@ -3027,7 +3064,7 @@ registry, direct reuse writer, shared authority projection mapper, and private
 same-connection rotation-authority statement are also delivered. The private
 direct rotation writer now composes the five graph mutations, authority read,
 and successful event on that connection. The concrete package-internal
-direct-MySQL Unit of Work now captures all 12 statement tokens, pairs discovery
+direct-MySQL Unit of Work now captures all 13 statement tokens, pairs discovery
 with the exact runtime, composes those stores on one executor connection, maps
 the closed database outcomes, promotes exact evidence only after acknowledged
 commit and program close, and implements the Identity-owned two-sided command
@@ -3323,8 +3360,9 @@ public authentication surface.
     all six digits for chronology, replay, and later conditional writes without
     introducing a second time representation.
 37. **Why is the locked loader not already a Unit of Work?** Locking and strict
-    rehydration prove only the input to a decision. A production Unit of Work
-    must additionally own closed-command admission, writer time, fixed-program
+    rehydration plus one fixed post-lock clock read prove only the input and
+    causal time for a decision. A production Unit of Work must additionally own
+    closed-command admission, fixed-program
     execution, DML, rollback and commit ambiguity, settlement rendezvous,
     attempt retirement, and database-gated pending-evidence promotion. The
     delivered downstream gate owns the one-shot exact-pair handoff, while future
@@ -3378,7 +3416,7 @@ public authentication surface.
   and HTTP policy. Keep raw serializers, the internal delivery factory, and
   generic reveal authority unavailable. Extend the Unit of Work's real-MySQL
   proof with scope escape, rollback injection after every participating
-  operation, competing refresh, and protocol-level commit-acknowledgement loss
+  operation and protocol-level commit-acknowledgement loss
   before applying the pattern to login, logout, Account, authenticator, or Role
   workflows; do not generalize it into aggregate CRUD.
 - Add a closed-cardinality metric and explicit unhealthy-process recycle policy

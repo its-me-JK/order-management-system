@@ -38,6 +38,7 @@ const REFRESH_CREDENTIAL_ROW_KEYS = Object.freeze([
   'refresh_successor_id',
   'refresh_active_slot',
 ] as const);
+const WRITER_TIME_ROW_KEYS = Object.freeze(['writer_time'] as const);
 const EMPTY_RESULT_KEYS = Object.freeze(['length', 'meta'] as const);
 const SINGLE_RESULT_KEYS = Object.freeze(['0', 'length', 'meta'] as const);
 const arrayPrototype = Array.prototype;
@@ -210,6 +211,14 @@ export function decodeIdentitySessionRefreshLockedPresentedCredentialMySqlRows(
   return decodeExactRows(value, REFRESH_CREDENTIAL_ROW_KEYS);
 }
 
+/** @internal Total decoder seam for the post-lock database clock. */
+export function decodeIdentitySessionRefreshWriterTimeMySqlRows(
+  this: undefined,
+  value: unknown,
+): IdentitySessionRefreshLockedLoadMySqlRowResult {
+  return decodeExactRows(value, WRITER_TIME_ROW_KEYS);
+}
+
 type LockAccountMySqlStatement = MySqlTransactionStatement<
   readonly [accountId: string],
   IdentitySessionRefreshLockedLoadMySqlRowResult,
@@ -222,6 +231,11 @@ type LockSessionFamilyMySqlStatement = MySqlTransactionStatement<
 >;
 type LockPresentedCredentialMySqlStatement = MySqlTransactionStatement<
   readonly [presentedRefreshCredentialId: string, sessionId: string, digest: Uint8Array],
+  IdentitySessionRefreshLockedLoadMySqlRowResult,
+  IdentitySessionRefreshMySqlTransactionFailure
+>;
+type ReadWriterTimeMySqlStatement = MySqlTransactionStatement<
+  readonly [],
   IdentitySessionRefreshLockedLoadMySqlRowResult,
   IdentitySessionRefreshMySqlTransactionFailure
 >;
@@ -305,21 +319,45 @@ export const IDENTITY_SESSION_REFRESH_LOCK_PRESENTED_CREDENTIAL_MYSQL_STATEMENT:
     decode: decodeIdentitySessionRefreshLockedPresentedCredentialMySqlRows,
   });
 
+/**
+ * Reads the mutation clock only after the loader's last awaited row lock.
+ * Keeping this query allowlisted prevents pre-lock transaction time from
+ * becoming write authority after contention.
+ */
+export const IDENTITY_SESSION_REFRESH_READ_WRITER_TIME_MYSQL_STATEMENT: ReadWriterTimeMySqlStatement =
+  defineMySqlTransactionStatement<
+    readonly [],
+    IdentitySessionRefreshLockedLoadMySqlRowResult,
+    IdentitySessionRefreshMySqlTransactionFailure
+  >({
+    text: `
+      SELECT DATE_FORMAT(
+        UTC_TIMESTAMP(6),
+        '%Y-%m-%dT%H:%i:%s.%fZ'
+      ) AS writer_time
+    `,
+    parameterCount: 0,
+    decode: decodeIdentitySessionRefreshWriterTimeMySqlRows,
+  });
+
 export type IdentitySessionRefreshLockedLoadMySqlStatement =
   | typeof IDENTITY_SESSION_REFRESH_LOCK_ACCOUNT_MYSQL_STATEMENT
   | typeof IDENTITY_SESSION_REFRESH_LOCK_SESSION_FAMILY_MYSQL_STATEMENT
-  | typeof IDENTITY_SESSION_REFRESH_LOCK_PRESENTED_CREDENTIAL_MYSQL_STATEMENT;
+  | typeof IDENTITY_SESSION_REFRESH_LOCK_PRESENTED_CREDENTIAL_MYSQL_STATEMENT
+  | typeof IDENTITY_SESSION_REFRESH_READ_WRITER_TIME_MYSQL_STATEMENT;
 
 type IdentitySessionRefreshLockedLoadMySqlStatementTuple = readonly [
   LockAccountMySqlStatement,
   LockSessionFamilyMySqlStatement,
   LockPresentedCredentialMySqlStatement,
+  ReadWriterTimeMySqlStatement,
 ];
 
-/** Fixed allowlist and global lock order for the direct refresh loader. */
+/** Fixed global lock order followed by the post-lock authoritative clock. */
 export const IDENTITY_SESSION_REFRESH_LOCKED_LOAD_MYSQL_STATEMENTS: IdentitySessionRefreshLockedLoadMySqlStatementTuple =
   Object.freeze([
     IDENTITY_SESSION_REFRESH_LOCK_ACCOUNT_MYSQL_STATEMENT,
     IDENTITY_SESSION_REFRESH_LOCK_SESSION_FAMILY_MYSQL_STATEMENT,
     IDENTITY_SESSION_REFRESH_LOCK_PRESENTED_CREDENTIAL_MYSQL_STATEMENT,
+    IDENTITY_SESSION_REFRESH_READ_WRITER_TIME_MYSQL_STATEMENT,
   ]);
