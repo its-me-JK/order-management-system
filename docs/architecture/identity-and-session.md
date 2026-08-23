@@ -1500,7 +1500,13 @@ deadline wins first, the caller receives the fixed `indeterminate` result
 immediately; the later observer notification completes safe command closure and
 revocation without changing that returned result. Focused tests prove the
 no-start path, exact-evidence commit promotion, mapped non-commit, malformed and
-mismatched outcomes, failed cleanup quarantine, and late observer cleanup.
+mismatched outcomes, failed cleanup quarantine, and late observer cleanup. The
+guarded real-MySQL suite now joins that application proof to the live executor:
+an independently held Account row and a bounded same-user process observation
+prove the first production prepared lock is active before its deadline. The
+fixed outcome then remains `indeterminate`, the graph remains unchanged, and
+delivery authorization remains unavailable before and after the blocker
+settles.
 
 The observer receives only its original program input. It receives no command
 result or error, transaction outcome, connection, statement context, SQL,
@@ -1897,7 +1903,9 @@ credential, generation, active-slot, and predecessor-link duplicate mapping
 emitted by the pinned driver. Production-Unit-of-Work digest, generation, and
 final-event collision cases return credential-collision,
 conditional-conflict, and unavailable respectively and prove the complete
-earlier graph rolls back. No case authorizes credential delivery.
+earlier graph rolls back. The acknowledged-commit case also proves that only its
+exact completion and candidate pair can mint the opaque delivery capability;
+no case discloses primitive credential material.
 
 That guarded command now also executes a test-only conditional family-version
 update followed by the production rotation-authority statement in one executor
@@ -1921,12 +1929,21 @@ grant, replays migrations, serializes local runs, and verifies database and
 grant cleanup independently. Those Prisma fault cases do not prove
 cancellation of an established connection or in-flight query. The separate
 database-executor suite proves established-query quarantine and replacement
-capacity. This Identity suite now proves successful rotation DML and natural
-constraint/event rollback through the production Unit of Work plus real-commit
-completion promotion. The focused Unit-of-Work suite separately proves
-post-deadline application cleanup with a controlled late program. Neither suite
-claims injected rollback after every operation, protocol-level
-commit-acknowledgement loss, or a competing-refresh transaction race.
+capacity. The guarded Identity suite now holds the exact Account row before
+executing the production Unit of Work with a configured deadline and a
+single-slot direct reserve. Before that deadline, the same user's process list
+within the dedicated database positively observes the exact production
+Account-lock query. The suite then proves the caller receives the exact
+`indeterminate` singleton, cannot obtain a completion or delivery capability,
+observes no partial or late writes after lock release, and can execute a fresh
+independent rotation after the reserved capacity recovers. The focused
+Unit-of-Work suite separately proves that controlled post-deadline program
+settlement closes and revokes application authority; that observer is not
+database commit proof. Together these suites also prove successful rotation DML,
+natural constraint/event rollback, and real-commit completion promotion. They
+do not claim injected rollback after every operation, physical MySQL session
+identity in the Identity test, protocol-level commit-acknowledgement loss, or a
+competing-refresh transaction race.
 
 The concrete adapter now turns the previously dormant exact-attempt binding
 into database-gated promotion or revocation. Focused adversarial tests prove one
@@ -3323,7 +3340,11 @@ public authentication surface.
     Promise and tracked statement work have ended. The delivered Unit of Work
     captures one reviewed fixed program with no detached continuation and joins
     that fact with its independent database outcome before it promotes or
-    revokes exact attempt evidence.
+    revokes exact attempt evidence. The guarded real-MySQL proof now establishes
+    the live boundary's externally observable guarantees: it positively observes
+    the active first Account-lock query before the deadline, which stays
+    `indeterminate` and write-free, cannot mint delivery, and is followed by a
+    successful independent refresh through recovered single-slot capacity.
 
 ## Future improvements
 
@@ -3360,10 +3381,6 @@ public authentication surface.
   operation, competing refresh, and protocol-level commit-acknowledgement loss
   before applying the pattern to login, logout, Account, authenticator, or Role
   workflows; do not generalize it into aggregate CRUD.
-- Extend the delivered two-sided settlement-rendezvous proof with an
-  established-driver deadline case while preserving exact-connection
-  quarantine, never treating the observer as commit proof, and never allowing
-  late program work to revive authority.
 - Add a closed-cardinality metric and explicit unhealthy-process recycle policy
   for the Unit of Work's fail-stop cleanup quarantine before public refresh
   ingress; never expose command, attempt, or evidence identity in telemetry.

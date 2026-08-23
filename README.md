@@ -106,8 +106,8 @@ collisions return their closed non-commit reasons and roll back the earlier
 mutation graph.
 Its loopback TCP listener accepts a connection but deliberately never performs
 the MySQL handshake; that loopback TCP accept/handshake stall proves fixed,
-cause-free unavailability only. It does not prove cancellation or quarantine
-of an established connection or in-flight query.
+cause-free unavailability only. That handshake-stall case does not prove
+cancellation or quarantine of an established connection or in-flight query.
 Its internal attempt-bound refresh workflow now produces scope- and
 decision-bound pending transaction evidence without claiming commit or
 credential-delivery authority.
@@ -168,12 +168,18 @@ post-seal command close can promote the dormant completion. Proven non-commit
 maps only the three allowed caller reasons after revocation; malformed,
 ambiguous, or otherwise unsafe settlement becomes `indeterminate`. If the
 deadline returns `indeterminate` first, the later observer closes and revokes
-the exact attempt without changing that already-returned result. The adapter
-accepts no callback, exposes no transaction or SQL capability, performs no
-retry, grants no credential-delivery authority, and remains outside every
-Identity package export. A package-internal one-shot delivery gate now exchanges
-only an authentic committed rotation and its exact original candidate pair for
-one opaque capability. The handoff consumes the completion, its retained
+the exact attempt without changing that already-returned result. The guarded
+real-MySQL composition now holds the production program on its first prepared
+Account lock through that deadline: the caller retains the exact
+`indeterminate` outcome, the deadline fixture's refresh graph remains unchanged
+before and after lock release, delivery authority stays unavailable, and a
+separate rotation commits through the recovered single-slot transaction
+reserve. The adapter accepts no callback, exposes no transaction or SQL
+capability, performs no retry, grants no credential-delivery authority, and
+remains outside every Identity package export. A package-internal one-shot
+delivery gate now exchanges only an authentic committed rotation and its exact
+original candidate pair for one opaque capability. The handoff consumes the
+completion, its retained
 committed attempt, and their exact pair binding by runtime identity; a committed
 rejection or reuse decision, foreign or equivalent pair, structural value,
 Proxy, or replay receives one fresh cause-free delivery error without exposing
@@ -411,10 +417,17 @@ seven-token rotation branches, proving acknowledged-commit completion, the
 exact rotated credential graph, authority-derived principal, successful event,
 and rollback with the three closed external reasons for representative
 credential, generation, and final-event collisions. Separate writer-level
-probes cover every mapped duplicate constraint. These are transaction and
-completion proofs, not credential delivery, per-operation rollback injection,
-competing refresh, or protocol-level commit-acknowledgement loss. The runner
-drops and independently verifies both its database and temporary DML grant.
+probes cover every mapped duplicate constraint. A causal Account-row blocker
+now drives the production program past its configured deadline on a runtime
+with one reserved direct connection. A bounded same-user process-list poll
+first observes the exact active production Account-lock query; the returned
+outcome then remains `indeterminate`, the original graph stays unchanged, its
+credential pair cannot mint delivery, and an independent rotation proves
+recovered execution capacity. These are transaction, completion, and
+delivery-denial proofs, not per-operation rollback injection, competing refresh,
+physical-session identity, or protocol-level commit-acknowledgement loss. The
+runner drops and independently verifies both its database and temporary DML
+grant.
 The Catalog integration command verifies an initial-schema
 upgrade with legacy rows, rejects ambiguous terminal history before DDL, and
 also creates, migrates twice, and removes an exact fresh

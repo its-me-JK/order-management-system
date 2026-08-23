@@ -25,8 +25,14 @@ import {
   createIdentitySessionCredentialAttempt,
   type IdentitySessionCredentialAttempt,
 } from '../../src/application/identity-session-credential-attempt';
-import { createIdentitySessionRefreshCommand } from '../../src/application/identity-session-refresh-command';
-import { createIdentitySessionRefreshCredentialDelivery } from '../../src/application/identity-session-refresh-credential-delivery';
+import {
+  createIdentitySessionRefreshCommand,
+  type IdentitySessionRefreshCommand,
+} from '../../src/application/identity-session-refresh-command';
+import {
+  createIdentitySessionRefreshCredentialDelivery,
+  InvalidIdentitySessionRefreshCredentialDeliveryError,
+} from '../../src/application/identity-session-refresh-credential-delivery';
 import {
   createIdentitySessionCredentialCandidates,
   type IdentitySessionCredentialCandidates,
@@ -46,9 +52,10 @@ import type {
   IdentitySessionRefreshDiscovery,
   IdentitySessionRefreshDiscoveryFoundTicket,
 } from '../../src/application/identity-session-refresh-discovery';
-import type {
-  IdentitySessionRefreshOutcome,
-  IdentitySessionRefreshUnitOfWork,
+import {
+  IDENTITY_SESSION_REFRESH_INDETERMINATE,
+  type IdentitySessionRefreshOutcome,
+  type IdentitySessionRefreshUnitOfWork,
 } from '../../src/application/identity-session-refresh-unit-of-work';
 import {
   parseIdentitySecurityEventId,
@@ -91,7 +98,13 @@ const LOCKED_LOADER_INTEGRATION_CONFIRMATION_VARIABLE =
 const LOCKED_LOADER_INTEGRATION_DATABASE = 'oms_identity_refresh_locked_loader_integration';
 const LOOPBACK_DATABASE_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 const TRANSACTION_TIMEOUT_MILLISECONDS = 5_000;
+const DEADLINE_TIMEOUT_MILLISECONDS = 3_000;
+const EXECUTION_WATCHDOG_TIMEOUT_MILLISECONDS = 6_000;
+const COORDINATION_TIMEOUT_MILLISECONDS = 10_000;
+const BLOCKER_TRANSACTION_TIMEOUT_MILLISECONDS = 20_000;
 const INTEGRATION_TEST_TIMEOUT_MILLISECONDS = 60_000;
+const ACCOUNT_LOCK_QUERY_OBSERVATION_ATTEMPTS = 150;
+const ACCOUNT_LOCK_QUERY_OBSERVATION_INTERVAL_MILLISECONDS = 10;
 const ROTATION_SUCCESS_FIXTURE_INDEX = 85;
 const ROTATION_CREDENTIAL_COLLISION_FIXTURE_INDEX = 86;
 const ROTATION_CONDITIONAL_COLLISION_FIXTURE_INDEX = 87;
@@ -99,6 +112,8 @@ const ROTATION_EVENT_COLLISION_FIXTURE_INDEX = 88;
 const ROTATION_CONSTRAINT_SOURCE_FIXTURE_INDEX = 89;
 const ROTATION_CONSTRAINT_TARGET_FIXTURE_INDEX = 90;
 const ROTATION_CONSTRAINT_ACCESS_TARGET_FIXTURE_INDEX = 97;
+const ROTATION_DEADLINE_FIXTURE_INDEX = 98;
+const ROTATION_DEADLINE_RECOVERY_FIXTURE_INDEX = 99;
 const FIXTURE_INDEXES = Object.freeze([
   81,
   82,
@@ -111,6 +126,8 @@ const FIXTURE_INDEXES = Object.freeze([
   ROTATION_CONSTRAINT_SOURCE_FIXTURE_INDEX,
   ROTATION_CONSTRAINT_TARGET_FIXTURE_INDEX,
   ROTATION_CONSTRAINT_ACCESS_TARGET_FIXTURE_INDEX,
+  ROTATION_DEADLINE_FIXTURE_INDEX,
+  ROTATION_DEADLINE_RECOVERY_FIXTURE_INDEX,
 ] as const);
 const ACCESS_WIRE_VALUE = parseIdentityAccessCredentialWireValue(`oms_at_v1_${'A'.repeat(42)}E`);
 const REFRESH_WIRE_VALUE = parseIdentityRefreshCredentialWireValue(`oms_rt_v1_${'E'.repeat(42)}M`);
@@ -285,6 +302,24 @@ type IntegrationContext = Readonly<{
   unitOfWork: IdentitySessionRefreshUnitOfWork;
 }>;
 
+type Deferred = Readonly<{
+  promise: Promise<void>;
+  resolve: () => void;
+}>;
+
+type PromiseOutcome<T> =
+  Readonly<{ kind: 'fulfilled'; value: T }> | Readonly<{ error: unknown; kind: 'rejected' }>;
+
+type PreparedRotatedExecution = Readonly<{
+  candidates: IdentitySessionCredentialCandidates;
+  command: IdentitySessionRefreshCommand;
+}>;
+
+type ProcessListRow = Readonly<{
+  db: string | null;
+  Info: string | null;
+}>;
+
 function findRepositoryRoot(startDirectory: string): string {
   let currentDirectory = startDirectory;
 
@@ -330,6 +365,79 @@ function databaseOptions(): DatabaseConnectionOptions {
   return options;
 }
 
+function deferred(): Deferred {
+  let resolvePromise: (() => void) | undefined;
+  const promise = new Promise<void>((resolveDeferred): void => {
+    resolvePromise = resolveDeferred;
+  });
+
+  if (resolvePromise === undefined) {
+    throw new Error('Unable to create deferred integration signal');
+  }
+
+  return Object.freeze({ promise, resolve: resolvePromise });
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  operation: string,
+  timeoutMilliseconds = COORDINATION_TIMEOUT_MILLISECONDS,
+): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<never>((_resolve, reject): void => {
+    timeout = setTimeout((): void => {
+      reject(new Error(`${operation} exceeded its integration-test deadline`));
+    }, timeoutMilliseconds);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+function observePromise<T>(promise: Promise<T>): Promise<PromiseOutcome<T>> {
+  return promise.then(
+    (value): PromiseOutcome<T> => Object.freeze({ kind: 'fulfilled', value }),
+    (error: unknown): PromiseOutcome<T> => Object.freeze({ error, kind: 'rejected' }),
+  );
+}
+
+async function waitForProductionAccountLockQuery(client: PrismaClient): Promise<void> {
+  for (let attempt = 0; attempt < ACCOUNT_LOCK_QUERY_OBSERVATION_ATTEMPTS; attempt += 1) {
+    // Polling is observation only; the held row lock remains the causal blocker.
+    const rows = await client.$queryRaw<readonly ProcessListRow[]>`
+      SHOW FULL PROCESSLIST
+    `;
+    const observed = rows.some((row): boolean => {
+      if (row.db !== LOCKED_LOADER_INTEGRATION_DATABASE || typeof row.Info !== 'string') {
+        return false;
+      }
+
+      const statement = row.Info.replace(/\s+/gu, ' ').trim();
+
+      return (
+        statement.includes('FROM identity_accounts AS account FORCE INDEX (PRIMARY)') &&
+        statement.includes('WHERE account.id = UUID_TO_BIN(') &&
+        statement.endsWith('FOR UPDATE')
+      );
+    });
+
+    if (observed) {
+      return;
+    }
+
+    await new Promise<void>((resolveDelay): void => {
+      setTimeout(resolveDelay, ACCOUNT_LOCK_QUERY_OBSERVATION_INTERVAL_MILLISECONDS);
+    });
+  }
+
+  throw new Error('Production refresh Account lock was not observed before its deadline');
+}
+
 function fixtureUuid(index: number, discriminator: number): string {
   const suffix = String(index * 100 + discriminator).padStart(12, '0');
 
@@ -361,7 +469,10 @@ function toMySqlDateTime6(value: IdentityInstant): string {
 }
 
 async function openContext(): Promise<IntegrationContext> {
-  const runtime = createDatabaseRuntime(databaseOptions());
+  const runtime = createDatabaseRuntime({
+    ...databaseOptions(),
+    transactionConnectionLimit: 1,
+  });
 
   try {
     const client = getPrismaClient(runtime);
@@ -1182,11 +1293,25 @@ async function executeRotated(
     outcome: IdentitySessionRefreshOutcome;
   }>
 > {
+  const prepared = await prepareRotatedExecution(context, fixture);
+  const outcome = await context.unitOfWork.execute(prepared.command);
+
+  return Object.freeze({
+    candidates: prepared.candidates,
+    outcome,
+  });
+}
+
+async function prepareRotatedExecution(
+  context: IntegrationContext,
+  fixture: RotatedFixture,
+): Promise<PreparedRotatedExecution> {
   const ticket = await discoverTicket(context, fixture.credential);
   const credentialAttemptFixture = await rotatedCredentialAttempt(fixture);
 
-  const outcome = await context.unitOfWork.execute(
-    createIdentitySessionRefreshCommand({
+  return Object.freeze({
+    candidates: credentialAttemptFixture.candidates,
+    command: createIdentitySessionRefreshCommand({
       discoveryTicket: ticket,
       credentialAttempt: credentialAttemptFixture.attempt,
       successorRefreshCredentialId: fixture.decisionSuccessorCredentialId,
@@ -1195,11 +1320,6 @@ async function executeRotated(
       accessLifetimeSeconds: 300,
       securityEventId: fixture.eventId,
     }),
-  );
-
-  return Object.freeze({
-    candidates: credentialAttemptFixture.candidates,
-    outcome,
   });
 }
 
@@ -1599,6 +1719,221 @@ void test(
           assert.equal(persisted.credentials.refresh.length, 2);
           assert.equal(persisted.credentials.access.length, 1);
           assert.equal(persisted.events.length, 1);
+        },
+      );
+
+      await testContext.test(
+        'keeps an established first-lock deadline indeterminate, write-free, and recoverable',
+        async () => {
+          const deadlineFixture = await createRotatedFixture(
+            integration,
+            ROTATION_DEADLINE_FIXTURE_INDEX,
+          );
+          const recoveryFixture = await createRotatedFixture(
+            integration,
+            ROTATION_DEADLINE_RECOVERY_FIXTURE_INDEX,
+          );
+          const deadlineBefore = await readRotatedPersistenceSnapshot(integration, deadlineFixture);
+          const preparedDeadline = await prepareRotatedExecution(integration, deadlineFixture);
+          const deadlineUnitOfWork = createMySqlIdentitySessionRefreshUnitOfWork(
+            integration.runtime,
+            integration.discovery,
+            { timeoutMilliseconds: DEADLINE_TIMEOUT_MILLISECONDS },
+          );
+          const accountLockAcquired = deferred();
+          const releaseAccountLock = deferred();
+          const blockerOutcome = observePromise(
+            integration.client.$transaction(
+              async (transaction): Promise<void> => {
+                const rows = await transaction.$queryRaw<
+                  readonly Readonly<{ account_id: string }>[]
+                >`
+                  SELECT LOWER(BIN_TO_UUID(id, 0)) AS account_id
+                  FROM identity_accounts FORCE INDEX (PRIMARY)
+                  WHERE id = UUID_TO_BIN(${deadlineFixture.account.id}, 0)
+                  LIMIT ${2}
+                  FOR UPDATE
+                `;
+
+                assert.deepEqual(rows, [{ account_id: deadlineFixture.account.id }]);
+                accountLockAcquired.resolve();
+                await releaseAccountLock.promise;
+              },
+              { timeout: BLOCKER_TRANSACTION_TIMEOUT_MILLISECONDS },
+            ),
+          );
+          let deadlineOutcome: IdentitySessionRefreshOutcome | undefined;
+          let deadlineBodyFailed = false;
+          let deadlineBodyFailure: unknown;
+
+          try {
+            await withTimeout(
+              Promise.race([
+                accountLockAcquired.promise,
+                blockerOutcome.then((settlement): never => {
+                  if (settlement.kind === 'rejected' && settlement.error instanceof Error) {
+                    throw settlement.error;
+                  }
+
+                  throw new Error('Account-lock blocker settled before acquiring its lock');
+                }),
+              ]),
+              'Account-lock blocker acquisition',
+            );
+
+            const deadlineOperation = observePromise(
+              deadlineUnitOfWork.execute(preparedDeadline.command),
+            );
+            let observationFailed = false;
+            let observationFailure: unknown;
+
+            try {
+              await withTimeout(
+                waitForProductionAccountLockQuery(integration.client),
+                'Production refresh Account-lock observation',
+                EXECUTION_WATCHDOG_TIMEOUT_MILLISECONDS,
+              );
+            } catch (error: unknown) {
+              observationFailed = true;
+              observationFailure = error;
+            }
+
+            const deadlineSettlement = await withTimeout(
+              deadlineOperation,
+              'Production refresh first-lock deadline',
+              EXECUTION_WATCHDOG_TIMEOUT_MILLISECONDS,
+            );
+
+            if (observationFailed) {
+              if (observationFailure instanceof Error) {
+                throw observationFailure;
+              }
+
+              throw new Error('Account-lock observation failed with a non-Error value');
+            }
+
+            if (deadlineSettlement.kind === 'rejected') {
+              if (deadlineSettlement.error instanceof Error) {
+                throw deadlineSettlement.error;
+              }
+
+              throw new Error('Refresh deadline rejected with a non-Error value');
+            }
+
+            deadlineOutcome = deadlineSettlement.value;
+
+            assert.strictEqual(deadlineOutcome, IDENTITY_SESSION_REFRESH_INDETERMINATE);
+            assert.equal(Object.isFrozen(deadlineOutcome), true);
+            assert.deepEqual(Reflect.ownKeys(deadlineOutcome), ['kind']);
+            assert.throws(
+              () => inspectIdentitySessionRefreshCommittedCompletion(deadlineOutcome),
+              InvalidIdentitySessionRefreshWorkflowError,
+            );
+            assert.throws(
+              () =>
+                createIdentitySessionRefreshCredentialDelivery(
+                  deadlineOutcome,
+                  preparedDeadline.candidates,
+                ),
+              (error: unknown): boolean => {
+                assert.ok(error instanceof InvalidIdentitySessionRefreshCredentialDeliveryError);
+                assert.equal(
+                  Object.getPrototypeOf(error),
+                  InvalidIdentitySessionRefreshCredentialDeliveryError.prototype,
+                );
+                assert.equal(error.name, 'InvalidIdentitySessionRefreshCredentialDeliveryError');
+                assert.equal(
+                  error.message,
+                  'Expected an authorized Identity session refresh credential delivery',
+                );
+                assert.equal(Object.hasOwn(error, 'cause'), false);
+                return true;
+              },
+            );
+            assert.deepEqual(
+              await readRotatedPersistenceSnapshot(integration, deadlineFixture),
+              deadlineBefore,
+            );
+          } catch (error: unknown) {
+            deadlineBodyFailed = true;
+            deadlineBodyFailure = error;
+          } finally {
+            releaseAccountLock.resolve();
+          }
+
+          const blockerWait = await observePromise(
+            withTimeout(blockerOutcome, 'Account-lock blocker settlement'),
+          );
+
+          if (deadlineBodyFailed) {
+            if (deadlineBodyFailure instanceof Error) {
+              throw deadlineBodyFailure;
+            }
+
+            throw new Error('Refresh deadline proof failed with a non-Error value');
+          }
+
+          if (blockerWait.kind === 'rejected') {
+            if (blockerWait.error instanceof Error) {
+              throw blockerWait.error;
+            }
+
+            throw new Error('Account-lock blocker wait rejected with a non-Error value');
+          }
+
+          const blockerSettlement = blockerWait.value;
+
+          if (blockerSettlement.kind === 'rejected') {
+            if (blockerSettlement.error instanceof Error) {
+              throw blockerSettlement.error;
+            }
+
+            throw new Error('Account-lock blocker rejected with a non-Error value');
+          }
+
+          assert.equal(blockerSettlement.value, undefined);
+
+          const recoveryExecution = await executeRotated(integration, recoveryFixture);
+
+          if (recoveryExecution.outcome.kind !== 'committed') {
+            throw new Error(
+              `Expected recovered single-slot rotation, received ${recoveryExecution.outcome.kind}`,
+            );
+          }
+
+          const recoveryCompletion = inspectIdentitySessionRefreshCommittedCompletion(
+            recoveryExecution.outcome,
+          );
+          const recoveryDelivery = createIdentitySessionRefreshCredentialDelivery(
+            recoveryCompletion,
+            recoveryExecution.candidates,
+          );
+          const recoveredPersistence = await readRotatedPersistenceSnapshot(
+            integration,
+            recoveryFixture,
+          );
+
+          assert.equal(recoveryCompletion.evidence.kind, 'rotated');
+          assert.equal(Object.isFrozen(recoveryDelivery), true);
+          assert.deepEqual(Reflect.ownKeys(recoveryDelivery), []);
+          assert.equal(recoveredPersistence.family.version, 8n);
+          assert.equal(recoveredPersistence.credentials.refresh.length, 2);
+          assert.equal(recoveredPersistence.credentials.access.length, 1);
+          assert.equal(recoveredPersistence.events.length, 1);
+          assert.equal(recoveredPersistence.events[0]?.outcome, 'SUCCEEDED');
+          assert.strictEqual(deadlineOutcome, IDENTITY_SESSION_REFRESH_INDETERMINATE);
+          assert.throws(
+            () =>
+              createIdentitySessionRefreshCredentialDelivery(
+                deadlineOutcome,
+                preparedDeadline.candidates,
+              ),
+            InvalidIdentitySessionRefreshCredentialDeliveryError,
+          );
+          assert.deepEqual(
+            await readRotatedPersistenceSnapshot(integration, deadlineFixture),
+            deadlineBefore,
+          );
         },
       );
 
