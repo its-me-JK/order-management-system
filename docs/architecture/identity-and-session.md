@@ -753,16 +753,16 @@ sequence, deadline, raw value, and digest. The refresh conditional-write basis
 also remains its exact six prior locked fields: the issued access record is new
 insert state, not an optimistic condition.
 
-The future Unit of Work accepts only the complete creation or rotated bundle.
-Login commits family, initial refresh/access digests, authenticator changes,
-limit eviction, permission projection, and events together. Refresh commits
-predecessor consumption, successor refresh/access digests, link, family
-advance, projection, and event together. Failure after any step rolls back all
-of them. Raw `oms_at_v1_...` and `oms_rt_v1_...` candidates and SHA-256 digests
-remain application/crypto-adapter material outside domain state. Only a
-confirmed commit permits returning the raw access value or setting the refresh
-cookie; rejection, reuse closure, rollback, collision, and indeterminate
-commit discard candidates.
+Future issuance persistence accepts only the complete creation or rotated
+bundle. Login commits family, initial refresh/access digests, authenticator
+changes, limit eviction, permission projection, and events together. Refresh
+commits predecessor consumption, successor refresh/access digests, link,
+family advance, projection, and event together. Failure after any step rolls
+back all of them. Raw `oms_at_v1_...` and `oms_rt_v1_...` candidates and SHA-256
+digests remain application/crypto-adapter material outside domain state. Only
+a confirmed commit permits returning the raw access value or setting the
+refresh cookie; rejection, reuse closure, rollback, collision, and
+indeterminate commit discard candidates.
 
 The alternative is a digest-only access row without generation provenance or
 a standalone issuance service. Both are smaller, but neither can prove that a
@@ -947,6 +947,258 @@ revocation cannot be fully expressed as MySQL checks. The Unit of Work enforces
 them, and real-MySQL tests prove commit, rollback, locking, and adversarial row
 constraints.
 
+### Refresh persistence application boundary
+
+The first application-owned persistence slice is refresh-only. It proves the
+transaction pattern against the already complete refresh domain result and
+opaque credential boundary before unfinished password/login policy expands the
+surface. It adds no Prisma model, migration, adapter, use case, route, root
+export, infrastructure barrel, or package subpath. The contracts remain
+package-internal until a composed use case creates a real public consumer.
+
+Identity uses a hybrid boundary rather than repositories per aggregate. A
+small `IdentityUnitOfWork` owns transaction completion. Separate purpose-built
+reads operate outside a transaction, while workflow-scoped loaders and writers
+receive an opaque transaction capability. Private Prisma mappers may reuse
+implementation code later, but application code receives no generic
+`find/save/delete`, arbitrary query, event append, or database client. Aggregate
+ownership and transaction ownership differ here: one refresh decision spans an
+Account, SessionFamily, presented RefreshCredential, optional successor and
+AccessCredential, current authority projection, and a security event.
+
+For this refresh slice, `IdentityUnitOfWork.execute` accepts one verified
+credential attempt as its exact admission and invokes one asynchronous callback
+at most once. It invokes it exactly once only after atomically claiming that
+attempt, `BEGIN`, a valid writer-owned `dbNow`, and an active context have all
+been established. The callback receives one exact frozen context containing:
+
+| Field | Contract |
+| --- | --- |
+| `scope` | Opaque nominal capability identifying only this active transaction. It has no query, commit, rollback, retry, serialization, or client method. |
+| `dbNow` | The one lossless `IdentityInstant` read with `CURRENT_TIMESTAMP(6)` from the writer after `BEGIN`; every domain decision in the callback uses this value. |
+
+The internal context factory copies and validates `dbNow`, authenticates the
+scope by identity rather than `instanceof` or a structural brand, and freezes
+both values. The future adapter invalidates the scope immediately when the
+callback settles and before it begins `COMMIT` or rollback handling. A retained,
+forged, cloned, proxied, foreign-transaction, or already-closed scope must fail
+before another database operation. Nested transactions, concurrent operations
+on one scope, savepoints, ambient transaction lookup, and unawaited work are not
+part of the port. Every scoped operation is tracked. After invalidating the
+scope, the adapter must cancel where supported and boundedly drain the one
+possible in-flight operation before rollback completion, connection release,
+or result settlement. Failure to quiesce safely forbids connection reuse and is
+`indeterminate` unless the adapter can independently prove non-commit; merely
+refusing `COMMIT` is insufficient because a floating Promise may still be
+using the connection.
+
+Each active scope also owns a closed refresh-workflow state machine. It accepts
+one authentic discovery ticket, consumes that ticket before the first query,
+and permits one `loadForUpdate` attempt. A failed load ends that workflow; a
+successful load records its exact `not-found` result or the identities and
+snapshots of the locked Account, SessionFamily, and presented
+RefreshCredential. A package-internal decision function is the only production
+caller of `presentRefreshCredential`: it accepts that registered load result,
+uses the scope's `dbNow` as `occurredAt`, passes the exact loaded objects to the
+domain, validates the returned basis and derived instants, and registers the
+result to that scope. The state then permits exactly one matching terminal
+action: rejected completion with no DML, rotated persistence, or reuse
+persistence. Persist-before-load, a second or sequential load, load after a
+terminal action, a second terminal action, a result from another scope, a
+mismatched kind or aggregate basis, and a result whose occurrence-derived
+instants do not originate at `dbNow` all fail before SQL. Semantically identical
+data does not make a foreign result authentic.
+
+The callback may return only an authentic package-internal
+`IdentityTransactionEvidence`. For this slice the closed refresh evidence is:
+
+- exact frozen `rejected`, with no principal or credential field;
+- exact frozen `reuse-detected`, with no principal or credential field; or
+- exact frozen `rotated`, containing the strictly constructed
+  `IdentityAuthenticatedPrincipal` plus copied non-secret
+  `accessCredentialIssuedAt`, `accessCredentialExpiresAt`,
+  `refreshIdleExpiresAt`, and `refreshAbsoluteExpiresAt` instants.
+
+Evidence is nominal at compile time and registered by private runtime identity;
+a cast, structural clone, recovered prototype, Proxy, extra member, symbol
+member, scope, function, aggregate, candidate pair, wire value, or digest is not
+valid callback evidence. This is deliberately narrower than
+`execute<T>(callback): Promise<T>`, which would falsely allow the transaction
+callback to return a raw credential or client handle. Registration is also
+bound to the exact active scope. Each scope may mint one terminal evidence and
+`execute` consumes it once; stale, foreign-scope, replayed, or already-consumed
+evidence is rejected. A scoped writer mints `rotated` or `reuse-detected`
+evidence only after all of its required statements succeed. The rejected
+factory may mint evidence for that same scope only when no scoped mutation was
+started and no operation remains outstanding. The rotated factory accepts the
+raw bounded authority projection and invokes the strict principal factory; it
+does not accept an already-cast principal. Runtime authenticity is claimed for
+the scope-bound transaction evidence, not for the nested compile-time-nominal
+principal by itself. The four rotated instants are derived from the successfully
+persisted domain result, not caller-supplied duplicates. They let delivery
+derive `expiresInSeconds` and the exact `SessionView` without leaking an
+aggregate, identifier, digest, or mutable callback-local closure.
+
+Before `execute`, application orchestration converts a candidate pair into an
+opaque runtime-authentic `IdentitySessionCredentialAttempt`. It asks the crypto
+port to digest both complete wire values again, compares both returned byte
+sequences in constant time with the pair's embedded digests, and only then
+registers the exact pair identity and its two original digest wrapper
+identities. This pre-transaction verification is deliberately redundant and
+cheap: the structural candidate factory cannot itself prove a wire-to-digest
+relationship, and authentic wires from one attempt must not be combined with
+authentic digests from another. Mismatch fails with the fixed candidate error;
+crypto inability fails with the existing cause-free crypto-unavailable error,
+and neither path starts a transaction. Every temporary 32-byte view copied from
+the four compared digest wrappers is overwritten in `finally`, including match,
+mismatch, partial-provider-failure, and thrown paths, while making no claim that
+immutable wrappers or provider internals are zeroized.
+
+The verified attempt starts `unclaimed`. `execute` uses a synchronous atomic
+compare-and-set to change it to `claimed` before any asynchronous work and binds
+it to the new scope. Only the call that wins `unclaimed -> claimed` owns later
+lifecycle changes. A concurrent or later claim of that same attempt fails
+before `BEGIN` or SQL without changing the owner, attempt, evidence, or
+completion state. Every completion, rejection, failure after the owner claims,
+and indeterminate outcome permanently retires it from execution. A confirmed
+commit may leave only its separately registered completion eligible for one
+exact-pair delivery; that delivery consumes the eligibility. Known rollback,
+unavailable, collision, callback failure, and indeterminate outcome make it
+forever non-deliverable. A retry therefore requires a newly generated and
+verified pair, never reuse of a candidate from an ambiguous attempt.
+
+Callback evidence is pending, not delivery authority. Its private registration
+binds the exact scope, registered decision, and, for rotation, the authentic
+credential-attempt identity admitted to that scope. Confirmed
+`COMMIT` atomically marks that evidence committed and registers a distinct
+runtime-authentic completion wrapper; confirmed rollback and every
+indeterminate path permanently revoke it. A future delivery gate accepts the
+authentic committed completion plus the original candidate pair and verifies
+that it is the exact pair registered to that attempt before exposing either
+wire value. It rejects a structural committed object, a captured pending
+evidence, a completion clone or Proxy, revoked evidence, mixed authentic wires
+and digests, and candidates from a different issuance attempt. Thus one
+successful transaction cannot authorize a different candidate pair even when
+its public metadata or digest wrapper identities happen to match.
+
+The outer result is one exact frozen completion union:
+
+```text
+{ kind: "committed", evidence }
+{ kind: "not-committed", reason: "credential-collision" | "conditional-conflict" | "unavailable" }
+{ kind: "indeterminate" }
+```
+
+Only `committed` contains evidence, and the Unit of Work creates and registers
+that wrapper only after confirmed `COMMIT`. `not-committed` is returned only
+when the adapter can prove no commit occurred, including failure before `BEGIN`
+or a confirmed rollback. `indeterminate` covers every path on which transaction
+outcome cannot be proved, whether the callback returned or threw. It contains
+no reason, evidence, provider code, or rollback claim. Promise rejection is
+reserved for an unexpected callback or contract failure before a commit request
+and only after all scoped work is quiescent and no `BEGIN` or a confirmed
+rollback proves non-commit. The adapter discards the caught value without
+reading, coercing, stringifying, logging, attaching as `cause`, or retaining it,
+then rejects with a fresh fixed, cause-free
+`IdentityTransactionCallbackFailedError`. After a commit request, ambiguous
+rollback, or failed quiescence, even a programmer failure resolves as
+`indeterminate`. Callers never use a rejection as authority to reveal or retry
+a credential. None of these paths invokes the callback again.
+
+`credential-collision` requires a confirmed non-commit and an exact statement
+plus named-constraint allowlist match on newly generated credential material:
+the successor refresh-credential primary key, successor refresh-digest unique,
+new access-credential primary key, or new access-digest unique. An active-slot,
+family-sequence/composite, predecessor-successor-link, or affected-row conflict
+is not repairable by fresh credential entropy and maps to
+`conditional-conflict`. A foreign-key, unknown-constraint, impossible-state, or
+other confirmed-rollback integrity failure maps to `unavailable`. A
+security-event identifier collision also maps to `unavailable`, never
+`credential-collision`. A deadlock, timeout, connection failure, invalid writer
+time, or other expected inability also maps to `unavailable` when non-commit is
+proven. Vendor error number alone is insufficient. Failure after a commit
+request, an ambiguous driver rejection, or inability to prove rollback is
+`indeterminate`. No result or thrown application error retains a vendor
+exception, a vendor code, a constraint name, or a bound digest. Only a future
+outer orchestration may react to a proven credential collision by discarding
+every candidate and pre-generated identifier and starting at most one new
+transaction with fresh material. Refresh never automatically retries a
+conditional conflict, unavailable result, or indeterminate commit.
+
+The non-locking `IdentitySessionRefreshDiscovery` has one operation. It accepts
+an authentic refresh digest and returns exactly `not-found` or an authentic
+frozen `found` ticket whose enumerable data is only `accountId`, `sessionId`,
+and `presentedRefreshCredentialId`. The ticket is registered by runtime
+identity and internally correlated to the looked-up digest and discovery
+boundary. `loadForUpdate` rejects a cast, clone, Proxy, mixed identifiers,
+foreign-discovery ticket, or altered ticket before issuing a query. Discovery
+searches every retained digest without filtering consumption, credential
+expiry, family idle expiry, or family revocation. It returns no digest,
+sequence, version, status, deadline, aggregate, login, or authority data. A
+discovery-time version would be stale by definition and could suppress replay
+handling. An expected discovery provider failure becomes the fixed,
+cause-free `IdentitySessionRefreshDiscoveryUnavailableError`; it exposes no
+vendor error, constraint, query detail, or digest.
+
+Inside the callback, `IdentitySessionRefreshStore` exposes only three
+operations:
+
+1. `loadForUpdate(scope, discovery)` consumes the authentic discovery ticket,
+   locks and strictly rehydrates Account, SessionFamily, then the exact
+   presented RefreshCredential in the global order. It returns exact
+   `not-found` or `found` with only those three authentic aggregates. It never
+   loads credential history or an AccessCredential.
+2. `persistRotated(scope, { decision, securityEventId })` accepts only the
+   authentic scope-bound decision containing the complete `rotated` domain
+   result and one separately branded canonical UUIDv7 event identifier
+   generated before `BEGIN`. A package-private extractor gives the writer only
+   the two target-kind digests from the attempt admitted to that scope, never
+   the attempt capability or either wire value. It derives every other
+   identifier, sequence, timestamp, relationship, and conditional basis from
+   the result; it receives no raw candidate, wire value, duplicate credential
+   ID, expected version, deadline, or event DTO. After all writes and the
+   bounded authority projection succeed, it strictly constructs the principal
+   and returns scope-bound `rotated` terminal evidence.
+3. `persistReuseDetected(scope, { decision, securityEventId })` accepts only the
+   authentic scope-bound decision containing the complete `reuse-detected`
+   result and one separately branded canonical UUIDv7 event identifier generated
+   before `BEGIN`. It receives no digest or candidate and returns scope-bound
+   `reuse-detected` evidence only after its writes succeed. A rejected decision
+   has no writer method; the application terminal factory validates it against
+   the registered load and performs no DML or event append.
+
+The future MySQL `persistRotated` trace is fixed: consume predecessor, insert
+successor refresh, insert the generation-bound access row, link predecessor,
+conditionally update the family, resolve the bounded authority projection, and
+append the mapped rotation event. Every expected affected-row count is exactly
+one. `persistReuseDetected` conditionally revokes the family and appends only
+the mapped reuse event. State and event writes share the same transaction and
+connection. Projection or event failure rolls back all earlier writes.
+
+The application-contract tests prove exact shapes, nominal identity, freezing,
+scope-bound one-shot pending evidence, commit promotion and revocation,
+one-shot attempt admission and retirement, candidate-attempt correlation,
+mixed-wire/digest rejection and temporary-copy overwrite, the
+one-load/one-decision workflow state machine, discovery-ticket authenticity and
+minimization, cross-kind rejection, strict principal construction, cause-free
+errors, no root export, and that raw credentials cannot be transaction
+evidence. Callback-failure tests throw or reject a raw wire, candidate pair,
+digest, `Error` with a secret cause, Proxy, hostile getter, and coercion trap and
+prove that only the fresh fixed error escapes. The Prisma increment must
+additionally prove zero callback before a valid context, one callback otherwise,
+one writer time, one connection, operation tracking and bounded drain, lock and
+DML order, affected-row checks, rollback injection after every statement,
+exact statement-and-constraint allowlisting, commit ambiguity, connection
+quarantine, no retry, escaped-scope rejection, and competing-refresh behavior
+against real MySQL.
+
+The rejected alternatives are public aggregate repositories and one Unit of
+Work containing every query and mutation. Repositories make partial refresh
+writes and wrong lock order legal; a god Unit of Work moves workflow authority
+into one infrastructure-shaped interface. Workflow ports duplicate a small
+amount of mapping and SQL, but private infrastructure helpers can recover reuse
+without granting application code unsafe operations.
+
 ## Credential and password representation
 
 Access credentials have exact wire form
@@ -1059,16 +1311,19 @@ method, and promises no partial candidate result or fallback randomness after
 a provider error. Promises leave room for a future managed cryptographic
 provider without making the application depend on Node crypto.
 
-Generated raw wrappers stay in the outer application orchestration, which
-closes over them while invoking the future generic Unit of Work. Only a family
-creation or `rotated` scoped writer receives both applicable digests alongside
-the complete domain result; it derives record IDs from that result and receives
-no duplicate caller-supplied IDs, candidate pair, or raw wire value. A
-`reuse-detected` writer receives no candidate digest, and `rejected` invokes no
-writer. The transaction callback returns only non-secret issuance evidence.
-Only resolution of the Unit of Work after confirmed `COMMIT` permits a later
-Identity delivery capability to serialize the access value and set the refresh
-cookie. The callback cannot mark candidates committed or release them itself.
+Generated raw wrappers stay in the outer application orchestration. Before it
+invokes the closed application-owned `IdentityUnitOfWork`, orchestration
+re-digests and verifies the pair and receives the opaque credential-attempt
+capability described above. Only a family-creation or `rotated` scoped writer
+receives the attempt's package-private digest view alongside the complete
+domain result; it derives record IDs from that result and receives no duplicate
+caller-supplied IDs, candidate pair, or raw wire value. A `reuse-detected`
+writer receives no credential attempt, and `rejected` invokes no writer. The
+transaction callback returns only non-secret pending issuance evidence. Only
+an authentic completion registered after confirmed `COMMIT` permits a later
+Identity delivery capability to serialize the exact correlated access value
+and set the refresh cookie. The callback cannot mark candidates committed or
+release them itself.
 
 A rejected transition, replay closure, known rollback, or definite credential
 collision discards the entire pair. Neither the Unit of Work nor infrastructure
@@ -2086,6 +2341,28 @@ authentication surface becomes public.
     mutable owned byte region can be shortened in lifetime, which is useful
     defense-in-depth. Immutable JavaScript strings, V8 copies, and cryptographic
     internals cannot be reliably erased, so a stronger claim would be false.
+29. **Why does an aggregate boundary not define the Identity transaction
+    boundary?** Refresh changes one family but must also conditionally verify the
+    Account, consume and link one refresh generation, insert its successor and
+    access witness, project current authority, and append evidence atomically.
+    Separate aggregate saves could each be locally valid while the durable
+    security transition is incomplete.
+30. **Why does the transaction scope expose no database methods?** The scope is
+    proof that a workflow-specific operation belongs to one active transaction,
+    not permission to run arbitrary persistence. Narrow stores keep lock order,
+    affected-row checks, and legal write combinations reviewable.
+31. **Why distinguish a proven non-commit from an indeterminate commit?** A
+    caller may safely discard and, for one allowlisted credential collision,
+    regenerate only when the database cannot have committed. After an ambiguous
+    commit, retrying refresh can convert a successful rotation into replay
+    revocation, and revealing either candidate could expose an unconfirmed
+    generation.
+32. **Why hash newly generated credentials twice before persistence?** The
+    crypto port guarantees generation correctness, but the structural candidate
+    value cannot prove that later orchestration did not mix authentic wrappers
+    from two attempts. Two extra bounded SHA-256 operations before `BEGIN`
+    create an exact attempt capability, avoid a post-commit crypto failure, and
+    are negligible beside a database transaction.
 
 ## Future improvements
 
@@ -2110,6 +2387,10 @@ authentication surface becomes public.
   crypto-availability metrics, and evaluate FIPS/runtime attestation where a
   deployment requires it. A future HSM or managed provider remains a separate
   implementation of the unchanged application port.
+- Extend the proven refresh Unit-of-Work pattern to login, logout, Account,
+  authenticator, and Role workflows only after the real-MySQL refresh adapter
+  passes scope-escape, rollback-injection, competing-refresh, and ambiguous
+  commit tests; do not generalize it into aggregate CRUD.
 - Add risk signals only after privacy, false-positive, retention, and trusted
   network-source policies are reviewed.
 
