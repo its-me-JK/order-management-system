@@ -1026,7 +1026,10 @@ ticket, consumes that ticket before the first query, and permits one
 the rightful workflow; once an authentic load or decision starts, any SQL,
 rehydration, relationship-validation, domain, or result-validation failure
 permanently changes it to `failed`. Scope settlement changes every non-terminal
-state to `closed` and clears strong aggregate references.
+state to `closed` and deletes its internal strong aggregate registrations. A
+caller that deliberately retains an immutable locked result may retain those
+objects until its own reference is released, but the closed scope can no longer
+authenticate or act on that result.
 
 A successful load records its exact runtime-authentic `not-found` result or the
 identities and snapshots of the locked Account, SessionFamily, and presented
@@ -1043,8 +1046,9 @@ A package-internal decision function is the only production caller of
 scope's `dbNow` as `occurredAt`, passes the exact loaded objects to the domain,
 preserves the domain's conditional issuance-input read order, validates the
 returned basis and every occurrence-derived instant, and registers the result
-to that scope. The public decision is a frozen thin capability enumerating only
-its kind; the complete domain result remains in a private identity registry.
+to that scope. The callback-visible decision is a frozen thin capability
+enumerating only its kind; the complete domain result remains in a private
+identity registry.
 The state then permits exactly one matching terminal action: rejected
 completion with no DML, rotated persistence, or reuse persistence.
 Persist-before-load, a second or sequential load, load after a terminal action,
@@ -1056,7 +1060,7 @@ cross-scope violations collapse to one fresh cause-free
 `InvalidIdentitySessionRefreshWorkflowError`; established domain policy errors
 remain their fixed internal errors after the workflow is irreversibly failed.
 
-The callback may return only an authentic package-internal
+The future transaction orchestration may return only an authentic package-internal
 `IdentityTransactionEvidence`. For this slice the closed refresh evidence is:
 
 - exact frozen `rejected`, with no principal or credential field;
@@ -1227,22 +1231,26 @@ one. `persistReuseDetected` conditionally revokes the family and appends only
 the mapped reuse event. State and event writes share the same transaction and
 connection. Projection or event failure rolls back all earlier writes.
 
-The application-contract tests prove exact shapes, nominal identity, freezing,
-scope-bound one-shot pending evidence, commit promotion and revocation,
-one-shot attempt admission and retirement, candidate-attempt correlation,
-mixed-wire/digest rejection and temporary-copy overwrite, the
-one-load/one-decision workflow state machine, discovery-ticket authenticity and
-minimization, cross-kind rejection, strict principal construction, cause-free
-errors, no root export, and that raw credentials cannot be transaction
-evidence. Callback-failure tests throw or reject a raw wire, candidate pair,
-digest, `Error` with a secret cause, Proxy, hostile getter, and coercion trap and
-prove that only the fresh fixed error escapes. The Prisma increment must
-additionally prove zero callback before a valid context, one callback otherwise,
-one writer time, one connection, operation tracking and bounded drain, lock and
-DML order, affected-row checks, rollback injection after every statement,
-exact statement-and-constraint allowlisting, commit ambiguity, connection
-quarantine, no retry, escaped-scope rejection, and competing-refresh behavior
-against real MySQL.
+The current application-contract tests prove exact shapes, nominal identity,
+freezing, one-shot attempt admission and retirement, candidate-attempt
+correlation, mixed-wire/digest rejection and temporary-copy overwrite,
+discovery-ticket authenticity and minimization, and the authentic
+one-load/one-decision workflow through rotation, reuse, rejection, failure, and
+scope closure. They also prove conditional issuance-input reads, fixed
+cause-free workflow errors, strict result binding, and no root export.
+
+The evidence and Unit of Work increment must additionally prove scope-bound
+one-shot pending evidence, commit promotion and revocation, cross-kind terminal
+actions, strict principal construction, and that raw credentials cannot become
+transaction evidence. Its orchestration-failure tests must reject a raw wire,
+candidate pair, digest, `Error` with a secret cause, Proxy, hostile getter, and
+coercion trap while exposing only the fresh fixed error. The Prisma increment
+must then prove zero orchestration before a valid context, one orchestration
+otherwise, one writer time, one connection, operation tracking and bounded
+drain, lock and DML order, affected-row checks, rollback injection after every
+statement, exact statement-and-constraint allowlisting, commit ambiguity,
+connection quarantine, no retry, escaped-scope rejection, and
+competing-refresh behavior against real MySQL.
 
 The rejected alternatives are public aggregate repositories and one Unit of
 Work containing every query and mutation. Repositories make partial refresh
