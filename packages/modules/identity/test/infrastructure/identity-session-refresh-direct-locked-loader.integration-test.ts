@@ -25,6 +25,7 @@ import {
   createIdentitySessionCredentialAttempt,
   type IdentitySessionCredentialAttempt,
 } from '../../src/application/identity-session-credential-attempt';
+import { createIdentitySessionRefreshCommand } from '../../src/application/identity-session-refresh-command';
 import {
   createIdentitySessionCredentialCandidates,
   type IdentitySessionCredentialCandidates,
@@ -44,6 +45,10 @@ import type {
   IdentitySessionRefreshDiscovery,
   IdentitySessionRefreshDiscoveryFoundTicket,
 } from '../../src/application/identity-session-refresh-discovery';
+import type {
+  IdentitySessionRefreshOutcome,
+  IdentitySessionRefreshUnitOfWork,
+} from '../../src/application/identity-session-refresh-unit-of-work';
 import {
   parseIdentitySecurityEventId,
   type IdentitySecurityEventId,
@@ -51,9 +56,8 @@ import {
 import {
   activateIdentitySessionRefreshWorkflow,
   closeIdentitySessionRefreshWorkflow,
-  createIdentitySessionRefreshAttemptBoundWorkflow,
   createIdentitySessionRefreshWorkflow,
-  decideIdentitySessionRefresh,
+  inspectIdentitySessionRefreshCommittedCompletion,
   type IdentitySessionRefreshLockedLoadResult,
 } from '../../src/application/identity-session-refresh-workflow';
 import { IdentityAccount, type IdentityAccountSnapshot } from '../../src/domain/identity-account';
@@ -75,22 +79,9 @@ import {
   IDENTITY_SESSION_REFRESH_INSERT_ACCESS_CREDENTIAL_MYSQL_STATEMENT,
   IDENTITY_SESSION_REFRESH_INSERT_SUCCESSOR_REFRESH_CREDENTIAL_MYSQL_STATEMENT,
   IDENTITY_SESSION_REFRESH_LINK_PREDECESSOR_MYSQL_STATEMENT,
-  IDENTITY_SESSION_REFRESH_ROTATION_MYSQL_STATEMENTS,
-  type IdentitySessionRefreshRotationMySqlStatement,
 } from '../../src/infrastructure/mysql/identity-session-refresh-rotation.statements';
-import {
-  IDENTITY_SESSION_REFRESH_REUSE_DETECTED_MYSQL_STATEMENTS,
-  type IdentitySessionRefreshReuseDetectedMySqlStatement,
-} from '../../src/infrastructure/mysql/identity-session-refresh-reuse-detected.statements';
 import { createMySqlIdentitySessionRefreshLockedLoader } from '../../src/infrastructure/mysql/mysql-identity-session-refresh-locked-loader';
-import {
-  createMySqlIdentitySessionRefreshRotatedWriter,
-  isMySqlIdentitySessionRefreshRotatedConditionalConflict,
-} from '../../src/infrastructure/mysql/mysql-identity-session-refresh-rotated.writer';
-import {
-  createMySqlIdentitySessionRefreshReuseDetectedWriter,
-  isMySqlIdentitySessionRefreshReuseDetectedConditionalConflict,
-} from '../../src/infrastructure/mysql/mysql-identity-session-refresh-reuse-detected.writer';
+import { createMySqlIdentitySessionRefreshUnitOfWork } from '../../src/infrastructure/mysql/mysql-identity-session-refresh-unit-of-work';
 import { createPrismaIdentitySessionRefreshDiscovery } from '../../src/infrastructure/prisma/prisma-identity-session-refresh-discovery';
 
 const LOCKED_LOADER_INTEGRATION_CONFIRMATION_VARIABLE =
@@ -238,58 +229,6 @@ type SecurityEventPersistenceRow = Readonly<{
   subject_account_id: string | null;
 }>;
 
-type ReuseDetectedProgramInput = Readonly<{
-  accessCredentialId: string;
-  attempt: IdentitySessionCredentialAttempt;
-  eventId: IdentitySecurityEventId;
-  successorRefreshCredentialId: string;
-  ticket: IdentitySessionRefreshDiscoveryFoundTicket;
-}>;
-
-type ReuseDetectedProgramCommit = Readonly<{
-  kind: 'reuse-detected';
-  writerTime: IdentityInstant;
-}>;
-
-type ReuseDetectedProgramStatement =
-  | IdentitySessionRefreshLockedLoadMySqlStatement
-  | IdentitySessionRefreshReuseDetectedMySqlStatement;
-
-const IDENTITY_SESSION_REFRESH_REUSE_PROGRAM_MYSQL_STATEMENTS = Object.freeze([
-  ...IDENTITY_SESSION_REFRESH_LOCKED_LOAD_MYSQL_STATEMENTS,
-  ...IDENTITY_SESSION_REFRESH_REUSE_DETECTED_MYSQL_STATEMENTS,
-] as const) satisfies readonly ReuseDetectedProgramStatement[];
-
-type RotatedProgramInput = Readonly<{
-  accessCredentialId: string;
-  attempt: IdentitySessionCredentialAttempt;
-  eventId: IdentitySecurityEventId;
-  successorRefreshCredentialId: string;
-  ticket: IdentitySessionRefreshDiscoveryFoundTicket;
-}>;
-
-type RotatedProgramCommit = Readonly<{
-  accessCredentialExpiresAt: IdentityInstant;
-  accessCredentialIssuedAt: IdentityInstant;
-  kind: 'rotated';
-  principal: Readonly<{
-    actorId: string;
-    permissions: readonly string[];
-    sessionId: string;
-  }>;
-  refreshAbsoluteExpiresAt: IdentityInstant;
-  refreshIdleExpiresAt: IdentityInstant;
-  writerTime: IdentityInstant;
-}>;
-
-type RotatedProgramStatement =
-  IdentitySessionRefreshLockedLoadMySqlStatement | IdentitySessionRefreshRotationMySqlStatement;
-
-const IDENTITY_SESSION_REFRESH_ROTATED_PROGRAM_MYSQL_STATEMENTS = Object.freeze([
-  ...IDENTITY_SESSION_REFRESH_LOCKED_LOAD_MYSQL_STATEMENTS,
-  ...IDENTITY_SESSION_REFRESH_ROTATION_MYSQL_STATEMENTS,
-] as const) satisfies readonly RotatedProgramStatement[];
-
 type RotationConstraintClassificationInput =
   | Readonly<{
       kind: 'successor';
@@ -341,6 +280,7 @@ type IntegrationContext = Readonly<{
   discovery: IdentitySessionRefreshDiscovery;
   fixtureNow: IdentityInstant;
   runtime: DatabaseRuntime;
+  unitOfWork: IdentitySessionRefreshUnitOfWork;
 }>;
 
 function findRepositoryRoot(startDirectory: string): string {
@@ -439,11 +379,16 @@ async function openContext(): Promise<IntegrationContext> {
       throw new Error('MySQL returned an invalid integration clock');
     }
 
+    const discovery = createPrismaIdentitySessionRefreshDiscovery(client);
+
     return Object.freeze({
       client,
-      discovery: createPrismaIdentitySessionRefreshDiscovery(client),
+      discovery,
       fixtureNow: withFixtureMicroseconds(parseIdentityInstant(dbNow)),
       runtime,
+      unitOfWork: createMySqlIdentitySessionRefreshUnitOfWork(runtime, discovery, {
+        timeoutMilliseconds: TRANSACTION_TIMEOUT_MILLISECONDS,
+      }),
     });
   } catch (error: unknown) {
     try {
@@ -1202,209 +1147,42 @@ async function executeDirectLockedLoad(
   return outcome.result;
 }
 
-function createReuseDetectedProgram(
-  client: PrismaClient,
-  discovery: IdentitySessionRefreshDiscovery,
-): MySqlTransactionProgram<
-  ReuseDetectedProgramInput,
-  ReuseDetectedProgramCommit,
-  IdentitySessionRefreshMySqlTransactionFailure,
-  ReuseDetectedProgramStatement
-> {
-  return Object.freeze({
-    defectFailure: 'execution-defect' as const,
-    failures: Object.freeze([
-      'credential-collision',
-      'conditional-conflict',
-      'unavailable',
-      'execution-defect',
-    ] as const),
-    async run(context, input) {
-      const workflow = createIdentitySessionRefreshAttemptBoundWorkflow(input.attempt);
-
-      try {
-        const transaction = activateIdentitySessionRefreshWorkflow(
-          workflow.controller,
-          context.writerTime,
-        );
-        const loader = createMySqlIdentitySessionRefreshLockedLoader(
-          client,
-          context,
-          discovery,
-          workflow.controller,
-        );
-        const writer = createMySqlIdentitySessionRefreshReuseDetectedWriter(
-          context,
-          workflow.controller,
-        );
-        const load = await loader.loadForUpdate(transaction.scope, input.ticket);
-        const decision = decideIdentitySessionRefresh(
-          transaction,
-          load,
-          Object.freeze({
-            successorRefreshCredentialId: input.successorRefreshCredentialId,
-            refreshIdleLifetimeSeconds: 900,
-            issuedAccessCredentialId: input.accessCredentialId,
-            accessLifetimeSeconds: 300,
-          }),
-        );
-
-        if (decision.kind !== 'reuse-detected') {
-          throw new Error('Expected the consumed credential to produce a reuse decision');
-        }
-
-        try {
-          const evidence = await writer.persistReuseDetected(
-            transaction.scope,
-            Object.freeze({ decision, securityEventId: input.eventId }),
-          );
-
-          return context.requestCommit(
-            Object.freeze({ kind: evidence.kind, writerTime: transaction.dbNow }),
-          );
-        } catch (error: unknown) {
-          if (isMySqlIdentitySessionRefreshReuseDetectedConditionalConflict(error)) {
-            return context.requestRollback('conditional-conflict');
-          }
-
-          throw error;
-        }
-      } finally {
-        closeIdentitySessionRefreshWorkflow(workflow.controller);
-      }
-    },
-    statements: IDENTITY_SESSION_REFRESH_REUSE_PROGRAM_MYSQL_STATEMENTS,
-    unavailableFailure: 'unavailable' as const,
-  });
-}
-
 async function executeReuseDetected(
   context: IntegrationContext,
   fixture: ReuseDetectedFixture,
-): Promise<
-  MySqlTransactionOutcome<ReuseDetectedProgramCommit, IdentitySessionRefreshMySqlTransactionFailure>
-> {
+): Promise<IdentitySessionRefreshOutcome> {
   const ticket = await discoverTicket(context, fixture.presentedCredential);
   const attempt = await credentialAttempt(fixture);
-  const executor = createMySqlTransactionExecutor(
-    context.runtime,
-    createReuseDetectedProgram(context.client, context.discovery),
-    { timeoutMilliseconds: TRANSACTION_TIMEOUT_MILLISECONDS },
-  );
 
-  return executor.execute(
-    Object.freeze({
-      accessCredentialId: fixture.decisionAccessCredentialId,
-      attempt,
-      eventId: fixture.eventId,
+  return context.unitOfWork.execute(
+    createIdentitySessionRefreshCommand({
+      discoveryTicket: ticket,
+      credentialAttempt: attempt,
       successorRefreshCredentialId: fixture.decisionSuccessorCredentialId,
-      ticket,
+      refreshIdleLifetimeSeconds: 900,
+      issuedAccessCredentialId: fixture.decisionAccessCredentialId,
+      accessLifetimeSeconds: 300,
+      securityEventId: fixture.eventId,
     }),
   );
-}
-
-function createRotatedProgram(
-  client: PrismaClient,
-  discovery: IdentitySessionRefreshDiscovery,
-): MySqlTransactionProgram<
-  RotatedProgramInput,
-  RotatedProgramCommit,
-  IdentitySessionRefreshMySqlTransactionFailure,
-  RotatedProgramStatement
-> {
-  return Object.freeze({
-    defectFailure: 'execution-defect' as const,
-    failures: Object.freeze([
-      'credential-collision',
-      'conditional-conflict',
-      'unavailable',
-      'execution-defect',
-    ] as const),
-    async run(context, input) {
-      const workflow = createIdentitySessionRefreshAttemptBoundWorkflow(input.attempt);
-
-      try {
-        const transaction = activateIdentitySessionRefreshWorkflow(
-          workflow.controller,
-          context.writerTime,
-        );
-        const loader = createMySqlIdentitySessionRefreshLockedLoader(
-          client,
-          context,
-          discovery,
-          workflow.controller,
-        );
-        const writer = createMySqlIdentitySessionRefreshRotatedWriter(context, workflow.controller);
-        const load = await loader.loadForUpdate(transaction.scope, input.ticket);
-        const decision = decideIdentitySessionRefresh(
-          transaction,
-          load,
-          Object.freeze({
-            successorRefreshCredentialId: input.successorRefreshCredentialId,
-            refreshIdleLifetimeSeconds: 900,
-            issuedAccessCredentialId: input.accessCredentialId,
-            accessLifetimeSeconds: 300,
-          }),
-        );
-
-        if (decision.kind !== 'rotated') {
-          throw new Error('Expected the active credential to produce a rotation decision');
-        }
-
-        try {
-          const evidence = await writer.persistRotated(
-            transaction.scope,
-            Object.freeze({ decision, securityEventId: input.eventId }),
-          );
-
-          return context.requestCommit(
-            Object.freeze({
-              accessCredentialExpiresAt: evidence.accessCredentialExpiresAt,
-              accessCredentialIssuedAt: evidence.accessCredentialIssuedAt,
-              kind: evidence.kind,
-              principal: evidence.principal,
-              refreshAbsoluteExpiresAt: evidence.refreshAbsoluteExpiresAt,
-              refreshIdleExpiresAt: evidence.refreshIdleExpiresAt,
-              writerTime: transaction.dbNow,
-            }),
-          );
-        } catch (error: unknown) {
-          if (isMySqlIdentitySessionRefreshRotatedConditionalConflict(error)) {
-            return context.requestRollback('conditional-conflict');
-          }
-
-          throw error;
-        }
-      } finally {
-        closeIdentitySessionRefreshWorkflow(workflow.controller);
-      }
-    },
-    statements: IDENTITY_SESSION_REFRESH_ROTATED_PROGRAM_MYSQL_STATEMENTS,
-    unavailableFailure: 'unavailable' as const,
-  });
 }
 
 async function executeRotated(
   context: IntegrationContext,
   fixture: RotatedFixture,
-): Promise<
-  MySqlTransactionOutcome<RotatedProgramCommit, IdentitySessionRefreshMySqlTransactionFailure>
-> {
+): Promise<IdentitySessionRefreshOutcome> {
   const ticket = await discoverTicket(context, fixture.credential);
   const attempt = await rotatedCredentialAttempt(fixture);
-  const executor = createMySqlTransactionExecutor(
-    context.runtime,
-    createRotatedProgram(context.client, context.discovery),
-    { timeoutMilliseconds: TRANSACTION_TIMEOUT_MILLISECONDS },
-  );
 
-  return executor.execute(
-    Object.freeze({
-      accessCredentialId: fixture.decisionAccessCredentialId,
-      attempt,
-      eventId: fixture.eventId,
+  return context.unitOfWork.execute(
+    createIdentitySessionRefreshCommand({
+      discoveryTicket: ticket,
+      credentialAttempt: attempt,
       successorRefreshCredentialId: fixture.decisionSuccessorCredentialId,
-      ticket,
+      refreshIdleLifetimeSeconds: 900,
+      issuedAccessCredentialId: fixture.decisionAccessCredentialId,
+      accessLifetimeSeconds: 300,
+      securityEventId: fixture.eventId,
     }),
   );
 }
@@ -1531,7 +1309,7 @@ async function cleanFixtures(context: IntegrationContext): Promise<void> {
 }
 
 void test(
-  'Identity refresh direct transaction stores satisfy their prepared MySQL contract',
+  'Identity refresh direct transaction composition satisfies its prepared MySQL contract',
   { timeout: INTEGRATION_TEST_TIMEOUT_MILLISECONDS },
   async (testContext) => {
     const integration = await openContext();
@@ -1597,21 +1375,26 @@ void test(
             throw new Error(`Expected committed reuse persistence, received ${outcome.kind}`);
           }
 
-          assert.deepEqual(outcome.result, {
-            kind: 'reuse-detected',
-            writerTime: outcome.result.writerTime,
-          });
+          const completion = inspectIdentitySessionRefreshCommittedCompletion(outcome);
+
+          assert.strictEqual(completion, outcome);
+          assert.equal(completion.evidence.kind, 'reuse-detected');
           const family = await readSessionFamilyPersistence(integration, fixture.sessionFamily.id);
           const events = await readSecurityEvents(integration, fixture.sessionFamily.id);
           const credentialsAfter = await readCredentialPersistenceState(
             integration,
             fixture.sessionFamily.id,
           );
+          const writerTime = family.revoked_at;
+
+          if (writerTime === null) {
+            throw new Error('Expected the reused family to retain the transaction writer time');
+          }
 
           assert.deepEqual(family, {
             closed_reason: 'REFRESH_REUSE_DETECTED',
             last_rotated_at: fixture.sessionFamily.lastRotatedAt,
-            revoked_at: outcome.result.writerTime,
+            revoked_at: writerTime,
             session_id: fixture.sessionFamily.id,
             version: 3n,
           });
@@ -1621,7 +1404,7 @@ void test(
               correlation_id: null,
               event_id: fixture.eventId,
               event_type: 'SESSION_REFRESH',
-              occurred_at: outcome.result.writerTime,
+              occurred_at: writerTime,
               operator_reference: null,
               outcome: 'REJECTED',
               permission_code: null,
@@ -1656,8 +1439,8 @@ void test(
           const outcome = await executeReuseDetected(integration, fixture);
 
           assert.deepEqual(outcome, {
-            failure: 'unavailable',
             kind: 'not-committed',
+            reason: 'unavailable',
           });
           assert.deepEqual(
             await readSessionFamilyPersistence(integration, fixture.sessionFamily.id),
@@ -1692,12 +1475,21 @@ void test(
             throw new Error(`Expected committed rotation persistence, received ${outcome.kind}`);
           }
 
-          const refreshIdleExpiresAt = offsetInstant(outcome.result.writerTime, 900);
-          const accessExpiresAt = offsetInstant(outcome.result.writerTime, 300);
+          const completion = inspectIdentitySessionRefreshCommittedCompletion(outcome);
+          const evidence = completion.evidence;
 
-          assert.deepEqual(outcome.result, {
+          if (evidence.kind !== 'rotated') {
+            throw new Error(`Expected rotated evidence, received ${evidence.kind}`);
+          }
+
+          const writerTime = evidence.accessCredentialIssuedAt;
+          const refreshIdleExpiresAt = offsetInstant(writerTime, 900);
+          const accessExpiresAt = offsetInstant(writerTime, 300);
+
+          assert.strictEqual(completion, outcome);
+          assert.deepEqual(evidence, {
             accessCredentialExpiresAt: accessExpiresAt,
-            accessCredentialIssuedAt: outcome.result.writerTime,
+            accessCredentialIssuedAt: writerTime,
             kind: 'rotated',
             principal: {
               actorId: fixture.account.id,
@@ -1706,9 +1498,8 @@ void test(
             },
             refreshAbsoluteExpiresAt: fixture.sessionFamily.refreshAbsoluteExpiresAt,
             refreshIdleExpiresAt,
-            writerTime: outcome.result.writerTime,
           });
-          assert.match(outcome.result.writerTime, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/u);
+          assert.match(writerTime, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/u);
 
           const persisted = await readRotatedPersistenceSnapshot(integration, fixture);
 
@@ -1718,7 +1509,7 @@ void test(
                 credential_id: fixture.decisionAccessCredentialId,
                 digest_hex: digestHex(fixture.accessCandidate.digestBytes),
                 expires_at: accessExpiresAt,
-                issued_at: outcome.result.writerTime,
+                issued_at: writerTime,
                 sequence: 8n,
                 session_id: fixture.sessionFamily.id,
               },
@@ -1726,7 +1517,7 @@ void test(
             refresh: [
               {
                 active_slot: null,
-                consumed_at: outcome.result.writerTime,
+                consumed_at: writerTime,
                 credential_id: fixture.credential.snapshot.id,
                 digest_hex: digestHex(fixture.credential.digestBytes),
                 expires_at: fixture.credential.snapshot.expiresAt,
@@ -1741,7 +1532,7 @@ void test(
                 credential_id: fixture.decisionSuccessorCredentialId,
                 digest_hex: digestHex(fixture.refreshCandidate.digestBytes),
                 expires_at: refreshIdleExpiresAt,
-                issued_at: outcome.result.writerTime,
+                issued_at: writerTime,
                 sequence: 8n,
                 session_id: fixture.sessionFamily.id,
                 successor_id: null,
@@ -1752,7 +1543,7 @@ void test(
             absolute_expires_at: fixture.sessionFamily.refreshAbsoluteExpiresAt,
             closed_reason: null,
             idle_expires_at: refreshIdleExpiresAt,
-            last_rotated_at: outcome.result.writerTime,
+            last_rotated_at: writerTime,
             revoked_at: null,
             session_id: fixture.sessionFamily.id,
             version: 8n,
@@ -1763,7 +1554,7 @@ void test(
               correlation_id: null,
               event_id: fixture.eventId,
               event_type: 'SESSION_REFRESH',
-              occurred_at: outcome.result.writerTime,
+              occurred_at: writerTime,
               operator_reference: null,
               outcome: 'SUCCEEDED',
               permission_code: null,
@@ -1792,8 +1583,8 @@ void test(
           const outcome = await executeRotated(integration, fixture);
 
           assert.deepEqual(outcome, {
-            failure: 'credential-collision',
             kind: 'not-committed',
+            reason: 'credential-collision',
           });
           assert.equal(before.credentials.refresh.length, 1);
           assert.equal(before.credentials.access.length, 0);
@@ -1819,8 +1610,8 @@ void test(
           const outcome = await executeRotated(integration, fixture);
 
           assert.deepEqual(outcome, {
-            failure: 'conditional-conflict',
             kind: 'not-committed',
+            reason: 'conditional-conflict',
           });
           assert.equal(before.credentials.refresh.length, 2);
           assert.equal(before.credentials.access.length, 0);
@@ -1842,8 +1633,8 @@ void test(
           const outcome = await executeRotated(integration, fixture);
 
           assert.deepEqual(outcome, {
-            failure: 'unavailable',
             kind: 'not-committed',
+            reason: 'unavailable',
           });
           assert.equal(before.credentials.refresh.length, 1);
           assert.equal(before.credentials.access.length, 0);

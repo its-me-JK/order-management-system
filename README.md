@@ -98,7 +98,12 @@ lifecycle loads, six-digit projections, digest-drift not-found, and
 causal shared-Account first-lock contention on separate `READ-COMMITTED`
 transaction connections. The same guarded gate now runs the direct loader
 through the fixed executor and proves the real connector's numeric/result
-shape, six-digit rehydration, and digest-drift not-found.
+shape, six-digit rehydration, and digest-drift not-found. It also invokes the
+production package-internal refresh Unit of Work for reuse and rotation:
+acknowledged commits return runtime-authentic committed completions only after
+program close, while representative event, credential, and generation
+collisions return their closed non-commit reasons and roll back the earlier
+mutation graph.
 Its loopback TCP listener accepts a connection but deliberately never performs
 the MySQL handshake; that loopback TCP accept/handshake stall proves fixed,
 cause-free unavailability only. It does not prove cancellation or quarantine
@@ -113,19 +118,20 @@ orchestration performs one locked load and decision, reaches only the matching
 rejected, rotated, or reuse branch, and authenticates the pending-evidence
 handoff. It accepts no caller callback and still grants no commit or credential
 delivery authority.
-The uncomposed Identity Prisma slice and reviewed migrations persist Account,
-SessionFamily, retained refresh lineage, generation-bound access records, and
-the first authorization/security-evidence records. The versioned authorization
-registry seeds exactly seven permissions and one explicitly mapped
-`SYSTEM_ADMINISTRATOR`; no role is a wildcard and future permissions are not
-granted implicitly. Role state, permission mappings, and Account assignments
-have constrained keys and `RESTRICT` references. Typed security events
-normalize 19 action types against compatible `SUCCEEDED`/`REJECTED` outcomes
-and reasons, distinguish UUIDv4 request context from UUIDv7 Identity objects,
-and contain neither arbitrary JSON nor retention-coupling foreign keys. Seed
-rows are configuration rather than fabricated runtime events, and append-only
-behavior remains logical under the current shared database role. The future
-Unit of Work must enforce at most 16 total role assignments per Account.
+The package-internal Identity persistence slice and reviewed migrations
+persist Account, SessionFamily, retained refresh lineage, generation-bound
+access records, and the first authorization/security-evidence records. The
+versioned authorization registry seeds exactly seven permissions and one
+explicitly mapped `SYSTEM_ADMINISTRATOR`; no role is a wildcard and future
+permissions are not granted implicitly. Role state, permission mappings, and
+Account assignments have constrained keys and `RESTRICT` references. Typed
+security events normalize 19 action types against compatible
+`SUCCEEDED`/`REJECTED` outcomes and reasons, distinguish UUIDv4 request context
+from UUIDv7 Identity objects, and contain neither arbitrary JSON nor
+retention-coupling foreign keys. Seed rows are configuration rather than
+fabricated runtime events, and append-only behavior remains logical under the
+current shared database role. The future Unit of Work must enforce at most 16
+total role assignments per Account.
 Identity now has its first real Prisma read adapter: a package-internal,
 digest-level authority port resolves current Account, SessionFamily, Role, and
 Permission state in one bounded writer-MySQL statement. It distinguishes
@@ -150,25 +156,33 @@ invokes it exactly once after the actual fixed program Promise settles, its
 statement session is sealed, and its tracked statement operation has drained,
 even when `execute` already returned
 `indeterminate`. The observer receives only the original input and no result,
-error, transaction outcome, connection, SQL, or settlement authority. This is
-only the prerequisite for the future Unit of Work's two-sided rendezvous; it is
-not commit proof and cannot alter an already-returned outcome. There is still
-no concrete Unit of Work, Identity-owned post-deadline command cleanup,
-database-gated completion activation, credential-delivery gate,
-remaining security-event adapters, NestJS composition, Argon2 adapter,
-password input policy, or Redis abuse control completing the runtime path. The
-direct executor quarantines its exact connection, but it may return
-`indeterminate` before the program Promise and tracked statement have settled;
-the full Unit of Work must pair the later settlement notification, or proof
-that the program never started, with its independently known database outcome
-before it retires the attempt. Before credential ingress becomes public,
-production
+error, transaction outcome, connection, SQL, or settlement authority.
+A concrete package-internal direct-MySQL refresh Unit of Work now captures one
+closed 12-statement program, requires the discovery adapter paired with the
+exact runtime-owned Prisma client, synchronously admits the opaque command, and
+composes the locked loader and both writers on the executor's one connection
+and writer time. Its module-owned start marker and the settlement observer form
+a two-sided rendezvous with the independently returned database outcome. Only
+an acknowledged `COMMIT`, the exact returned evidence identity, and successful
+post-seal command close can promote the dormant completion. Proven non-commit
+maps only the three allowed caller reasons after revocation; malformed,
+ambiguous, or otherwise unsafe settlement becomes `indeterminate`. If the
+deadline returns `indeterminate` first, the later observer closes and revokes
+the exact attempt without changing that already-returned result. The adapter
+accepts no callback, exposes no transaction or SQL capability, performs no
+retry, grants no credential-delivery authority, and remains outside every
+Identity package export. The exact-pair credential-delivery gate, public
+refresh use case, remaining security-event adapters, NestJS composition,
+Argon2 adapter, password input policy, and Redis abuse control still do not
+complete the runtime path. The invariant-failure quarantine also needs bounded
+observability and an explicit unhealthy-process recycle policy before public
+refresh traffic. Before credential ingress becomes public, production
 configuration must disable Prisma driver-adapter debug/query logging because
 those namespaces can emit bound digest arguments. That configuration gate is
 not implemented yet, so public credential ingress remains blocked. Pricing,
 inventory, Redis caching, and integration events remain separate later slices.
 
-**Overall project progress: 38%.** The fixed, deployment-inclusive scoring
+**Overall project progress: 39%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
 
 ## Planned technology
@@ -343,9 +357,9 @@ pnpm test:integration:catalog
 The database package owns Prisma generation and one ordered forward-only
 migration history. Module-owned Prisma models compose into that schema; the
 reviewed migrations create Catalog Product and SKU records, then safely expand
-their lifecycle invariants, and add uncomposed Identity refresh lineage,
-authorization registry, Role mappings, Account assignments, and security
-evidence. Generated Prisma code is local build output and is not
+their lifecycle invariants, and add Identity refresh lineage, authorization
+registry, Role mappings, Account assignments, and security evidence. Generated
+Prisma code is local build output and is not
 committed. The dedicated Identity verifiers apply the complete migration
 history twice in isolated main and shadow databases, prove Prisma has no
 representable schema drift, and adversarially check byte-exact codes, exact
@@ -375,15 +389,18 @@ semantics.
 The dedicated locked-loader command reuses one guarded disposable database for
 several sequential proofs. The Prisma reference suite establishes the global
 lock order, query plans, retained-lifecycle mapping, and causal Account contention;
-the direct suite executes the same three locks as prepared statement tokens on
-the sealed executor's exact connection and proves the pinned connector result
-shape, numeric mapping, six-digit instants, and digest-drift not-found. It also
-executes the two-token reuse branch and seven-token rotation branch, proving
-the exact rotated credential graph, authority-derived principal, successful
-event, every mapped duplicate constraint, and rollback on credential,
-generation, and final event collisions. These are transaction-branch proofs,
-not commit-confirmed completion or credential delivery. The runner drops and
-independently verifies both its database and temporary DML grant.
+the direct read suite executes the same three locks as prepared statement tokens
+on the sealed executor's exact connection and proves the pinned connector
+result shape, numeric mapping, six-digit instants, and digest-drift not-found.
+The same runner invokes the production Unit of Work for the two-token reuse and
+seven-token rotation branches, proving acknowledged-commit completion, the
+exact rotated credential graph, authority-derived principal, successful event,
+and rollback with the three closed external reasons for representative
+credential, generation, and final-event collisions. Separate writer-level
+probes cover every mapped duplicate constraint. These are transaction and
+completion proofs, not credential delivery, per-operation rollback injection,
+competing refresh, or protocol-level commit-acknowledgement loss. The runner
+drops and independently verifies both its database and temporary DML grant.
 The Catalog integration command verifies an initial-schema
 upgrade with legacy rows, rejects ambiguous terminal history before DDL, and
 also creates, migrates twice, and removes an exact fresh
@@ -560,7 +577,7 @@ Useful repository commands:
 | `pnpm test:integration:identity-authority` | Verify the bounded Identity access-authority reader in an isolated local MySQL database |
 | `pnpm test:integration:identity-authorization` | Verify the Identity authorization registry, Role mappings, security-event schema, and Prisma drift against isolated real MySQL databases |
 | `pnpm test:integration:identity-refresh-discovery` | Verify lifecycle-blind refresh-digest discovery and its production Prisma query in an isolated local MySQL database |
-| `pnpm test:integration:identity-refresh-locked-loader` | Verify the Prisma reference lock contract and direct prepared exact-connection loader, including lossless rehydration and causal Account contention, in an isolated local MySQL database |
+| `pnpm test:integration:identity-refresh-locked-loader` | Verify the Prisma reference lock contract and production direct refresh transaction composition, including exact-connection locking, commit-gated completion, rollback mapping, lossless rehydration, and causal Account contention, in an isolated local MySQL database |
 | `pnpm test:integration:identity-refresh-lineage` | Verify the Identity lineage migration, invariants, and Prisma drift against isolated real MySQL databases |
 | `pnpm format:check` | Verify formatting without modifying files |
 | `pnpm check` | Run every required quality gate in CI order |

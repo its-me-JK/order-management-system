@@ -336,7 +336,7 @@ export function createIdentitySessionRefreshCommand(
 
 /**
  * Synchronously consumes one command and claims its verified credential attempt.
- * The future Unit of Work calls this before its first asynchronous operation.
+ * The concrete Unit of Work calls this before its first asynchronous operation.
  */
 export function admitIdentitySessionRefreshCommand(
   commandValue: IdentitySessionRefreshCommand,

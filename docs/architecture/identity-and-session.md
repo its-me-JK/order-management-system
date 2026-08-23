@@ -1129,11 +1129,11 @@ empty, frozen, runtime-authentic `IdentitySessionRefreshCommand` binds the
 authentic discovery-ticket identity, verified credential-attempt identity,
 pre-generated successor and access identifiers, both configured lifetimes,
 and the SecurityEvent identifier. Admission is synchronous and one-shot: it
-consumes the command and claims its attempt before the future Unit of Work may
+consumes the command and claims its attempt before the concrete Unit of Work may
 perform an asynchronous operation. After activation, fixed package-owned code
 performs exactly one locked load, one decision, and exactly one matching
 terminal branch. It authenticates and consumes the resulting pending evidence
-as the handoff to future commit handling. It accepts no caller callback and
+as the handoff to private commit handling. It accepts no caller callback and
 still grants no commit or credential-delivery authority.
 
 The fourth executable increment is application-only and delivered. It defines
@@ -1218,18 +1218,40 @@ the principal and mints pending evidence, after both authority projection and
 the final event succeed. The writer has no raw connection, settlement, retry,
 wire-value, credential-delivery, or package-export authority.
 
-This is still not the concrete Unit of Work. The executor can seal and return
-`indeterminate` when its deadline wins while the program Promise is still
-settling. At that instant a refresh command may remain `running`, and the
-existing close transition correctly refuses to retire it concurrently. The
-executor now supplies the prerequisite notification seam: an optional,
-construction-captured, receiver-free, synchronous
-`observeProgramSettlement(input)` runs exactly once after the actual program
-Promise fulfils or rejects, statement authority is sealed, and the exact tracked
-statement operation has drained, including after the caller has already
-received `indeterminate`. Assuming socket destruction or the observer alone
-settles the command, proves commit, or authorizes credential delivery remains
-forbidden.
+The ninth executable increment is the package-internal direct-MySQL Unit of
+Work and is delivered. Its factory recovers the Prisma client owned by one
+authentic `DatabaseRuntime`, requires the supplied discovery capability to be
+paired with that exact client, and captures one executor program containing the
+12 reviewed lock, rotation, authority, event, and reuse statement tokens. It
+adds no Identity root export or infrastructure package subpath. `execute`
+synchronously admits the opaque command before invoking the executor once. The
+fixed program activates that command with the executor's one writer time and
+composes the direct locked loader and both writers through its one statement
+context; callers cannot choose a callback, statement, branch, retry, or
+settlement.
+
+One private per-execution record joins the database outcome with program-side
+settlement. The synchronous start marker proves when the fixed program never
+started. Otherwise the executor's receiver-free
+`observeProgramSettlement(input)` notification closes the command only after
+the program Promise has settled, statement authority is sealed, and the exact
+tracked operation has drained. An acknowledged `COMMIT` promotes only the exact
+evidence identity returned by that program and only after successful close.
+Proven non-commit revokes that evidence before mapping the three allowed caller
+reasons; an execution defect rejects with the fixed cause-free error. Malformed,
+mismatched, unexpectedly rejected, or otherwise unsafe executor settlement
+becomes `indeterminate` without reading or retaining a provider cause.
+
+If the database deadline returns `indeterminate` while the program is still
+running, the caller receives that fixed result immediately. The later observer
+then closes the exact command and revokes its evidence without changing the
+already-returned result. Failed close, or failed promotion followed by failed
+fallback revocation, grants no committed authority and retains the failed record
+in a private quarantine rather than pretending cleanup succeeded. A program
+Promise that never settles keeps both its connection and attempt quarantined
+until the runtime and deployment termination backstops. Neither the observer
+nor socket destruction is commit proof, retry authority, or credential-delivery
+authority.
 
 Identity uses a hybrid boundary rather than repositories per aggregate. A
 small `IdentitySessionRefreshUnitOfWork` owns transaction completion. Separate purpose-built
@@ -1271,7 +1293,7 @@ orchestration receives one exact frozen context containing:
 
 The internal context factory copies and validates `dbNow`, authenticates the
 scope by identity rather than `instanceof` or a structural brand, and freezes
-both values. The future adapter invalidates the scope immediately when the
+both values. The concrete adapter invalidates the scope immediately when the
 callback settles and before it begins `COMMIT` or rollback handling. A retained,
 forged, cloned, proxied, foreign-transaction, or already-closed scope must fail
 before another database operation. Nested transactions, concurrent operations
@@ -1338,7 +1360,7 @@ cross-scope violations collapse to one fresh cause-free
 `InvalidIdentitySessionRefreshWorkflowError`; established domain policy errors
 remain their fixed internal errors after the workflow is irreversibly failed.
 
-The future transaction orchestration may return only an authentic package-internal
+The fixed transaction orchestration may return only an authentic package-internal
 `IdentityTransactionEvidence`. For this slice the closed refresh evidence is:
 
 - exact frozen `rejected`, with no principal or credential field;
@@ -1405,9 +1427,10 @@ an ambiguous attempt. Pending evidence captured by orchestration never changes
 identity into committed evidence; post-commit promotion is a separate
 synchronous, non-throwing registry transition. The delivered application
 transition can be exercised only with an authentic controller and consumed
-evidence after scope close. Its tests prove capability behavior, not a database
-commit; only the future connection-owning adapter may invoke it after a real
-`COMMIT` acknowledgement.
+evidence after scope close. Its application tests prove capability behavior,
+not a database commit. The delivered connection-owning adapter is its only
+production caller after a real `COMMIT` acknowledgement, and the guarded
+real-MySQL suite proves that integration for reuse and rotation.
 
 Callback evidence is pending, not delivery authority. Its private registration
 binds the exact scope, registered decision, and, for rotation, the authentic
@@ -1430,13 +1453,13 @@ transaction scope and clears aggregate, decision, and action registrations.
 Unconsumed evidence and every other pre-handoff path retire the claimed
 candidate attempt. Consumed evidence and its exact admitted attempt survive
 scope close only under the private controller while the outer transaction
-outcome is unresolved. The Unit of Work must promote or revoke that
-registration and remove every unneeded retained reference after confirmed
+outcome is unresolved. The Unit of Work promotes or revokes that registration
+and removes every unneeded retained reference after confirmed
 commit, confirmed non-commit, or an indeterminate outcome. Both settlement
 transitions are one-shot and non-throwing: an invalid or replayed transition
 produces no completion and never changes a rightful registration.
 
-The future direct-MySQL Unit of Work uses a two-sided rendezvous per admitted
+The delivered direct-MySQL Unit of Work uses a two-sided rendezvous per admitted
 command. One side records the executor's database outcome. The program side is
 ready either when the Unit of Work's synchronous start marker still proves the
 fixed program was never invoked, or when `observeProgramSettlement(input)`
@@ -1449,7 +1472,9 @@ are ready. Proven non-commit or an indeterminate outcome may revoke the exact
 evidence and retire the attempt only when both sides are ready. If the database
 deadline wins first, the caller receives the fixed `indeterminate` result
 immediately; the later observer notification completes safe command closure and
-revocation without changing that returned result.
+revocation without changing that returned result. Focused tests prove the
+no-start path, exact-evidence commit promotion, mapped non-commit, malformed and
+mismatched outcomes, failed cleanup quarantine, and late observer cleanup.
 
 The observer receives only its original program input. It receives no command
 result or error, transaction outcome, connection, statement context, SQL,
@@ -1536,11 +1561,11 @@ Neither that inspector nor the authority is exported from an Identity barrel.
 This pairing prevents a structurally convincing caller object from minting a
 ticket that the loader will trust and prevents an authentic discovery from
 being silently paired with another writer database. The delivered Prisma
-locked loader remains a load-only invariant and mapping proof, not the future
-Unit-of-Work adapter. The concrete Unit of Work must replace its query
-capability with a direct-driver scoped loader recovered from the same
-`DatabaseRuntime` as discovery's Prisma writer. No Prisma transaction client
-may participate in, or represent, the direct transaction.
+locked loader remains a load-only invariant and mapping proof, not the
+Unit-of-Work adapter. The concrete Unit of Work instead constructs the adjacent
+direct-driver scoped loader after recovering the same `DatabaseRuntime` and
+exact Prisma writer paired with discovery. No Prisma transaction client may
+participate in, or represent, the direct transaction.
 
 Each discovery performs one non-transactional equality lookup against the
 unique `BINARY(32)` refresh-digest index on the MySQL writer and limits the
@@ -1570,7 +1595,7 @@ error. The adapter overwrites its temporary digest copy in `finally` before it
 maps or returns any outcome.
 
 This preliminary read costs one extra writer round trip and can race with the
-future transaction. It intentionally shortens the later lock window without
+refresh transaction. It intentionally shortens the later lock window without
 pretending to authorize refresh: the ticket carries identifiers only, and the
 paired store must consume it, lock and reload all authoritative rows, and make
 the lifecycle decision inside the Unit of Work. Moving discovery into the
@@ -1661,28 +1686,29 @@ exception, vendor code, query, constraint, or digest. `not-found` is a normal
 locked-load result, not an outage or write conflict. This read-only boundary
 cannot classify credential collision, conditional conflict, rollback, or commit
 ambiguity; those classifications belong to the delivered scoped writers and
-future Unit of Work.
+concrete Unit of Work.
 
 This is intentionally not the Unit of Work. The loader neither starts nor
 settles a transaction, reads writer time, tracks or cancels concurrent scoped
 operations, decides lifecycle, performs DML, appends an event, classifies a
 write conflict, retries, commits, rolls back, or authorizes credential
-delivery. It assumes an already-active transaction and gives the future Unit
+delivery. It assumes an already-active transaction and gives the concrete Unit
 of Work only the narrow locked-load mechanism that the application workflow
-can authenticate today. Landing the complete writer and commit protocol in the
-same change would mix deterministic row mapping with rollback injection,
+can authenticate. Landing the complete writer and commit protocol in that same
+earlier change would have mixed deterministic row mapping with rollback injection,
 constraint allowlisting, ambiguous commit, and secret-delivery authority,
 making failures harder to localize and review.
 
 The application commit-completion capability is delivered. It pre-registers a
 distinct runtime-authentic completion bound to the exact attempt, promotes only
 consumed evidence after scope close, and supplies the one-shot revocation
-transition required by non-commit and ambiguous paths. The future Unit of Work
-must invoke the correct transition on every real settlement path. Pending
-evidence or a structurally similar object can never become commit proof. The
-concrete direct-MySQL Unit of Work and the rotation-only delivery gate remain
-blockers: these application tests cannot prove that a database actually
-acknowledged `COMMIT`, and no delivered capability reveals either wire value.
+transition required by non-commit and ambiguous paths. The concrete Unit of
+Work invokes the correct transition only after joining real database settlement
+with program close or proven non-start. Pending evidence or a structurally
+similar object can never become commit proof. The guarded real-MySQL suite now
+proves acknowledged-commit promotion through that adapter. The rotation-only
+delivery gate remains a blocker: no delivered capability reveals either wire
+value.
 
 The delivered command's transaction-scoped `IdentitySessionRefreshStore`
 surface contains only locked load, rotated persistence, and reuse-detected
@@ -1690,7 +1716,7 @@ persistence. Rejection has no writer operation. Store calls are sequential,
 the command becomes absorbing before any extensible call, exact activated
 context identity is required before the first store access, and a returned
 pending-evidence value is runtime-authenticated before handoff. Arbitrary store
-failures deliberately remain internal values for the future Unit of Work to
+failures deliberately remain internal values for the concrete Unit of Work to
 discard or classify; the command is not exported or safe for direct transport
 composition.
 
@@ -1698,13 +1724,14 @@ The prior connection-ownership blocker is now resolved by the database
 executor and the direct loader uses only that executor's statement capability.
 Prisma's public interactive transaction client still has no supported
 single-query cancellation or exact pooled-connection quarantine primitive, so
-it remains excluded from the concrete transaction. The remaining lifecycle
-work is now explicitly composable above the connection: the executor's
-post-seal program-settlement observer supplies one side of the rendezvous even
-when its deadline already returned `indeterminate`. The future Unit of Work
-must implement the Identity-owned other side, map the database outcome, and
-prove that each claimed attempt is promoted or retired only after program work
-can no longer race it. This prerequisite alone performs none of those
+it remains excluded from the concrete transaction. The concrete Unit of Work
+now owns the lifecycle above that connection: the executor's post-seal
+program-settlement observer supplies one side of the rendezvous even when its
+deadline already returned `indeterminate`, while Identity records the
+independent database outcome or synchronous proof of non-start on the other.
+Each claimed attempt may be promoted or retired only after program work can no
+longer race it; when cleanup cannot be proved, the exact state remains in
+fail-stop quarantine. The observer alone still performs none of those
 transitions.
 
 The pinned Prisma MariaDB adapter also uses debug namespaces that can render a
@@ -1724,7 +1751,7 @@ operations:
    SessionFamily, then the exact presented RefreshCredential in the global
    order. It returns exact `not-found` or `found` with only those three
    authentic aggregates. It never loads credential history or an
-   AccessCredential. Its eventual store composition remains private.
+   AccessCredential. Its concrete store composition remains private.
 2. `persistRotated(scope, { decision, securityEventId })` accepts only the
    authentic scope-bound decision containing the complete `rotated` domain
    result and one separately branded canonical UUIDv7 event identifier
@@ -1823,24 +1850,26 @@ database-executor programs. Its read-only cases prove that all three lock
 tokens execute through server-prepared binding on the exact transaction
 connection, direct unsigned integers map without Prisma normalization,
 `.123456` instants survive, and a post-discovery digest change commits as
-locked not-found. Its reuse cases extend that exact connection with the two
-fixed DML tokens. A successful real `OkPacket` transition proves family
-version/revocation persistence, the exact rejected event, and byte-for-byte
-unchanged refresh/access rows. A pre-existing event identifier makes the
-unmapped insert unavailable and proves the earlier family update is rolled
-back. These cases prove the reuse store's atomic DML composition, not the full
-Unit of Work, completion promotion, or credential delivery.
+locked not-found. Its reuse cases now invoke the production Unit of Work, which
+extends that exact connection with the two fixed DML tokens. A successful real
+`OkPacket` transition proves family version/revocation persistence, the exact
+rejected event, byte-for-byte unchanged refresh/access rows, and a
+runtime-authentic completion promoted only after acknowledged commit. A
+pre-existing event identifier returns the outer `unavailable` non-commit reason
+and proves the earlier family update is rolled back. These cases prove the
+complete reuse transaction composition, but not credential delivery.
 
-The rotation cases extend those same three locks with the seven production
-rotation tokens. A committed case proves the exact consumed predecessor,
-active successor, generation-bound access row, family version and deadlines,
-authority-derived principal, and successful null-context event at the
-transaction writer time. Direct constraint probes cover every credential,
-generation, active-slot, and predecessor-link duplicate mapping emitted by the
-pinned driver. End-to-end digest, generation, and final event collisions prove
-the complete earlier graph rolls back under credential-collision,
-conditional-conflict, and unavailable outcomes. These are branch-persistence
-proofs, not commit-confirmed completion promotion or credential delivery.
+The rotation cases invoke that same Unit of Work and extend the three locks with
+the seven production rotation tokens. A committed case proves the exact
+consumed predecessor, active successor, generation-bound access row, family
+version and deadlines, authority-derived principal, successful null-context
+event at the transaction writer time, and commit-confirmed completion
+promotion. Separate direct writer-level constraint probes cover every
+credential, generation, active-slot, and predecessor-link duplicate mapping
+emitted by the pinned driver. Production-Unit-of-Work digest, generation, and
+final-event collision cases return credential-collision,
+conditional-conflict, and unavailable respectively and prove the complete
+earlier graph rolls back. No case authorizes credential delivery.
 
 That guarded command now also executes a test-only conditional family-version
 update followed by the production rotation-authority statement in one executor
@@ -1865,26 +1894,30 @@ grant cleanup independently. Those Prisma fault cases do not prove
 cancellation of an established connection or in-flight query. The separate
 database-executor suite proves established-query quarantine and replacement
 capacity. This Identity suite now proves successful rotation DML and natural
-constraint/event rollback, but deliberately does not claim injected rollback
-after every operation, protocol-level commit-acknowledgement loss,
-post-deadline cleanup, or completion promotion.
+constraint/event rollback through the production Unit of Work plus real-commit
+completion promotion. The focused Unit-of-Work suite separately proves
+post-deadline application cleanup with a controlled late program. Neither suite
+claims injected rollback after every operation, protocol-level
+commit-acknowledgement loss, or a competing-refresh transaction race.
 
-The application increment proves promotion, revocation, final attempt
-retirement, and a dormant exact-attempt binding, but not database settlement or
-credential delivery. The concrete Unit of Work must still prove that only its
-real commit acknowledgement can invoke promotion, the later delivery gate must
-prove exact-pair disclosure, and executor tests must prove that caught values
-with hostile getters, Proxies, coercion traps, or secret causes never escape.
-The settlement observer is only the executor-side prerequisite. The next
-direct-MySQL increment must compose the delivered locked loader and both
-writers in the concrete Unit of Work and implement the Identity side of the
-two-sided cleanup rendezvous. Together they must prove zero
-orchestration before a valid context, one orchestration otherwise, one writer
-time, one connection, operation tracking and bounded drain, DML order,
-affected-row checks, rollback injection after every statement, exact
-statement-and-constraint allowlisting, commit ambiguity, post-seal attempt
-retirement, no retry, escaped-scope rejection, and competing-refresh behavior
-against real MySQL.
+The concrete adapter now turns the previously dormant exact-attempt binding
+into database-gated promotion or revocation. Focused adversarial tests prove one
+closed 12-token program, synchronous admission, exact-evidence promotion after
+program close and acknowledged commit, the three allowed no-start non-commit
+mappings, cause-free execution defects, accessor-backed and mismatched outcome
+rejection, unexpected executor rejection, failed-close and failed-transition
+quarantine, late-observer retirement, runtime/discovery pairing, and package
+surface isolation. The executor remains the only owner of one connection,
+writer time, operation drain, deadline, rollback, and commit ambiguity; the
+Identity adapter neither retries nor treats its observer as commit proof.
+
+The remaining transaction proof matrix is deliberately narrower than the
+delivered implementation. It must inject rollback after every participating
+operation, exercise escaped-scope attempts through the production composition,
+prove competing refresh behavior against real MySQL, and simulate
+protocol-level commit-acknowledgement loss. The later delivery gate must
+separately prove exact-pair disclosure. Until then, no committed completion is
+credential-delivery authority.
 
 The rejected alternatives are public aggregate repositories and one Unit of
 Work containing every query and mutation. Repositories make partial refresh
@@ -1916,9 +1949,9 @@ consequence is that consumed pending evidence must survive program-scope close:
 the scope must be invalid before `COMMIT`, while confirmed commit still needs
 the exact attempt binding for later delivery. That retained registration grants
 neither SQL nor delivery authority. The next improvements are the exact-pair
-delivery gate and an Identity MySQL Unit of Work that composes the delivered
-scoped stores, maps the executor's settlement outcome, and joins it with the
-post-seal program notification before completion promotion or revocation.
+delivery gate and the remaining real-MySQL fault matrix for the delivered Unit
+of Work: per-operation rollback injection, competing refresh, escaped scope,
+and protocol-level commit-acknowledgement loss.
 
 ## Credential and password representation
 
@@ -2934,11 +2967,14 @@ command, refresh-specific Unit-of-Work port, dormant commit-completion
 registry, direct reuse writer, shared authority projection mapper, and private
 same-connection rotation-authority statement are also delivered. The private
 direct rotation writer now composes the five graph mutations, authority read,
-and successful event on that connection. The database executor now also
-delivers the receiver-free post-seal program-settlement observer prerequisite.
-The Identity-owned two-sided command cleanup rendezvous, concrete direct-MySQL
-Unit of Work, database-gated promotion, delivery gate, remaining security-event
-paths, cleanup use case, NestJS composition, and complete delivery-gate tests
+and successful event on that connection. The concrete package-internal
+direct-MySQL Unit of Work now captures all 12 statement tokens, pairs discovery
+with the exact runtime, composes those stores on one executor connection, maps
+the closed database outcomes, promotes exact evidence only after acknowledged
+commit and program close, and implements the Identity-owned two-sided command
+cleanup rendezvous for deadline-driven `indeterminate`. The delivery gate,
+remaining security-event paths, cleanup use case, NestJS composition, complete
+delivery-gate tests, and the remaining real-MySQL Unit-of-Work fault matrix
 remain.
 A trusted caller can now
 resolve an already-extracted canonical access-wire value, but there is still no
@@ -2964,7 +3000,7 @@ public authentication surface.
   target-kind hashing, and authoritative-principal admission, while HTTP owns
   header grammar and request association. Every trusted delivery path therefore
   shares the same credential policy without importing Identity internals.
-- Non-locking refresh discovery narrows the future transaction's lock window,
+- Non-locking refresh discovery narrows the refresh transaction's lock window,
   while lifecycle-blind lookup preserves consumed predecessors as replay
   evidence. A factory-owned hidden authority and exact writer-client identity
   bind its minimal ticket to the delivered locked loader without exposing
@@ -3227,10 +3263,11 @@ public authentication surface.
     introducing a second time representation.
 37. **Why is the locked loader not already a Unit of Work?** Locking and strict
     rehydration prove only the input to a decision. A production Unit of Work
-    must additionally own a closed command, operation leases, writer time,
-    DML, rollback, commit ambiguity, connection retirement, pending-evidence
-    promotion, and exact-pair delivery. Calling a load-only adapter a Unit of
-    Work would overstate its security authority.
+    must additionally own closed-command admission, writer time, fixed-program
+    execution, DML, rollback and commit ambiguity, settlement rendezvous,
+    attempt retirement, and database-gated pending-evidence promotion. The
+    separate downstream gate owns exact-pair delivery. Calling a load-only
+    adapter a Unit of Work would overstate its transaction authority.
 38. **Why is exact-connection quarantine insufficient after a transaction
     deadline?** Destroying the socket prevents that session from being reused,
     but the JavaScript program Promise may still be settling. If the caller
@@ -3238,9 +3275,10 @@ public authentication surface.
     concurrent close cannot safely retire its credential attempt. Connection
     safety and application-capability cleanup therefore need separate proofs.
     The executor's settlement observer proves only that the top-level program
-    Promise and tracked statement work have ended; the future Unit of Work must
-    prohibit detached continuations and rendezvous that fact with its independent
-    database outcome before it promotes or revokes exact attempt evidence.
+    Promise and tracked statement work have ended. The delivered Unit of Work
+    captures one reviewed fixed program with no detached continuation and joins
+    that fact with its independent database outcome before it promotes or
+    revokes exact attempt evidence.
 
 ## Future improvements
 
@@ -3269,16 +3307,19 @@ public authentication surface.
   crypto-availability metrics, and evaluate FIPS/runtime attestation where a
   deployment requires it. A future HSM or managed provider remains a separate
   implementation of the unchanged application port.
-- Compose the delivered direct locked loader, rotation writer, and reuse writer
-  inside the concrete Identity refresh Unit of Work; add the exact-pair
-  delivery gate. Prove scope escape, rollback injection, competing refresh,
-  and ambiguous commit before extending the pattern to login, logout, Account,
-  authenticator, or Role workflows; do not generalize it into aggregate CRUD.
-- Use the delivered `observeProgramSettlement(input)` prerequisite to implement
-  the Identity-owned two-sided settlement rendezvous. Prove attempt retirement
-  after deadline-driven `indeterminate` without weakening connection
-  quarantine, treating the observer as commit proof, or allowing late program
-  work to revive authority.
+- Add the exact-pair delivery gate after the delivered concrete refresh Unit of
+  Work. Extend its real-MySQL proof with scope escape, rollback injection after
+  every participating operation, competing refresh, and protocol-level
+  commit-acknowledgement loss before applying the pattern to login, logout,
+  Account, authenticator, or Role workflows; do not generalize it into
+  aggregate CRUD.
+- Extend the delivered two-sided settlement-rendezvous proof with an
+  established-driver deadline case while preserving exact-connection
+  quarantine, never treating the observer as commit proof, and never allowing
+  late program work to revive authority.
+- Add a closed-cardinality metric and explicit unhealthy-process recycle policy
+  for the Unit of Work's fail-stop cleanup quarantine before public refresh
+  ingress; never expose command, attempt, or evidence identity in telemetry.
 - Reject Prisma driver-adapter debug namespaces and query logging in production
   configuration before public credential ingress, and regression-test that
   bound credential digests cannot bypass the application logger.

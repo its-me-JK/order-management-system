@@ -135,7 +135,7 @@ declare const identitySessionRefreshReusePersistenceActionBrand: unique symbol;
 declare const identityTransactionEvidenceBrand: unique symbol;
 declare const identitySessionRefreshCommittedCompletionBrand: unique symbol;
 
-/** Empty callback-visible identity for one future database transaction. */
+/** Empty callback-visible identity for one package-owned database transaction. */
 export type IdentityTransactionScope = Readonly<{
   readonly [identityTransactionScopeBrand]: true;
 }>;
@@ -146,7 +146,7 @@ export type IdentityTransactionContext = Readonly<{
   readonly [identityTransactionContextBrand]: true;
 }>;
 
-/** Private capability retained by the future Unit of Work and store adapter. */
+/** Private capability retained by the Unit of Work and store adapter. */
 export type IdentitySessionRefreshWorkflowController = Readonly<{
   readonly [identitySessionRefreshWorkflowControllerBrand]: true;
 }>;
