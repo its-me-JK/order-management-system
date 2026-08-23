@@ -39,6 +39,7 @@ partial-supersession relationship.
 | [0016](0016-make-retryable-commands-durably-idempotent.md) | Accepted | Make retryable commands durably idempotent |
 | [0017](0017-use-split-browser-session-credentials.md) | Accepted | Use split browser session credentials and refine the ADR-0015 HTTP delivery gate |
 | [0018](0018-own-security-critical-mysql-connections.md) | Accepted | Own connections for security-critical MySQL transactions and refine the ADR-0006/ADR-0012 persistence lifecycle |
+| [0019](0019-seal-exact-connection-mysql-transaction-programs.md) | Accepted | Seal runtime-owned exact-connection MySQL programs behind a deadline- and ambiguity-aware infrastructure executor |
 
 ## Template
 

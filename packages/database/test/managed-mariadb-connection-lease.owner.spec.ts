@@ -49,6 +49,7 @@ function connectionHarness(
   const release = jest.fn(overrides.release ?? ((): Promise<void> => Promise.resolve()));
   const connection: ManagedMariaDbAllocatedConnection = {
     destroy,
+    execute: overrides.execute ?? (<Result>(): Promise<Result> => Promise.resolve([] as Result)),
     query: overrides.query ?? (<Result>(): Promise<Result> => Promise.resolve([] as Result)),
     release,
   };
@@ -114,6 +115,246 @@ describe('ManagedMariaDbConnectionLeaseOwner', (): void => {
     expect(owner.close()).toBe(close);
     await expect(close).resolves.toBeUndefined();
     expect(harness.end).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses captured collection operations for lease authority after prototype pollution', async (): Promise<void> => {
+    const connection = connectionHarness();
+    const harness = allocatorHarness((): Promise<ManagedMariaDbAllocatedConnection> =>
+      Promise.resolve(connection.connection),
+    );
+    const owner = new ManagedMariaDbConnectionLeaseOwner(
+      (): ManagedMariaDbConnectionAllocator => harness.allocator,
+      {},
+      { shutdownGraceMilliseconds: 0 },
+    );
+    const pollutedAuthorityDispatch = jest.fn();
+    let lease: ManagedMariaDbConnectionLease | undefined;
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Restored in finally and invoked only through Reflect.apply.
+    const originalWeakMapGet = WeakMap.prototype.get;
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Restored in finally and invoked only through Reflect.apply.
+    const originalWeakMapSet = WeakMap.prototype.set;
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Restored in finally and invoked only through Reflect.apply.
+    const originalSetAdd = Set.prototype.add;
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Restored in finally and invoked only through Reflect.apply.
+    const originalSetDelete = Set.prototype.delete;
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Restored in finally and invoked only through Reflect.apply.
+    const originalSetHas = Set.prototype.has;
+    const isOwnerRegistration = (value: unknown): boolean =>
+      typeof value === 'object' &&
+      value !== null &&
+      Object.hasOwn(value, 'owner') &&
+      (value as Readonly<{ owner: unknown }>).owner === owner;
+    const isOwnerTrackedSetValue = (value: unknown): boolean =>
+      value instanceof Promise || isOwnerRegistration(value);
+    const rejectPollutedAuthorityDispatch = (operation: string): never => {
+      pollutedAuthorityDispatch(operation);
+      throw new Error(`polluted ${operation}`);
+    };
+
+    Object.defineProperty(WeakMap.prototype, 'get', {
+      configurable: true,
+      value(this: WeakMap<object, unknown>, key: object): unknown {
+        if (lease !== undefined && key === lease) {
+          rejectPollutedAuthorityDispatch('WeakMap.get');
+        }
+        return Reflect.apply(originalWeakMapGet, this, [key]);
+      },
+      writable: true,
+    });
+    Object.defineProperty(WeakMap.prototype, 'set', {
+      configurable: true,
+      value(this: WeakMap<object, unknown>, key: object, value: unknown): WeakMap<object, unknown> {
+        if (isOwnerRegistration(value)) rejectPollutedAuthorityDispatch('WeakMap.set');
+        return Reflect.apply(originalWeakMapSet, this, [key, value]);
+      },
+      writable: true,
+    });
+    Object.defineProperty(Set.prototype, 'add', {
+      configurable: true,
+      value(this: Set<unknown>, value: unknown): Set<unknown> {
+        if (isOwnerTrackedSetValue(value)) rejectPollutedAuthorityDispatch('Set.add');
+        return Reflect.apply(originalSetAdd, this, [value]);
+      },
+      writable: true,
+    });
+    Object.defineProperty(Set.prototype, 'delete', {
+      configurable: true,
+      value(this: Set<unknown>, value: unknown): boolean {
+        if (isOwnerTrackedSetValue(value)) rejectPollutedAuthorityDispatch('Set.delete');
+        return Reflect.apply(originalSetDelete, this, [value]);
+      },
+      writable: true,
+    });
+    Object.defineProperty(Set.prototype, 'has', {
+      configurable: true,
+      value(this: Set<unknown>, value: unknown): boolean {
+        if (isOwnerRegistration(value)) rejectPollutedAuthorityDispatch('Set.has');
+        return Reflect.apply(originalSetHas, this, [value]);
+      },
+      writable: true,
+    });
+
+    try {
+      lease = await owner.acquire();
+      expect(owner.connectionFor(lease)).toBe(connection.connection);
+      await expect(owner.release(lease)).resolves.toBeUndefined();
+    } finally {
+      Object.defineProperty(WeakMap.prototype, 'get', {
+        configurable: true,
+        value: originalWeakMapGet,
+        writable: true,
+      });
+      Object.defineProperty(WeakMap.prototype, 'set', {
+        configurable: true,
+        value: originalWeakMapSet,
+        writable: true,
+      });
+      Object.defineProperty(Set.prototype, 'add', {
+        configurable: true,
+        value: originalSetAdd,
+        writable: true,
+      });
+      Object.defineProperty(Set.prototype, 'delete', {
+        configurable: true,
+        value: originalSetDelete,
+        writable: true,
+      });
+      Object.defineProperty(Set.prototype, 'has', {
+        configurable: true,
+        value: originalSetHas,
+        writable: true,
+      });
+      await owner.close().catch((): void => undefined);
+    }
+
+    expect(pollutedAuthorityDispatch).not.toHaveBeenCalled();
+    expect(connection.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses captured Set size and iteration while closing with pending and active leases', async (): Promise<void> => {
+    const activeConnection = connectionHarness();
+    const lateConnection = connectionHarness();
+    const pendingConnection = deferred<ManagedMariaDbAllocatedConnection>();
+    let allocationCount = 0;
+    const harness = allocatorHarness((): Promise<ManagedMariaDbAllocatedConnection> => {
+      allocationCount += 1;
+      return allocationCount === 1
+        ? Promise.resolve(activeConnection.connection)
+        : pendingConnection.promise;
+    });
+    const owner = new ManagedMariaDbConnectionLeaseOwner(
+      (): ManagedMariaDbConnectionAllocator => harness.allocator,
+      {},
+      { shutdownGraceMilliseconds: 0 },
+    );
+    const activeLease = await owner.acquire();
+    const pendingAcquisition = owner.acquire();
+    const observePendingAcquisition = pendingAcquisition.then(
+      (): unknown => undefined,
+      (error: unknown): unknown => error,
+    );
+
+    await Promise.resolve();
+    expect(harness.getConnection).toHaveBeenCalledTimes(2);
+
+    const pollutedLifecycleDispatch = jest.fn();
+    const setSizeDescriptor = Object.getOwnPropertyDescriptor(Set.prototype, 'size');
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Restored in finally and invoked only through Reflect.apply.
+    const originalSetForEach = Set.prototype.forEach;
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Restored in finally and invoked only through Reflect.apply.
+    const originalSetHas = Set.prototype.has;
+    const originalSetIterator = Set.prototype[Symbol.iterator];
+
+    if (setSizeDescriptor?.get === undefined) throw new Error('Expected Set size getter');
+
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Restored in finally and invoked only through Reflect.apply.
+    const originalSetSize = setSizeDescriptor.get;
+    const isOwnerRegistration = (value: unknown): boolean =>
+      typeof value === 'object' &&
+      value !== null &&
+      Object.hasOwn(value, 'owner') &&
+      (value as Readonly<{ owner: unknown }>).owner === owner;
+    const isOwnerLifecycleSet = (set: Set<unknown>): boolean => {
+      if (Reflect.apply(originalSetHas, set, [pendingAcquisition])) return true;
+
+      let matched = false;
+      Reflect.apply(originalSetForEach, set, [
+        (value: unknown): void => {
+          if (isOwnerRegistration(value)) matched = true;
+        },
+      ]);
+      return matched;
+    };
+    const rejectPollutedLifecycleDispatch = (operation: string): never => {
+      pollutedLifecycleDispatch(operation);
+      throw new Error(`polluted ${operation}`);
+    };
+
+    Object.defineProperty(Set.prototype, 'size', {
+      ...setSizeDescriptor,
+      get(this: Set<unknown>): number {
+        if (isOwnerLifecycleSet(this)) rejectPollutedLifecycleDispatch('Set.size');
+        const size: unknown = Reflect.apply(originalSetSize, this, []);
+        return size as number;
+      },
+    });
+    Object.defineProperty(Set.prototype, 'forEach', {
+      configurable: true,
+      value(
+        this: Set<unknown>,
+        callback: (value: unknown, key: unknown, set: Set<unknown>) => void,
+        receiver?: unknown,
+      ): void {
+        if (isOwnerLifecycleSet(this)) rejectPollutedLifecycleDispatch('Set.forEach');
+        Reflect.apply(originalSetForEach, this, [callback, receiver]);
+      },
+      writable: true,
+    });
+    Object.defineProperty(Set.prototype, Symbol.iterator, {
+      configurable: true,
+      value(this: Set<unknown>): SetIterator<unknown> {
+        if (isOwnerLifecycleSet(this)) rejectPollutedLifecycleDispatch('Set.iterator');
+        return Reflect.apply(originalSetIterator, this, []);
+      },
+      writable: true,
+    });
+
+    let close: Promise<void> | undefined;
+
+    try {
+      close = owner.close();
+      await Promise.resolve();
+      pendingConnection.resolve(lateConnection.connection);
+
+      const pendingFailure = await observePendingAcquisition;
+      expect(pendingFailure).toBeInstanceOf(ManagedMariaDbConnectionAllocatorUnavailableError);
+
+      await expect(close).resolves.toBeUndefined();
+    } finally {
+      Object.defineProperty(Set.prototype, 'size', setSizeDescriptor);
+      Object.defineProperty(Set.prototype, 'forEach', {
+        configurable: true,
+        value: originalSetForEach,
+        writable: true,
+      });
+      Object.defineProperty(Set.prototype, Symbol.iterator, {
+        configurable: true,
+        value: originalSetIterator,
+        writable: true,
+      });
+      pendingConnection.resolve(lateConnection.connection);
+      await (close ?? owner.close()).catch((): void => undefined);
+    }
+
+    expect(pollutedLifecycleDispatch).not.toHaveBeenCalled();
+    expect(activeConnection.destroy).toHaveBeenCalledTimes(1);
+    expect(activeConnection.release).not.toHaveBeenCalled();
+    expect(lateConnection.destroy).toHaveBeenCalledTimes(1);
+    expect(lateConnection.release).not.toHaveBeenCalled();
+    expect(harness.end).toHaveBeenCalledTimes(1);
+    expect(() => owner.connectionFor(activeLease)).toThrow(
+      InvalidManagedMariaDbConnectionLeaseError,
+    );
   });
 
   it('registers a pending acquire before close and destroys a late connection without delivering it', async (): Promise<void> => {

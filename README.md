@@ -141,7 +141,7 @@ those namespaces can emit bound digest arguments. That configuration gate is
 not implemented yet, so public credential ingress remains blocked. Pricing,
 inventory, Redis caching, and integration events remain separate later slices.
 
-**Overall project progress: 37%.** The fixed, deployment-inclusive scoring
+**Overall project progress: 38%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
 
 ## Planned technology
@@ -384,11 +384,18 @@ uses bounded one-use connections rather than MariaDB's unobservable pool
 lifecycle. Its wait queue is capped at one requester per reserved connection,
 and a slot remains consumed until the exact socket is closed and every issued
 driver operation has settled.
+Module infrastructure can compose a fixed reviewed transaction program through
+`@oms/database/mysql-transaction`. The returned frozen executor exposes no
+connection or settlement handle; it uses opaque static statements,
+server-prepared values, one monotonic absolute deadline, exact commit/rollback
+classification, and no automatic retry. Application and domain layers cannot
+import this subpath.
 Production and showcase configuration requires `DATABASE_TLS_MODE` to be
 `verify-identity`. The only supported TLS behavior verifies the server
 certificate and hostname; there is no certificate-bypass option. The ownership
 and settlement rationale is recorded in
-[ADR-0018](docs/adr/0018-own-security-critical-mysql-connections.md).
+[ADR-0018](docs/adr/0018-own-security-critical-mysql-connections.md) and
+[ADR-0019](docs/adr/0019-seal-exact-connection-mysql-transaction-programs.md).
 
 Create a migration only after adding and reviewing a module-owned schema
 change:

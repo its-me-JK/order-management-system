@@ -1146,6 +1146,17 @@ binding to that completion; every other outcome retires the attempt. This
 increment supplies no database acknowledgement, concrete Unit of Work, wire
 delivery, route, or public export.
 
+The fifth prerequisite increment is database infrastructure and is delivered.
+[ADR-0019](../adr/0019-seal-exact-connection-mysql-transaction-programs.md)
+adds a supported `@oms/database/mysql-transaction` subpath that derives
+authority from the authentic runtime, captures one fixed infrastructure
+program, executes only opaque reviewed statements through server-prepared
+binding, owns a monotonic one-to-ten-second transaction deadline, and returns
+only committed, proven-non-committed, or indeterminate settlement. It does not
+yet implement Identity's direct locked loader, rotation/reuse writers,
+security-event writer, concrete refresh Unit of Work, completion promotion, or
+credential-delivery gate.
+
 Identity uses a hybrid boundary rather than repositories per aggregate. A
 small `IdentitySessionRefreshUnitOfWork` owns transaction completion. Separate purpose-built
 reads operate outside a transaction, while workflow-scoped loaders and writers
@@ -1159,7 +1170,9 @@ Account, SessionFamily, presented RefreshCredential, optional successor and
 AccessCredential, current authority projection, and a security event.
 
 The runtime and connection ownership for this boundary is fixed by
-[ADR-0018](../adr/0018-own-security-critical-mysql-connections.md). Prisma
+[ADR-0018](../adr/0018-own-security-critical-mysql-connections.md), and its
+closed execution seam is fixed by
+[ADR-0019](../adr/0019-seal-exact-connection-mysql-transaction-programs.md). Prisma
 remains the ordinary persistence and non-transactional discovery path. A
 separately reserved, package-private allocator supplies one-use exact
 connections, and it splits one per-runtime connection budget with Prisma's
@@ -1727,15 +1740,16 @@ plain persistence DTO. It is shorter, but it permits a callback to return a raw
 credential or structurally forged result and cannot prove scope, decision, or
 attempt ownership. Runtime identity registries and the closed terminal state
 machine cost additional code and retain the exact attempt until settlement;
-the future executor, not the registry alone, must bound that commit-resolution
-window with its transaction deadline. In return they reject replay,
-cross-scope, and wrong-kind writes before SQL. An interview-level consequence is that consumed
-pending evidence must survive callback-scope close: the scope must be invalid
-before `COMMIT`, while confirmed commit still needs the exact attempt binding
-for later delivery. That retained registration grants neither SQL nor delivery
-authority. The next improvements are the rotation/reuse writer, exact-pair
-delivery gate, and a connection-owning MySQL Unit of Work that alone can invoke
-settlement from a real transaction trace.
+the sealed database executor, not the registry alone, bounds that
+commit-resolution window with its transaction deadline. In return they reject
+replay, cross-scope, and wrong-kind writes before SQL. An interview-level
+consequence is that consumed pending evidence must survive program-scope close:
+the scope must be invalid before `COMMIT`, while confirmed commit still needs
+the exact attempt binding for later delivery. That retained registration grants
+neither SQL nor delivery authority. The next improvements are the
+rotation/reuse writer, exact-pair delivery gate, and an Identity MySQL Unit of
+Work that maps the executor's settlement outcome into completion promotion or
+revocation.
 
 ## Credential and password representation
 

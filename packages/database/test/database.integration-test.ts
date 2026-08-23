@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { dirname, resolve } from 'node:path';
@@ -12,6 +13,12 @@ import { config as loadEnvironment } from 'dotenv';
 import type { DatabaseConnectionOptions } from '../src/database.contract';
 import { ManagedMariaDbConnectionAllocatorUnavailableError } from '../src/client/managed-mariadb-connection-lease.owner';
 import { createDatabaseRuntime } from '../src';
+import {
+  createMySqlTransactionExecutor,
+  defineMySqlTransactionStatement,
+  type MySqlTransactionInstant,
+  type MySqlTransactionProgram,
+} from '../src/mysql-transaction';
 import { getPrismaClient } from '../src/prisma';
 import { getRuntimeMariaDbConnectionLeaseOwner } from '../src/prisma-database.runtime';
 
@@ -67,6 +74,122 @@ interface DirectConnectionContractRow {
   readonly session_isolation: string;
   readonly session_zone: string;
 }
+
+type TransactionProbeFailure = 'collision' | 'defect' | 'requested' | 'unavailable';
+
+interface TransactionProbeInput {
+  readonly disposition: 'commit' | 'rollback';
+  readonly id: Uint8Array;
+  readonly name: string;
+}
+
+interface TransactionProbeCommit {
+  readonly writerTime: MySqlTransactionInstant;
+}
+
+interface TransactionProbeRow {
+  readonly created_at: string;
+  readonly name: string;
+  readonly status: string;
+  readonly status_changed_at: string;
+  readonly updated_at: string;
+}
+
+const insertTransactionProbe = defineMySqlTransactionStatement<
+  readonly [Uint8Array, string, string, string, string, string],
+  undefined,
+  TransactionProbeFailure
+>({
+  decode(): undefined {
+    return undefined;
+  },
+  duplicateKeyFailures: {
+    PRIMARY: 'collision',
+    'catalog_products.PRIMARY': 'collision',
+    'oms.catalog_products.PRIMARY': 'collision',
+  },
+  parameterCount: 6,
+  text: `
+    INSERT INTO catalog_products (
+      id,
+      name,
+      status,
+      created_at,
+      updated_at,
+      status_changed_at
+    ) VALUES (
+      ?,
+      ?,
+      ?,
+      STR_TO_DATE(?, '%Y-%m-%dT%H:%i:%s.%fZ'),
+      STR_TO_DATE(?, '%Y-%m-%dT%H:%i:%s.%fZ'),
+      STR_TO_DATE(?, '%Y-%m-%dT%H:%i:%s.%fZ')
+    )
+  `,
+});
+
+const transactionProbeProgram: MySqlTransactionProgram<
+  TransactionProbeInput,
+  TransactionProbeCommit,
+  TransactionProbeFailure,
+  typeof insertTransactionProbe
+> = Object.freeze({
+  defectFailure: 'defect',
+  failures: Object.freeze(['collision', 'defect', 'requested', 'unavailable'] as const),
+  async run(context, input) {
+    await context.executeStatement(insertTransactionProbe, [
+      input.id,
+      input.name,
+      'DRAFT',
+      context.writerTime,
+      context.writerTime,
+      context.writerTime,
+    ]);
+
+    return input.disposition === 'commit'
+      ? context.requestCommit(Object.freeze({ writerTime: context.writerTime }))
+      : context.requestRollback('requested');
+  },
+  statements: Object.freeze([insertTransactionProbe]),
+  unavailableFailure: 'unavailable',
+});
+
+type SleepProbeFailure = 'defect' | 'unavailable';
+
+const sleepProbeStatement = defineMySqlTransactionStatement<
+  readonly [number],
+  undefined,
+  SleepProbeFailure
+>({
+  decode(value): undefined {
+    const rows = value as readonly Readonly<{ sleep_result: unknown }>[];
+    const result = rows[0]?.sleep_result;
+
+    if (result !== 0 && result !== 0n) {
+      throw new TypeError('Unexpected sleep result');
+    }
+
+    return undefined;
+  },
+  parameterCount: 1,
+  text: 'SELECT SLEEP(?) AS sleep_result',
+});
+
+const sleepProbeProgram: MySqlTransactionProgram<
+  number,
+  'completed',
+  SleepProbeFailure,
+  typeof sleepProbeStatement
+> = Object.freeze({
+  defectFailure: 'defect',
+  failures: Object.freeze(['defect', 'unavailable'] as const),
+  async run(context, seconds) {
+    await context.executeStatement(sleepProbeStatement, [seconds]);
+    return context.requestCommit('completed');
+  },
+  statements: Object.freeze([sleepProbeStatement]),
+  unavailableFailure: 'unavailable',
+});
 
 void test('Prisma connects as the application principal and observes the database contract', async () => {
   const options = databaseOptions();
@@ -166,6 +289,106 @@ void test('Prisma connects as the application principal and observes the databas
     } finally {
       await directConnectionOwner.release(directLease);
     }
+  } finally {
+    await runtime.close();
+  }
+});
+
+void test('sealed MySQL transactions commit, roll back, and classify an exact duplicate constraint', async () => {
+  const options = databaseOptions();
+  const runtime = createDatabaseRuntime(options);
+  const client = getPrismaClient(runtime);
+  const committedId = randomBytes(16);
+  const rolledBackId = randomBytes(16);
+  const executor = createMySqlTransactionExecutor(runtime, transactionProbeProgram, {
+    timeoutMilliseconds: 5_000,
+  });
+
+  try {
+    const committed = await executor.execute({
+      disposition: 'commit',
+      id: committedId,
+      name: 'Transaction executor committed probe',
+    });
+
+    assert.equal(committed.kind, 'committed');
+    assert.match(committed.result.writerTime, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/u);
+
+    const committedRows = await client.$queryRaw<TransactionProbeRow[]>`
+      SELECT
+        name,
+        status,
+        DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS created_at,
+        DATE_FORMAT(updated_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS updated_at,
+        DATE_FORMAT(status_changed_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS status_changed_at
+      FROM catalog_products
+      WHERE id = ${committedId}
+    `;
+
+    assert.deepEqual(committedRows, [
+      {
+        created_at: committed.result.writerTime,
+        name: 'Transaction executor committed probe',
+        status: 'DRAFT',
+        status_changed_at: committed.result.writerTime,
+        updated_at: committed.result.writerTime,
+      },
+    ]);
+
+    const rolledBack = await executor.execute({
+      disposition: 'rollback',
+      id: rolledBackId,
+      name: 'Transaction executor rolled-back probe',
+    });
+    assert.deepEqual(rolledBack, {
+      failure: 'requested',
+      kind: 'not-committed',
+    });
+
+    const rolledBackRows = await client.$queryRaw<readonly { readonly row_count: bigint }[]>`
+      SELECT COUNT(*) AS row_count
+      FROM catalog_products
+      WHERE id = ${rolledBackId}
+    `;
+    assert.equal(rolledBackRows[0]?.row_count, 0n);
+
+    const duplicate = await executor.execute({
+      disposition: 'commit',
+      id: committedId,
+      name: 'Transaction executor duplicate probe',
+    });
+    assert.deepEqual(duplicate, {
+      failure: 'collision',
+      kind: 'not-committed',
+    });
+  } finally {
+    try {
+      await client.$executeRaw`
+        DELETE FROM catalog_products
+        WHERE id = ${committedId} OR id = ${rolledBackId}
+      `;
+    } finally {
+      await runtime.close();
+    }
+  }
+});
+
+void test('transaction deadline quarantines stalled work and restores replacement capacity', async () => {
+  const options = {
+    ...databaseOptions(),
+    transactionConnectionLimit: 1,
+  } satisfies DatabaseConnectionOptions;
+  const runtime = createDatabaseRuntime(options);
+  const executor = createMySqlTransactionExecutor(runtime, sleepProbeProgram, {
+    timeoutMilliseconds: 1_000,
+  });
+
+  try {
+    assert.deepEqual(await executor.execute(30), { kind: 'indeterminate' });
+    assert.deepEqual(await executor.execute(0), {
+      kind: 'committed',
+      result: 'completed',
+    });
   } finally {
     await runtime.close();
   }

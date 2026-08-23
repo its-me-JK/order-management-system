@@ -79,6 +79,13 @@ const rejectedImports = [
     name: 'application -> arbitrary bare vendor',
   },
   {
+    code: "import type { MySqlTransactionExecutor } from '@oms/database/mysql-transaction';\nexport type TransactionExecutor = MySqlTransactionExecutor<unknown, unknown, string>;",
+    expectedMessage: 'Application code may import only its own application and domain layers.',
+    filePath:
+      'packages/modules/identity/src/application/__architecture_probe__/mysql-transaction.ts',
+    name: 'application -> exact-connection transaction infrastructure',
+  },
+  {
     code: "import { createPool } from 'mariadb';\nexport const poolFactory = createPool;",
     expectedMessage: 'The MariaDB driver is owned by @oms/database.',
     filePath: 'packages/modules/catalog/src/infrastructure/__architecture_probe__/mariadb.ts',
@@ -135,6 +142,12 @@ const allowedImports = [
     code: "import { PrismaCatalogReadRepository } from '@oms/catalog/infrastructure/prisma';\nexport const Repository = PrismaCatalogReadRepository;",
     filePath: 'apps/api/src/composition/__architecture_probe__/catalog.providers.ts',
     name: 'API composition root -> business infrastructure',
+  },
+  {
+    code: "import { createMySqlTransactionExecutor } from '@oms/database/mysql-transaction';\nexport const transactionExecutorFactory = createMySqlTransactionExecutor;",
+    filePath:
+      'packages/modules/identity/src/infrastructure/__architecture_probe__/mysql-transaction.ts',
+    name: 'module infrastructure -> exact-connection transaction boundary',
   },
 ];
 

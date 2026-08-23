@@ -1,8 +1,30 @@
 const DEFAULT_SHUTDOWN_GRACE_MILLISECONDS = 1_000;
+const capturedReflectApply = Reflect.apply;
+// eslint-disable-next-line @typescript-eslint/unbound-method -- Captured once and invoked only through Reflect.apply.
+const capturedSetAdd = Set.prototype.add;
+// eslint-disable-next-line @typescript-eslint/unbound-method -- Captured once and invoked only through Reflect.apply.
+const capturedSetDelete = Set.prototype.delete;
+// eslint-disable-next-line @typescript-eslint/unbound-method -- Captured once and invoked only through Reflect.apply.
+const capturedSetForEach = Set.prototype.forEach;
+// eslint-disable-next-line @typescript-eslint/unbound-method -- Captured once and invoked only through Reflect.apply.
+const capturedSetHas = Set.prototype.has;
+// eslint-disable-next-line @typescript-eslint/unbound-method -- Captured once and invoked only through Reflect.apply.
+const capturedWeakMapGet = WeakMap.prototype.get;
+// eslint-disable-next-line @typescript-eslint/unbound-method -- Captured once and invoked only through Reflect.apply.
+const capturedWeakMapSet = WeakMap.prototype.set;
+const setSizeDescriptor = Object.getOwnPropertyDescriptor(Set.prototype, 'size');
+
+if (setSizeDescriptor?.get === undefined) {
+  throw new TypeError('Expected the intrinsic Set size getter');
+}
+
+// eslint-disable-next-line @typescript-eslint/unbound-method -- Captured once and invoked only through Reflect.apply.
+const capturedSetSize = setSizeDescriptor.get;
 
 /** @internal One owned direct connection retained inside the database package. */
 export interface ManagedMariaDbAllocatedConnection {
   destroy(): void;
+  execute<Result>(sql: string, values: readonly unknown[]): Promise<Result>;
   query<Result>(sql: string): Promise<Result>;
   release(): Promise<void>;
 }
@@ -70,6 +92,52 @@ type ActiveLeaseRegistration = Omit<LeaseRegistration, 'connection'> & {
 
 const leaseRegistrations = new WeakMap<object, LeaseRegistration>();
 
+function setAdd<Value>(set: Set<Value>, value: Value): void {
+  capturedReflectApply(capturedSetAdd, set, [value]);
+}
+
+function setDelete<Value>(set: Set<Value>, value: Value): void {
+  capturedReflectApply(capturedSetDelete, set, [value]);
+}
+
+function setHas<Value>(set: ReadonlySet<Value>, value: Value): boolean {
+  return capturedReflectApply(capturedSetHas, set, [value]);
+}
+
+function setSize(set: ReadonlySet<unknown>): number {
+  const size: unknown = capturedReflectApply(capturedSetSize, set, []);
+  return size as number;
+}
+
+function setSnapshot<Value>(set: ReadonlySet<Value>): readonly Value[] {
+  const values: Value[] = [];
+  let index = 0;
+
+  capturedReflectApply(capturedSetForEach, set, [
+    (value: Value): void => {
+      values[index] = value;
+      index += 1;
+    },
+  ]);
+  return values;
+}
+
+function weakMapGet<Key extends object, Value>(
+  map: WeakMap<Key, Value>,
+  key: Key,
+): Value | undefined {
+  const value: unknown = capturedReflectApply(capturedWeakMapGet, map, [key]);
+  return value as Value | undefined;
+}
+
+function weakMapSet<Key extends object, Value>(
+  map: WeakMap<Key, Value>,
+  key: Key,
+  value: Value,
+): void {
+  capturedReflectApply(capturedWeakMapSet, map, [key, value]);
+}
+
 /** @internal Checkout lifecycle owner; deliberately not a transaction API. */
 export class ManagedMariaDbConnectionLeaseOwner<Options> {
   readonly #active = new Set<LeaseRegistration>();
@@ -122,17 +190,17 @@ export class ManagedMariaDbConnectionLeaseOwner<Options> {
       owner: this,
       status: 'pending',
     };
-    leaseRegistrations.set(lease, registration);
+    weakMapSet(leaseRegistrations, lease, registration);
 
     // The operation is registered before the provider factory or getConnection can re-enter.
     const operation = Promise.resolve().then(() => this.#acquire(registration));
-    this.#pending.add(operation);
+    setAdd(this.#pending, operation);
     void operation.then(
       (): void => {
-        this.#pending.delete(operation);
+        setDelete(this.#pending, operation);
       },
       (): void => {
-        this.#pending.delete(operation);
+        setDelete(this.#pending, operation);
       },
     );
     return operation;
@@ -164,7 +232,7 @@ export class ManagedMariaDbConnectionLeaseOwner<Options> {
 
     registration.connection = connection;
     registration.status = 'active';
-    this.#active.add(registration);
+    setAdd(this.#active, registration);
     return registration.lease;
   }
 
@@ -177,13 +245,13 @@ export class ManagedMariaDbConnectionLeaseOwner<Options> {
   }
 
   #registrationForActive(lease: ManagedMariaDbConnectionLease): ActiveLeaseRegistration {
-    const registration = leaseRegistrations.get(lease);
+    const registration = weakMapGet(leaseRegistrations, lease);
 
     if (
       registration?.owner !== this ||
       registration.status !== 'active' ||
       registration.connection === undefined ||
-      !this.#active.has(registration)
+      !setHas(this.#active, registration)
     ) {
       throw new InvalidManagedMariaDbConnectionLeaseError();
     }
@@ -192,13 +260,13 @@ export class ManagedMariaDbConnectionLeaseOwner<Options> {
   }
 
   #registrationForDestroy(lease: ManagedMariaDbConnectionLease): ActiveLeaseRegistration {
-    const registration = leaseRegistrations.get(lease);
+    const registration = weakMapGet(leaseRegistrations, lease);
 
     if (
       registration?.owner !== this ||
       (registration.status !== 'active' && registration.status !== 'releasing') ||
       registration.connection === undefined ||
-      !this.#active.has(registration)
+      !setHas(this.#active, registration)
     ) {
       throw new InvalidManagedMariaDbConnectionLeaseError();
     }
@@ -262,8 +330,8 @@ export class ManagedMariaDbConnectionLeaseOwner<Options> {
   #settle(registration: LeaseRegistration): void {
     registration.status = 'settled';
     registration.connection = undefined;
-    this.#active.delete(registration);
-    if (this.#active.size === 0) this.#drainActive?.();
+    setDelete(this.#active, registration);
+    if (setSize(this.#active) === 0) this.#drainActive?.();
   }
 
   public beginClose(): void {
@@ -286,7 +354,9 @@ export class ManagedMariaDbConnectionLeaseOwner<Options> {
     const initialAllocatorEnd = this.#startAllocatorEnd();
 
     try {
-      await Promise.all([...this.#pending].map((operation) => operation.catch(() => undefined)));
+      await Promise.all(
+        setSnapshot(this.#pending).map((operation) => operation.catch(() => undefined)),
+      );
       const lateAllocatorEnd = this.#startAllocatorEnd();
       await this.#waitForDrain();
       this.#destroyRemaining();
@@ -320,7 +390,7 @@ export class ManagedMariaDbConnectionLeaseOwner<Options> {
   }
 
   #waitForDrain(): Promise<void> {
-    if (this.#active.size === 0) return Promise.resolve();
+    if (setSize(this.#active) === 0) return Promise.resolve();
 
     return new Promise((resolve): void => {
       const timeout = setTimeout(
@@ -332,12 +402,12 @@ export class ManagedMariaDbConnectionLeaseOwner<Options> {
         this.#drainActive = undefined;
         resolve();
       };
-      if (this.#active.size === 0) this.#drainActive();
+      if (setSize(this.#active) === 0) this.#drainActive();
     });
   }
 
   #destroyRemaining(): void {
-    for (const registration of [...this.#active]) {
+    for (const registration of setSnapshot(this.#active)) {
       const connection = registration.connection;
       registration.status = 'settled';
       if (connection === undefined) this.#shutdownFailed = true;

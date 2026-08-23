@@ -184,9 +184,30 @@ class BoundedMariaDbConnectionAllocator implements ManagedMariaDbConnectionAlloc
       destroy: (): void => {
         this.#destroyTransport(slot);
       },
+      execute: <Result>(sql: string, values: readonly unknown[]): Promise<Result> =>
+        this.#execute(slot, connection, sql, values),
       query: <Result>(sql: string): Promise<Result> => this.#query(slot, connection, sql),
       release: async (): Promise<void> => this.#release(slot),
     });
+  }
+
+  #execute<Result>(
+    slot: ConnectionSlot,
+    connection: Connection,
+    sql: string,
+    values: readonly unknown[],
+  ): Promise<Result> {
+    if (slot.state !== 'active') return Promise.reject(new Error(ALLOCATOR_UNAVAILABLE_MESSAGE));
+
+    let operation: Promise<Result>;
+
+    try {
+      operation = connection.execute<Result>(sql, values);
+    } catch {
+      return Promise.reject(new Error(ALLOCATOR_UNAVAILABLE_MESSAGE));
+    }
+
+    return this.#trackOperation(slot, operation);
   }
 
   #query<Result>(slot: ConnectionSlot, connection: Connection, sql: string): Promise<Result> {
@@ -196,12 +217,14 @@ class BoundedMariaDbConnectionAllocator implements ManagedMariaDbConnectionAlloc
 
     try {
       operation = connection.query<Result>(sql);
-    } catch (error: unknown) {
-      return Promise.reject(
-        error instanceof Error ? error : new Error(ALLOCATOR_UNAVAILABLE_MESSAGE),
-      );
+    } catch {
+      return Promise.reject(new Error(ALLOCATOR_UNAVAILABLE_MESSAGE));
     }
 
+    return this.#trackOperation(slot, operation);
+  }
+
+  #trackOperation<Result>(slot: ConnectionSlot, operation: Promise<Result>): Promise<Result> {
     const settlement = operation.then(
       (): void => undefined,
       (): void => undefined,

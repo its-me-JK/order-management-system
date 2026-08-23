@@ -95,6 +95,82 @@ describe('Prisma database runtime', (): void => {
     await expect(secondRuntime.close()).resolves.toBeUndefined();
   });
 
+  it('seals the recovered implementation and rejects constructor-based authority forgery', async (): Promise<void> => {
+    const { client, lifecycle } = prismaClient();
+    const authenticOwner = new ManagedMariaDbConnectionLeaseOwner(
+      (): never => {
+        throw new Error('unused allocator must stay lazy');
+      },
+      Object.freeze({ connectionLimit: 2 }),
+    );
+    const forgedOwner = new ManagedMariaDbConnectionLeaseOwner(
+      (): never => {
+        throw new Error('forged allocator must never be reached');
+      },
+      Object.freeze({ connectionLimit: 2 }),
+    );
+    const runtime = createDatabaseResourcesRuntime(client, authenticOwner);
+    const prototype: unknown = Object.getPrototypeOf(runtime);
+    const recoveredConstructor: unknown = (runtime as unknown as Readonly<{ constructor: unknown }>)
+      .constructor;
+
+    if (prototype === null || typeof prototype !== 'object') {
+      throw new Error('The database runtime prototype was not available');
+    }
+
+    if (typeof recoveredConstructor !== 'function') {
+      throw new Error('The database runtime constructor was not recoverable');
+    }
+
+    try {
+      expect(Object.isFrozen(runtime)).toBe(true);
+      expect(Object.isFrozen(prototype)).toBe(true);
+      expect(Object.isFrozen(recoveredConstructor)).toBe(true);
+      expect(Reflect.ownKeys(runtime)).toEqual(['connection']);
+      expect(() =>
+        Object.defineProperty(runtime, 'connection', {
+          value: {
+            close: (): Promise<void> => Promise.resolve(),
+            probe: (): Promise<void> => Promise.resolve(),
+          },
+        }),
+      ).toThrow(TypeError);
+      expect(() =>
+        Object.defineProperty(prototype, 'close', {
+          configurable: true,
+          value: (): Promise<void> => Promise.resolve(),
+        }),
+      ).toThrow(TypeError);
+
+      expect((): void => {
+        Reflect.construct(recoveredConstructor, [client, 1_000, forgedOwner]);
+      }).toThrow('Invalid Prisma database runtime configuration');
+
+      const guessedCapability = Object.freeze({});
+      expect((): void => {
+        Reflect.construct(recoveredConstructor, [guessedCapability, client, 1_000, forgedOwner]);
+      }).toThrow('Invalid Prisma database runtime configuration');
+
+      const foreignNewTarget = function ForeignPrismaDatabaseRuntime(): void {
+        // Reflect.construct only uses this function as the forged new.target.
+      };
+      expect((): void => {
+        Reflect.construct(
+          recoveredConstructor,
+          [guessedCapability, client, 1_000, forgedOwner],
+          foreignNewTarget,
+        );
+      }).toThrow('Invalid Prisma database runtime configuration');
+
+      expect(getRuntimeMariaDbConnectionLeaseOwner(runtime)).toBe(authenticOwner);
+      expect(getRuntimeMariaDbConnectionLeaseOwner(runtime)).not.toBe(forgedOwner);
+    } finally {
+      await runtime.close();
+    }
+
+    expect(lifecycle.$disconnect).toHaveBeenCalledTimes(1);
+  });
+
   it('does not grant direct-connection authority to fixtures or forged runtimes', (): void => {
     const fixtureRuntime = createPrismaDatabaseRuntime(prismaClient().client);
     const forgedRuntime: DatabaseRuntime = {
