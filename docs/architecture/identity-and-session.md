@@ -662,10 +662,11 @@ retry intentionally closes the family.
 
 The future MySQL transaction has an important immediate-constraint ordering.
 With both one-unconsumed-slot uniqueness and a self-referencing successor
-foreign key, it must first mark the predecessor consumed, then insert the
-successor refresh, insert the access record that references that generation,
-link the predecessor, and finally update the family plus projection/event
-state. A database check requiring consumption time and successor ID to become
+foreign key, it must first mark the predecessor consumed and clear its active
+slot, then insert the successor refresh with slot `1`, insert the access record
+that references that generation, link the predecessor, and finally update the
+family plus projection/event state. A database check requiring consumption
+time and successor ID to become
 non-null in the same statement would make every order impossible because
 MySQL cannot defer those constraints. Persistence therefore enforces the
 weaker rule that a successor implies consumption; the domain and Unit of Work
@@ -805,14 +806,21 @@ limits make expensive and observable.
 
 Identity owns `packages/database/prisma/identity.prisma` and the corresponding
 tables. Prisma models are persistence records, not domain objects. The
-migration owns ASCII binary collations, checks, generated columns, index
-direction, and constraint names that Prisma cannot express.
+migration owns ASCII binary collations, checks and their names, and index
+direction that Prisma cannot express.
 
 All identifiers are application-generated UUIDv7 stored as `BINARY(16)`. All
 application timestamps are UTC `DATETIME(6)`. Codes, states, login names,
 credential digests, and PHC values use byte-exact representations. Foreign
 keys use `RESTRICT`; deletion and retention are explicit workflows rather than
 cascades.
+
+Closed-code checks cast their ASCII columns to binary strings before equality
+or membership comparison. MySQL's `ascii_bin` collation still uses PAD SPACE
+comparison semantics, so collation-aware checks alone would incorrectly admit
+a domain-invalid value such as `ACTIVE `. Login-name format checks use ICU's
+absolute-end `\z` assertion because `$` can match before a trailing line
+terminator in MySQL.
 
 Identity repositories preserve all six timestamp digits with reviewed
 parameterized SQL and lossless string projections such as
@@ -830,11 +838,24 @@ otherwise-equal values that differ only in those digits.
 | `identity_roles` | UUID primary key; immutable unique ASCII code; display name; status; unsigned version and lifecycle timestamps. |
 | `identity_role_permissions` | Composite primary key `(role_id, permission_code)` plus reverse `(permission_code, role_id)` index. |
 | `identity_account_roles` | Composite primary key `(account_id, role_id)` plus reverse `(role_id, account_id)` index. |
-| `identity_session_families` | Externally visible UUID session ID; account ID; unsigned version; created, last-rotated, idle-expiry, absolute-expiry, optional revoked time and closed reason. Indexes `(account_id, revoked_at, absolute_expires_at, id)` and `(absolute_expires_at, id)`. Expiry is derived from time, not a stored status. |
+| `identity_session_families` | Externally visible UUID session ID; account ID; unsigned version; `created_at`, `last_rotated_at`, `idle_expires_at`, `absolute_expires_at`, optional revoked time, and closed reason. Indexes `(account_id, revoked_at, absolute_expires_at, id)` and `(absolute_expires_at, id)`. Expiry is derived from time, not a stored status. |
 | `identity_access_credentials` | UUID primary key; family ID; unsigned sequence; unique `BINARY(32)` digest; issued and expiry times. Unique `(family_id, sequence)` is also a composite foreign key to the retained refresh generation with the same pair. Indexes `(family_id, expires_at, id)` and `(expires_at, id)`. The digest is persistence-only; validity derives from credential, paired issuance generation, family, account, and current permissions. |
-| `identity_refresh_credentials` | UUID primary key; family ID; unique `BINARY(32)` digest; unsigned sequence; issued, expiry, optional consumed time and optional unique successor ID. Unique `(family_id, sequence)`. A generated active-slot column plus unique `(family_id, active_slot)` enforces at most one unconsumed credential per family. |
+| `identity_refresh_credentials` | UUID primary key; family ID; unique `BINARY(32)` digest; unsigned sequence; issued, expiry, optional consumed time, optional unique successor ID, and nullable writable `active_slot TINYINT UNSIGNED` with no default. Unique `(family_id, sequence)` and `(family_id, active_slot)` enforce generation identity and at most one unconsumed credential per family. |
 | `identity_security_events` | UUID, closed event/outcome/reason codes, optional opaque actor/subject/session/request/correlation IDs, and occurrence time. It has no arbitrary JSON and no foreign key to account or session retention. Indexes support time, subject-time, and session-time queries. |
 | `identity_bootstrap_state` | One seeded singleton row locked by first-admin provisioning so two concurrent commands cannot both claim bootstrap. |
+
+The refresh active slot is deliberately writable rather than a generated
+column because Prisma cannot faithfully represent a MySQL generated-column
+expression without future schema drift. The migration owns the null-safe,
+exhaustive check
+`active_slot <=> IF(consumed_at IS NULL, 1, NULL)`. Ordinary equality is
+not sufficient because MySQL accepts an unknown `CHECK` result; `<=>` forces a
+boolean result and therefore rejects every mismatched null state. SQL can never
+hide an unconsumed row behind a null slot or retain a slot after consumption.
+Rotation sets `consumed_at` and clears `active_slot` in the same predecessor
+update before inserting the successor with slot `1`. This costs one derived
+column assignment per rotation, but keeps the Prisma record accurate while the
+database—not writer convention—rejects divergence.
 
 The permission migration seeds exactly the seven codes in ADR-0015 and one
 built-in `SYSTEM_ADMINISTRATOR` role containing exactly those seven mappings:

@@ -25,6 +25,7 @@
     "prisma:migrate:dev": "prisma migrate dev --config prisma.config.ts",
     "prisma:migrate:status": "prisma migrate status --config prisma.config.ts",
     "prisma:validate": "prisma validate --config prisma.config.ts",
+    "test:migration:identity-refresh-lineage": "bash test/verify-identity-refresh-lineage-migration.sh",
     "test:integration": "pnpm --filter @oms/configuration run build && pnpm prisma:generate && tsc --project tsconfig.integration.json && node --test .integration-dist/test/database.integration-test.js",
     "typecheck": "pnpm prisma:generate && tsc --noEmit --project tsconfig.json"
   },

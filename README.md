@@ -61,13 +61,19 @@ validates role-count evidence, so the runtime package root exports no
 constructor. Its internal credential boundary now adds fixed-policy Node
 CSPRNG/SHA-256 generation, a pre-transaction one-shot attempt that re-verifies
 the exact wire-to-digest pair, a nominal SecurityEvent identifier, and
-digest-only refresh discovery with authentic one-use tickets. Identity still
-exposes no resolver use case or route; the locked refresh workflow, Unit of Work
-adapter, MySQL persistence, Argon2 adapter, password input policy, and Redis
-remain gated later slices. Pricing, inventory, Redis caching, and integration
-events also remain separate later slices.
+digest-only refresh discovery with authentic one-use tickets. Its internal
+attempt-bound refresh workflow now produces scope- and decision-bound pending
+transaction evidence without claiming commit or credential-delivery authority.
+The unused Identity Prisma slice and reviewed migration persist Account,
+SessionFamily, retained refresh lineage, and generation-bound access records
+with database-enforced lifecycle, active-slot, and referential invariants.
+Identity still exposes no resolver use case or route; the concrete locked store
+and Unit of Work, committed completion, authority/event persistence, Argon2
+adapter, password input policy, and Redis remain gated later slices. Pricing,
+inventory, Redis caching, and integration events also remain separate later
+slices.
 
-**Overall project progress: 34%.** The fixed, deployment-inclusive scoring
+**Overall project progress: 35%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
 
 ## Planned technology
@@ -231,14 +237,20 @@ Validate the persistence toolchain against local MySQL:
 pnpm db:schema:validate
 pnpm db:migrate:deploy
 pnpm test:integration:database
+pnpm test:integration:identity-refresh-lineage
 pnpm test:integration:catalog
 ```
 
 The database package owns Prisma generation and one ordered forward-only
 migration history. Module-owned Prisma models compose into that schema; the
 reviewed migrations create Catalog Product and SKU records, then safely expand
-their lifecycle invariants. Generated Prisma code is local build output and is
-not committed. The Catalog integration command verifies an initial-schema
+their lifecycle invariants, and add the currently unused Identity refresh
+lineage. Generated Prisma code is local build output and is not committed. The
+Identity verifier applies the complete migration history twice in dedicated
+main and shadow databases, proves Prisma has no representable schema drift, and
+adversarially checks the byte-exact codes, microseconds, foreign keys, issuance
+witness, and one-active-refresh invariant against pinned MySQL. The Catalog
+integration command verifies an initial-schema
 upgrade with legacy rows, rejects ambiguous terminal history before DDL, and
 also creates, migrates twice, and removes an exact fresh
 `oms_catalog_integration` database. It verifies the repository contract and
@@ -394,6 +406,7 @@ Useful repository commands:
 | `pnpm test:coverage` | Generate local coverage output |
 | `pnpm test:integration:api` | Verify API health and database-backed readiness against real MySQL |
 | `pnpm test:integration:catalog` | Verify Catalog persistence and the production HTTP composition in an isolated local MySQL database |
+| `pnpm test:integration:identity-refresh-lineage` | Verify the Identity lineage migration, invariants, and Prisma drift against isolated real MySQL databases |
 | `pnpm format:check` | Verify formatting without modifying files |
 | `pnpm check` | Run every required quality gate in CI order |
 | `pnpm db:generate` | Generate the pinned Prisma client locally |

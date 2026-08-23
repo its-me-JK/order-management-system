@@ -1,0 +1,80 @@
+// Lifecycle, chronology, UUIDv7-bit, closed-code, active-slot, and credential-
+// lifetime constraints plus per-column ASCII collations are intentionally owned
+// by the reviewed migration SQL because Prisma's schema language cannot express
+// them.
+
+/// Identity persistence record; this is not the Account domain aggregate.
+model IdentityAccountRecord {
+  id              Bytes                         @id @db.Binary(16)
+  loginName       String?                       @map("login_name") @db.VarChar(64)
+  status          String                        @db.VarChar(16)
+  version         Int                           @default(1) @db.UnsignedInt
+  createdAt       DateTime                      @map("created_at") @db.DateTime(6)
+  updatedAt       DateTime                      @map("updated_at") @db.DateTime(6)
+  suspendedAt     DateTime?                     @map("suspended_at") @db.DateTime(6)
+  deactivatedAt   DateTime?                     @map("deactivated_at") @db.DateTime(6)
+  sessionFamilies IdentitySessionFamilyRecord[]
+
+  @@unique([loginName], map: "uq_identity_accounts_login_name")
+  @@map("identity_accounts")
+}
+
+/// Identity persistence record; this is not the SessionFamily domain aggregate.
+model IdentitySessionFamilyRecord {
+  id                 Bytes                             @id @db.Binary(16)
+  accountId          Bytes                             @map("account_id") @db.Binary(16)
+  version            Int                               @default(1) @db.UnsignedInt
+  createdAt          DateTime                          @map("created_at") @db.DateTime(6)
+  lastRotatedAt      DateTime                          @map("last_rotated_at") @db.DateTime(6)
+  idleExpiresAt      DateTime                          @map("idle_expires_at") @db.DateTime(6)
+  absoluteExpiresAt  DateTime                          @map("absolute_expires_at") @db.DateTime(6)
+  revokedAt          DateTime?                         @map("revoked_at") @db.DateTime(6)
+  closedReason       String?                           @map("closed_reason") @db.VarChar(32)
+  account            IdentityAccountRecord             @relation(fields: [accountId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "fk_identity_session_families_account")
+  refreshCredentials IdentityRefreshCredentialRecord[]
+
+  @@index([accountId, revokedAt, absoluteExpiresAt, id], map: "ix_identity_session_families_account_authentication")
+  @@index([absoluteExpiresAt, id], map: "ix_identity_session_families_absolute_expiry")
+  @@map("identity_session_families")
+}
+
+/// Identity persistence record; this is not the RefreshCredential domain entity.
+model IdentityRefreshCredentialRecord {
+  id                     Bytes                            @id @db.Binary(16)
+  familyId               Bytes                            @map("family_id") @db.Binary(16)
+  digest                 Bytes                            @db.Binary(32)
+  sequence               Int                              @db.UnsignedInt
+  issuedAt               DateTime                         @map("issued_at") @db.DateTime(6)
+  expiresAt              DateTime                         @map("expires_at") @db.DateTime(6)
+  consumedAt             DateTime?                        @map("consumed_at") @db.DateTime(6)
+  successorId            Bytes?                           @map("successor_id") @db.Binary(16)
+  activeSlot             Int?                             @map("active_slot") @db.UnsignedTinyInt
+  family                 IdentitySessionFamilyRecord      @relation(fields: [familyId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "fk_identity_refresh_credentials_family")
+  successor              IdentityRefreshCredentialRecord? @relation("IdentityRefreshCredentialSuccessor", fields: [successorId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "fk_identity_refresh_credentials_successor")
+  predecessor            IdentityRefreshCredentialRecord? @relation("IdentityRefreshCredentialSuccessor")
+  issuedAccessCredential IdentityAccessCredentialRecord?  @relation("IdentityCredentialGeneration")
+
+  @@unique([digest], map: "uq_identity_refresh_credentials_digest")
+  @@unique([familyId, sequence], map: "uq_identity_refresh_credentials_family_sequence")
+  @@unique([successorId], map: "uq_identity_refresh_credentials_successor")
+  @@unique([familyId, activeSlot], map: "uq_identity_refresh_credentials_family_active_slot")
+  @@index([expiresAt, id], map: "ix_identity_refresh_credentials_expiry")
+  @@map("identity_refresh_credentials")
+}
+
+/// Identity persistence record; this is not the AccessCredential domain entity.
+model IdentityAccessCredentialRecord {
+  id                        Bytes                           @id @db.Binary(16)
+  familyId                  Bytes                           @map("family_id") @db.Binary(16)
+  digest                    Bytes                           @db.Binary(32)
+  sequence                  Int                             @db.UnsignedInt
+  issuedAt                  DateTime                        @map("issued_at") @db.DateTime(6)
+  expiresAt                 DateTime                        @map("expires_at") @db.DateTime(6)
+  issuanceRefreshCredential IdentityRefreshCredentialRecord @relation("IdentityCredentialGeneration", fields: [familyId, sequence], references: [familyId, sequence], onDelete: Restrict, onUpdate: Restrict, map: "fk_identity_access_credentials_refresh_generation")
+
+  @@unique([digest], map: "uq_identity_access_credentials_digest")
+  @@unique([familyId, sequence], map: "uq_identity_access_credentials_family_sequence")
+  @@index([familyId, expiresAt, id], map: "ix_identity_access_credentials_family_expiry")
+  @@index([expiresAt, id], map: "ix_identity_access_credentials_expiry")
+  @@map("identity_access_credentials")
+}

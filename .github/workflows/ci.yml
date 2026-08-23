@@ -114,6 +114,9 @@ jobs:
       - name: Test Prisma against MySQL
         run: pnpm test:integration:database
 
+      - name: Verify Identity refresh-lineage migration
+        run: pnpm test:integration:identity-refresh-lineage
+
       - name: Test Catalog vertical read slice against MySQL
         run: pnpm test:integration:catalog
 
