@@ -74,10 +74,28 @@ digest-only refresh discovery with authentic one-use tickets. A concrete
 Prisma discovery adapter now performs one non-locking writer-MySQL lookup over
 the binary refresh digest. It deliberately searches every retained generation
 without applying consumption, credential-expiry, family-expiry, revocation, or
-Account-status policy, so the future locked refresh workflow can still detect
-replay. Its factory privately owns the ticket authority that will pair it with
-that locked store, wipes the temporary digest copy, and keeps not-found,
-expected database unavailability, and persistence/integrity failure distinct.
+Account-status policy, so the locked refresh workflow can still detect replay.
+Its factory privately owns the ticket authority and binds it to the exact root
+writer client. A new package-internal Prisma locked loader consumes that
+one-use ticket over an already-active transaction, then issues three separate
+primary-key `FOR UPDATE` reads in the fixed Account, SessionFamily, presented
+RefreshCredential order. Each statement forces `PRIMARY`; the final read also
+revalidates the discovered family, credential ID, and copied digest. Timestamp
+projections remain canonical six-digit UTC strings rather than lossy
+JavaScript `Date` values. The discovery and loader both wipe their temporary
+digest copies and keep exact not-found, expected database unavailability, and
+persistence/integrity failure distinct. The future Unit of Work, not this
+standalone internal factory, must prove that the injected transaction client
+came from that root writer and own its connection lifecycle.
+An isolated real-MySQL gate proves the DML-only application grant, exact
+three-statement trace and `PRIMARY`/`const` plans, retained consumed and expired
+lifecycle loads, six-digit projections, digest-drift not-found, and
+causal shared-Account first-lock contention on separate `READ-COMMITTED`
+transaction connections.
+Its loopback TCP listener accepts a connection but deliberately never performs
+the MySQL handshake; that loopback TCP accept/handshake stall proves fixed,
+cause-free unavailability only. It does not prove cancellation or quarantine
+of an established connection or in-flight query.
 Its internal attempt-bound refresh workflow now produces scope- and
 decision-bound pending transaction evidence without claiming commit or
 credential-delivery authority.
@@ -104,11 +122,17 @@ suite proves immediate Role/Permission changes, lifecycle rejection, clipped
 access lifetimes, exact bounds, canonical wire through production SHA-256 to
 real MySQL authority, and public resolver outage classification. Identity
 still has no `Authorization` extraction, request association, authentication
-route, or public credential ingress; no locked store, concrete Unit of Work,
+route, or public credential ingress. The locked loader is deliberately
+load-only: no rotation/reuse writer, transaction lease tracker, concrete Unit
+of Work, commit/rollback settlement, committed credential completion,
 security-event adapter, NestJS composition, Argon2 adapter, password input
-policy, or Redis abuse control completes the runtime path yet. Pricing,
-inventory, Redis caching, and integration events also remain separate later
-slices.
+policy, or Redis abuse control completes the runtime path yet. Prisma's public
+transaction client also supplies no proven exact-connection cancellation or
+quarantine primitive. Before credential ingress becomes public, production
+configuration must disable Prisma driver-adapter debug/query logging because
+those namespaces can emit bound digest arguments. That configuration gate is
+not implemented yet, so public credential ingress remains blocked. Pricing,
+inventory, Redis caching, and integration events remain separate later slices.
 
 **Overall project progress: 36%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
@@ -278,6 +302,7 @@ pnpm test:integration:identity-refresh-lineage
 pnpm test:integration:identity-authorization
 pnpm test:integration:identity-authority
 pnpm test:integration:identity-refresh-discovery
+pnpm test:integration:identity-refresh-locked-loader
 pnpm test:integration:catalog
 ```
 
@@ -296,21 +321,23 @@ The dedicated Identity authority command creates another exact disposable
 database, deploys migrations twice, and exercises the production Prisma reader
 through the DML-only application principal. It also composes one canonical wire
 value through the production Node SHA-256 adapter, public resolver, and real
-MySQL authority query, including fixed resolver unavailability during a real
-connection outage. Together with the focused adapter tests, it proves
-one-statement writer time, current permission visibility, indistinguishable
-lifecycle rejection, internal corruption handling, exact cardinality bounds,
-digest cleanup, and real connection-outage classification before dropping its
-database and grant.
+MySQL authority query, including fixed resolver unavailability during a
+loopback TCP accept/handshake stall. Together with the focused adapter tests,
+it proves one-statement writer time, current permission visibility,
+indistinguishable lifecycle rejection, internal corruption handling, exact
+cardinality bounds, digest cleanup, and loopback TCP accept/handshake stall
+classification before dropping its database and grant. That fault does not
+simulate an established connection or in-flight query.
 The dedicated Identity refresh-discovery command creates its own isolated
 database, deploys the migration history twice, and runs the production Prisma
 adapter through the same DML-only application-principal boundary. Its focused
 and real-MySQL checks prove the binary digest lookup, lifecycle-blind discovery
 of retained consumed, expired, revoked, and inactive-Account credentials,
 strict relationship mapping, exact not-found behavior, temporary-copy cleanup,
-index use, and outage classification. CI runs this command separately because
-its lifecycle-blind replay semantics are intentionally different from the
-access-authority reader's lifecycle-gated semantics.
+index use, and loopback TCP accept/handshake stall classification. CI runs this
+command separately because its lifecycle-blind replay semantics are
+intentionally different from the access-authority reader's lifecycle-gated
+semantics.
 The Catalog integration command verifies an initial-schema
 upgrade with legacy rows, rejects ambiguous terminal history before DDL, and
 also creates, migrates twice, and removes an exact fresh
@@ -470,6 +497,7 @@ Useful repository commands:
 | `pnpm test:integration:identity-authority` | Verify the bounded Identity access-authority reader in an isolated local MySQL database |
 | `pnpm test:integration:identity-authorization` | Verify the Identity authorization registry, Role mappings, security-event schema, and Prisma drift against isolated real MySQL databases |
 | `pnpm test:integration:identity-refresh-discovery` | Verify lifecycle-blind refresh-digest discovery and its production Prisma query in an isolated local MySQL database |
+| `pnpm test:integration:identity-refresh-locked-loader` | Verify the paired Identity refresh loader's exact primary-key lock order, lossless rehydration, and causal Account-contention contract in an isolated local MySQL database |
 | `pnpm test:integration:identity-refresh-lineage` | Verify the Identity lineage migration, invariants, and Prisma drift against isolated real MySQL databases |
 | `pnpm format:check` | Verify formatting without modifying files |
 | `pnpm check` | Run every required quality gate in CI order |

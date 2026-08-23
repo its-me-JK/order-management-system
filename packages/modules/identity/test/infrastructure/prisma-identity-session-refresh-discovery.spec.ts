@@ -215,7 +215,10 @@ describe('Prisma Identity session refresh discovery', (): void => {
       throw new Error('Expected a found discovery ticket');
     }
 
-    const authority = inspectPrismaIdentitySessionRefreshDiscoveryAuthority(discovery);
+    const authority = inspectPrismaIdentitySessionRefreshDiscoveryAuthority(
+      discovery,
+      fixture.client,
+    );
     const foreignAuthority = createIdentitySessionRefreshDiscoveryBoundaryAuthority();
     expect(() =>
       consumeIdentitySessionRefreshDiscoveryFoundTicket(foreignAuthority, ticket),
@@ -477,7 +480,10 @@ describe('Prisma Identity session refresh discovery', (): void => {
     }
 
     const inspectionError = captureSynchronousError(() =>
-      inspectPrismaIdentitySessionRefreshDiscoveryAuthority(Object.freeze({})),
+      inspectPrismaIdentitySessionRefreshDiscoveryAuthority(
+        Object.freeze({}),
+        clientFixture().client,
+      ),
     );
     expectFixedError(
       inspectionError,

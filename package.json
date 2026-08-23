@@ -39,6 +39,7 @@
     "test:integration:identity-authority": "bash packages/modules/identity/test/run-authority-integration.sh",
     "test:integration:identity-authorization": "pnpm --filter @oms/database run test:migration:identity-authorization",
     "test:integration:identity-refresh-discovery": "bash packages/modules/identity/test/run-refresh-discovery-integration.sh",
+    "test:integration:identity-refresh-locked-loader": "bash packages/modules/identity/test/run-refresh-locked-loader-integration.sh",
     "test:integration:identity-refresh-lineage": "pnpm --filter @oms/database run test:migration:identity-refresh-lineage",
     "test:prepare": "pnpm --filter @oms/configuration run build && pnpm --filter @oms/database run build && pnpm --filter @oms/catalog run build",
     "test:watch": "pnpm test:prepare && jest --watch",

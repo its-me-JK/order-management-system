@@ -38,8 +38,8 @@ are implemented and integration-tested together:
   Metadata, and CSRF behavior;
 - the fixed Bearer `401`, authorization `403`, and Identity-owned cookie clear
   path in Problem Details and OpenAPI;
-- secret-safe logs, immutable security events, bounded cleanup, and operational
-  metrics; and
+- secret-safe logs with Prisma driver-adapter debug/query output disabled,
+  immutable security events, bounded cleanup, and operational metrics; and
 - real MySQL, real Redis, HTTP, concurrency, failure, and production-composition
   tests proving the complete contract.
 
@@ -164,9 +164,11 @@ partial authority.
 
 The isolated real-MySQL authority suite composes this use case with the
 production Node SHA-256 factory and Prisma reader. It proves one canonical wire
-through to a current principal and proves that a stalled database becomes the
-public unavailable failure rather than rejection. HTTP remains outside that
-test because no transport is composed yet.
+through to a current principal. Its loopback TCP listener accepts a connection
+but never performs the MySQL handshake, proving that a connect/handshake stall
+becomes the public unavailable failure rather than rejection. It does not test
+an established connection or in-flight query. HTTP remains outside that test
+because no transport is composed yet.
 
 Keeping HTTP extraction outside this use case makes the same application
 policy reusable by a later NestJS adapter or another trusted delivery adapter.
@@ -1367,10 +1369,14 @@ infrastructure subpath. The factory captures the writer-client query capability
 and creates the discovery's ticket authority itself. That authority is retained
 in module-private, identity-keyed state; supported package consumers cannot
 inject, enumerate, or read it. Only a direct-file package-internal inspector can
-recover the same authority when the future locked store is constructed, and
-neither that inspector nor the authority is exported from an Identity barrel.
+recover the same authority when the locked loader is constructed, and it does
+so only when given the exact root writer-client object captured by discovery.
+Neither that inspector nor the authority is exported from an Identity barrel.
 This pairing prevents a structurally convincing caller object from minting a
-ticket that the store will trust.
+ticket that the loader will trust and prevents an authentic discovery from
+being silently paired with another writer database. The future Unit of Work
+must still derive the injected transaction client from that same writer; this
+load-only increment does not authenticate Prisma's transaction-client lineage.
 
 Each discovery performs one non-transactional equality lookup against the
 unique `BINARY(32)` refresh-digest index on the MySQL writer and limits the
@@ -1412,19 +1418,135 @@ Focused adapter tests and the isolated
 `pnpm test:integration:identity-refresh-discovery` MySQL command prove strict
 projection and ticket pairing, temporary-copy cleanup, lifecycle-blind lookup
 of retained generations, relationship-integrity failure, unique-index use, and
-real connection-outage translation. CI runs this suite separately from access
-authority because discovery and authority deliberately have opposite lifecycle
-semantics. This adapter adds no route, Redis dependency, transaction, lock, or
-public refresh-credential ingress.
+loopback TCP accept/handshake stall unavailability translation. It does not
+test an established connection or in-flight query. CI runs this suite
+separately from access authority because discovery and authority deliberately
+have opposite lifecycle semantics. This adapter adds no route, Redis
+dependency, transaction, lock, or public refresh-credential ingress.
+
+This executable increment delivers only the package-internal
+`IdentitySessionRefreshLockedLoader`. Its factory accepts the exact discovery
+writer client, an already-active Prisma transaction client, the matching
+discovery, and the private workflow controller. It recovers the discovery
+authority only after the supplied root writer is identical to discovery's
+captured root writer, captures the separately injected transaction's query
+capability, and retains controller, authority, and query operation in
+module-private identity-keyed state. The frozen loader exposes only
+`loadForUpdate(scope, ticket)`; it exposes no Prisma client, transaction
+method, digest, mapper, controller, or authority.
+
+An authentic call consumes the ticket through the existing workflow before
+the first database statement. It then performs exactly three sequential
+locking reads:
+
+1. Account by its binary primary key;
+2. SessionFamily by its binary primary key plus the discovered Account key;
+   and
+3. presented RefreshCredential by its binary primary key plus the discovered
+   family key and the ticket-bound digest.
+
+Every statement uses `FORCE INDEX (PRIMARY)`, probes at most two rows, and ends
+with `FOR UPDATE`. They are separate statements so application lock order is
+visible and independent of MySQL join planning: `account -> session family ->
+refresh credential`. A single joined locking query would save two round trips,
+but the optimizer could reorder table access, widen the lock footprint, and
+make the global deadlock rule an execution-plan accident. Primary-key forcing
+also prevents a future index choice from beginning with the secret-derived
+digest. Locking Account first deliberately serializes refreshes for different
+families of one Account; that contention is accepted so suspension,
+deactivation, password replacement, logout, and refresh share one deterministic
+security order.
+
+The locked reads remain lifecycle-blind. They load suspended or deactivated
+Accounts, expired or revoked families, and consumed or expired presented
+credentials so the domain, using the transaction's one future `dbNow`, can
+distinguish ordinary rejection from retained replay evidence. No query loads a
+credential history, AccessCredential, role, permission, event, or successor
+aggregate. Exact absence at any stage completes the authentic workflow as
+`not-found` and performs no further query or DML. That result covers deletion
+or relationship/digest drift between preliminary discovery and locking; it is
+never authority to issue a credential.
+
+All persisted `DATETIME(6)` columns are projected with `DATE_FORMAT` directly
+to canonical `YYYY-MM-DDTHH:mm:ss.ffffffZ` strings. Prisma's MariaDB adapter
+otherwise converts date-time values through JavaScript `Date`, which cannot
+represent the final three microsecond digits and would violate Identity's
+chronology and conditional-write basis. The loader strictly accepts only one
+accessor-free row with the exact projection keys, validates the refresh
+`active_slot` against consumption, and rehydrates all three domain objects
+before the workflow validates their identities and relationships. It copies
+the authenticated refresh digest only immediately before the final query,
+keeps that copy alive until the actual query Promise settles, then overwrites
+and verifies the copy before mapping or returning. The real
+`@prisma/adapter-mariadb` contract is explicit rather than inferred: MySQL
+`INTEGER UNSIGNED` projections arrive as `bigint`, so the loader accepts only
+`0n..4294967295n` before converting to a domain number; `TINYINT` `active_slot`
+arrives as the number `1` or `null`, and no Boolean, string, or `bigint`
+substitute is accepted.
+
+A recognized Prisma availability failure from any locking query becomes a
+fresh, cause-free
+`IdentitySessionRefreshLockedLoadUnavailableError`. Query-shape, projection,
+rehydration, active-slot, relationship, cleanup, provider, and every other
+defect becomes the cause-free
+`IdentitySessionRefreshLockedLoadPersistenceError`. Once an authentic load has
+started, either failure permanently fails its workflow. Invalid, forged,
+foreign-scope, replayed, or wrong-phase capabilities retain the existing fixed
+workflow error and fail before SQL. No error or result retains a Prisma
+exception, vendor code, query, constraint, or digest. `not-found` is a normal
+locked-load result, not an outage or write conflict. This read-only boundary
+cannot classify credential collision, conditional conflict, rollback, or commit
+ambiguity; those classifications belong to the future writer and Unit of Work.
+
+This is intentionally not the Unit of Work. The loader neither starts nor
+settles a transaction, reads writer time, tracks or cancels concurrent scoped
+operations, decides lifecycle, performs DML, appends an event, classifies a
+write conflict, retries, commits, rolls back, or authorizes credential
+delivery. It assumes an already-active transaction and gives the future Unit
+of Work only the narrow locked-load mechanism that the application workflow
+can authenticate today. Landing the complete writer and commit protocol in the
+same change would mix deterministic row mapping with rollback injection,
+constraint allowlisting, ambiguous commit, and secret-delivery authority,
+making failures harder to localize and review.
+
+Two application capabilities remain explicit blockers. First, a closed,
+package-owned refresh command must bind the authentic discovery ticket,
+verified credential attempt, generated identifiers, lifetimes, security-event
+identifier, and exact orchestration; `execute<T>(callerCallback)` is not an
+acceptable substitute because side effects can leak candidates before return
+validation. Second, confirmed commit must promote pending evidence into a
+distinct runtime-authentic completion bound to the exact candidate pair;
+pending evidence or a structurally similar object can never reveal either wire
+value.
+
+The infrastructure blocker is equally deliberate. Prisma's public interactive
+transaction client does not expose a supported primitive to cancel one in-flight
+query or quarantine its exact pooled connection. The future Unit of Work must
+prove synchronous operation leases, bounded drain, transaction timeout,
+rollback completion, and connection non-reuse under stalled-query and
+connection-loss fault injection. If the pinned Prisma adapter cannot prove
+those properties, Identity must use a narrower connection-owning transaction
+executor or mark and recycle the complete database runtime; documentation must
+not claim exact-connection quarantine from an API that does not provide it.
+
+The pinned Prisma MariaDB adapter also uses debug namespaces that can render a
+query object with its bound arguments. Production bootstrap must reject or
+disable Prisma driver-adapter debug and query logging before any public
+credential ingress, and tests must prove that deployment configuration. HTTP
+logger redaction is not sufficient because dependency debug output can bypass
+the application logger. Raw credentials are never bound here, but a refresh
+digest is still secret-derived authentication material and is prohibited from
+logs.
 
 Inside the callback, `IdentitySessionRefreshStore` exposes only three
 operations:
 
-1. `loadForUpdate(scope, discovery)` consumes the authentic discovery ticket,
-   locks and strictly rehydrates Account, SessionFamily, then the exact
-   presented RefreshCredential in the global order. It returns exact
-   `not-found` or `found` with only those three authentic aggregates. It never
-   loads credential history or an AccessCredential.
+1. The delivered `loadForUpdate(scope, ticket)` behavior consumes the
+   authentic discovery ticket, locks and strictly rehydrates Account,
+   SessionFamily, then the exact presented RefreshCredential in the global
+   order. It returns exact `not-found` or `found` with only those three
+   authentic aggregates. It never loads credential history or an
+   AccessCredential. Its eventual store composition remains private.
 2. `persistRotated(scope, { decision, securityEventId })` accepts only the
    authentic scope-bound decision containing the complete `rotated` domain
    result and one separately branded canonical UUIDv7 event identifier
@@ -1463,16 +1585,50 @@ binding, exact frozen pending evidence, one-shot consumption, explicit
 revocation, unconsumed-evidence retirement, re-entrant attempt invalidation,
 fixed cause-free errors, and no workflow root export.
 
+Focused locked-loader unit tests additionally prove exact construction and
+public shape, same-writer discovery pairing, one-use ticket and scope binding,
+strict row projections and provider types, primary-key lock order, digest
+revalidation and cleanup, six-digit time preservation, lifecycle-blind
+rehydration, active-slot and relationship validation, short-circuit not-found
+behavior, failure precedence, workflow poisoning after an authentic failure,
+fixed cause-free errors, and no Identity barrel or root export.
+
+The isolated
+`pnpm test:integration:identity-refresh-locked-loader` real-MySQL gate proves
+the DML-only application grant and executes exactly three locking statements in
+Account, SessionFamily, RefreshCredential order, each with
+`FORCE INDEX (PRIMARY)` and `FOR UPDATE`. It confirms `PRIMARY`/`const` plans
+with `EXPLAIN`; exact `.123456` `DATETIME(6)` rehydration; current and retained
+consumed, expired, revoked, closed, and inactive state; and digest drift
+becoming locked not-found. Two asserted `READ-COMMITTED` interactive
+transactions use distinct family and credential IDs, distinct connections, and
+the same Account. While the first transaction holds that Account, the second
+loader records exactly one Account `FORCE INDEX (PRIMARY) ... FOR UPDATE`
+statement and a raw Prisma `P2010`/MySQL `1205` lock-wait timeout; it records no
+family or credential statement and exposes only the fixed cause-free
+persistence error. This proves causally that Account is the first contended
+lock. Only after the second transaction times out does the test release and
+settle the first transaction.
+
+Separately, a loopback TCP listener accepts a connection but never performs the
+MySQL handshake; that loopback TCP accept/handshake stall becomes the fixed
+cause-free unavailable error. The guarded runner owns a dedicated database and
+grant, replays migrations, serializes local runs, and verifies database and
+grant cleanup independently. This gate does not prove that an arbitrary
+injected transaction client originated from the paired root writer, nor
+cancellation of an established connection or in-flight query,
+exact-connection quarantine, DML, rollback, or commit semantics.
+
 The Unit of Work increment must still prove commit promotion and revocation,
 final attempt retirement, exact-pair delivery binding, raw-credential rejection
 at orchestration settlement, and that caught values with hostile getters,
 Proxies, coercion traps, or secret causes never escape. The Prisma increment
-must additionally prove zero orchestration before a valid context, one
-orchestration otherwise, one writer time, one connection, operation tracking
-and bounded drain, lock and DML order, affected-row checks, rollback injection
-after every statement, exact statement-and-constraint allowlisting, commit
-ambiguity, connection quarantine, no retry, escaped-scope rejection, and
-competing-refresh behavior against real MySQL.
+must still add rotation and reuse writers and prove zero orchestration before a
+valid context, one orchestration otherwise, one writer time, one connection,
+operation tracking and bounded drain, DML order, affected-row checks, rollback
+injection after every statement, exact statement-and-constraint allowlisting,
+commit ambiguity, connection quarantine or whole-runtime retirement, no retry,
+escaped-scope rejection, and competing-refresh behavior against real MySQL.
 
 The rejected alternatives are public aggregate repositories and one Unit of
 Work containing every query and mutation. Repositories make partial refresh
@@ -1480,6 +1636,17 @@ writes and wrong lock order legal; a god Unit of Work moves workflow authority
 into one infrastructure-shaped interface. Workflow ports duplicate a small
 amount of mapping and SQL, but private infrastructure helpers can recover reuse
 without granting application code unsafe operations.
+
+A joined Account/SessionFamily/RefreshCredential `FOR UPDATE` projection is
+also rejected. It would reduce three indexed statements to one, but MySQL may
+choose a join order that disagrees with the global security lock order and may
+lock more index records than the application contract implies. Separate
+primary-key reads cost two additional local round trips and serialize all
+families of one Account, but make contention, missing-row precedence, and
+deadlock review deterministic. Likewise, using Prisma model delegates and
+JavaScript `Date` would reduce raw mapping code but discard microseconds; the
+canonical formatted-string projection preserves the already accepted domain
+contract.
 
 The tempting evidence alternative is `execute<T>(callback): Promise<T>` or a
 plain persistence DTO. It is shorter, but it permits a callback to return a raw
@@ -1491,8 +1658,9 @@ wrong-kind writes before SQL. An interview-level consequence is that consumed
 pending evidence must survive callback-scope close: the scope must be invalid
 before `COMMIT`, while confirmed commit still needs the exact attempt binding
 for later delivery. That retained registration grants neither SQL nor delivery
-authority. The next improvement is the concrete MySQL Unit of Work that alone
-can settle it from a real transaction trace.
+authority. The next improvements are the closed refresh command,
+rotation/reuse writer, and concrete MySQL Unit of Work that alone can settle it
+from a real transaction trace.
 
 ## Credential and password representation
 
@@ -2500,12 +2668,13 @@ authentication surface becomes public.
 
 Step 3 is partially delivered. The constrained Identity records,
 deterministic baseline policy, digest-level authority port, bounded Prisma
-reader, lifecycle-blind Prisma refresh-discovery adapter, isolated real-MySQL
-authority/discovery/resolver tests, and root-exported framework-independent
-Bearer principal resolver exist. The Unit of Work, paired locked refresh store,
-security-event writer, cleanup use case, NestJS composition, and complete
-delivery-gate tests remain. A trusted caller can now resolve an
-already-extracted canonical access-wire value, but there is still no
+reader, lifecycle-blind Prisma refresh-discovery adapter, root-writer-paired
+locked loader, isolated real-MySQL authority/discovery/locked-load/resolver
+tests, and root-exported framework-independent Bearer principal resolver exist.
+The closed refresh command, rotation/reuse writer, Unit of Work, committed
+completion and delivery gate, security-event writer, cleanup use case, NestJS
+composition, and complete delivery-gate tests remain. A trusted caller can now
+resolve an already-extracted canonical access-wire value, but there is still no
 `Authorization` extraction, request association, credential ingress, route, or
 public authentication surface.
 
@@ -2530,8 +2699,11 @@ public authentication surface.
   shares the same credential policy without importing Identity internals.
 - Non-locking refresh discovery narrows the future transaction's lock window,
   while lifecycle-blind lookup preserves consumed predecessors as replay
-  evidence. A factory-owned hidden authority binds its minimal ticket to the
-  future paired locked store without exposing credential constructors.
+  evidence. A factory-owned hidden authority and exact writer-client identity
+  bind its minimal ticket to the delivered locked loader without exposing
+  credential constructors. Three separate primary-key locking reads make the
+  global lock order executable and preserve all six database time digits for
+  the later decision.
 - An application-owned Unit of Work keeps security policy out of generic
   repositories and makes atomic event/state invariants testable.
 - Redis contains attack cost across replicas without becoming session state or
@@ -2570,6 +2742,19 @@ public authentication surface.
   could leak or replace. Factory-owned private pairing adds a small internal
   registry and construction constraint in exchange for a closed mint/consume
   boundary.
+- One joined `FOR UPDATE` query would save two local round trips, but its
+  optimizer-selected table order would make the global deadlock rule implicit.
+  Three `FORCE INDEX (PRIMARY)` reads create more statements and serialize an
+  Account's families, but make lock acquisition and missing-row precedence
+  deterministic. Prisma delegate date mapping would also be shorter, but
+  JavaScript `Date` would truncate `DATETIME(6)` microseconds; explicit
+  formatted projections retain the domain's exact clock contract.
+- Shipping the loader together with writers and transaction settlement would
+  reduce the number of increments, but would combine row-mapping failures with
+  rollback, constraint, cancellation, ambiguous-commit, and credential-release
+  failures. The load-only boundary costs another composition step and is not
+  independently useful to HTTP, but gives those later authorities a reviewed
+  locked-state foundation.
 - Returning refresh credentials in JSON makes CLI use easier but exposes the
   long-lived secret to browser JavaScript and accidental client persistence.
 - Separate access and refresh generators are superficially reusable, but permit
@@ -2761,6 +2946,22 @@ public authentication surface.
     whether refresh is allowed. A consumed predecessor must reach the locked
     workflow so replay can revoke the family, while current lifecycle and
     Account state may change between the preliminary read and transaction.
+35. **Why use three `FOR UPDATE` statements instead of one join?** A join is
+    shorter, but MySQL owns its table-access order. Separate primary-key reads
+    make the security-wide Account-before-family-before-credential lock order
+    executable and reviewable, at the cost of two local round trips and
+    Account-level serialization.
+36. **Why project `DATETIME(6)` as text instead of letting Prisma return
+    `Date`?** JavaScript `Date` retains milliseconds, while the Identity domain
+    and MySQL constraints retain microseconds. Canonical formatted strings keep
+    all six digits for chronology, replay, and later conditional writes without
+    introducing a second time representation.
+37. **Why is the locked loader not already a Unit of Work?** Locking and strict
+    rehydration prove only the input to a decision. A production Unit of Work
+    must additionally own a closed command, operation leases, writer time,
+    DML, rollback, commit ambiguity, connection retirement, pending-evidence
+    promotion, and exact-pair delivery. Calling a load-only adapter a Unit of
+    Work would overstate its security authority.
 
 ## Future improvements
 
@@ -2789,14 +2990,20 @@ public authentication surface.
   crypto-availability metrics, and evaluate FIPS/runtime attestation where a
   deployment requires it. A future HSM or managed provider remains a separate
   implementation of the unchanged application port.
-- Extend the proven refresh Unit-of-Work pattern to login, logout, Account,
-  authenticator, and Role workflows only after the real-MySQL refresh adapter
-  passes scope-escape, rollback-injection, competing-refresh, and ambiguous
-  commit tests; do not generalize it into aggregate CRUD.
-- Implement the paired Prisma locked refresh store and Unit of Work, then prove
-  that every discovered ticket is consumed once, all rows are revalidated in
-  global lock order, and concurrent predecessor use produces one rotation and
-  one replay decision without trusting discovery-time lifecycle state.
+- Complete the closed refresh command, rotation/reuse writers, committed
+  completion registry, and Identity Unit of Work around the delivered paired
+  locked loader. Prove scope escape, rollback injection, exact constraint
+  classification, competing refresh, and ambiguous commit before extending
+  the pattern to login, logout, Account, authenticator, or Role workflows; do
+  not generalize it into aggregate CRUD.
+- Prove bounded cancellation/drain and connection non-reuse against the pinned
+  Prisma adapter. If its public transaction API cannot quarantine the exact
+  connection, introduce a narrow connection-owning Identity executor or retire
+  the whole unhealthy runtime rather than weakening indeterminate-outcome
+  semantics.
+- Reject Prisma driver-adapter debug namespaces and query logging in production
+  configuration before public credential ingress, and regression-test that
+  bound credential digests cannot bypass the application logger.
 - Add risk signals only after privacy, false-positive, retention, and trusted
   network-source policies are reviewed.
 

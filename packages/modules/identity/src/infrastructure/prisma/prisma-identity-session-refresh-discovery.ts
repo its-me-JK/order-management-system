@@ -40,6 +40,7 @@ export type IdentitySessionRefreshDiscoveryPrismaClient = Pick<PrismaClient, '$q
 type QueryRawOperation = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>;
 type DiscoveryState = Readonly<{
   authority: IdentitySessionRefreshDiscoveryBoundaryAuthority;
+  client: object;
   queryRaw: QueryRawOperation;
 }>;
 type ExactDiscoveryRows =
@@ -295,8 +296,13 @@ export function createPrismaIdentitySessionRefreshDiscovery(
   client: IdentitySessionRefreshDiscoveryPrismaClient,
 ): IdentitySessionRefreshDiscovery {
   try {
+    if (!isDependencyReceiver(client)) {
+      persistenceFailed();
+    }
+
     const state = capturedFreeze({
       authority: createIdentitySessionRefreshDiscoveryBoundaryAuthority(),
+      client,
       queryRaw: createQueryRawOperation(client),
     });
 
@@ -309,18 +315,23 @@ export function createPrismaIdentitySessionRefreshDiscovery(
   }
 }
 
-/** @internal Recovers the private capability for the future paired locked loader. */
+/** @internal Recovers pairing authority only for the discovery's exact writer client. */
 export function inspectPrismaIdentitySessionRefreshDiscoveryAuthority(
   discovery: unknown,
+  expectedClient: unknown,
 ): IdentitySessionRefreshDiscoveryBoundaryAuthority {
   try {
-    if (typeof discovery !== 'object' || discovery === null) {
+    if (
+      typeof discovery !== 'object' ||
+      discovery === null ||
+      !isDependencyReceiver(expectedClient)
+    ) {
       persistenceFailed();
     }
 
     const state = discoveryStates.get(discovery);
 
-    if (state === undefined) {
+    if (state?.client !== expectedClient) {
       persistenceFailed();
     }
 

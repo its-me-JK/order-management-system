@@ -436,6 +436,7 @@ void test('Identity session refresh discovery satisfies its real-MySQL contract'
 
       const authority = inspectPrismaIdentitySessionRefreshDiscoveryAuthority(
         integration.discovery,
+        integration.client,
       );
       const consumed = consumeIdentitySessionRefreshDiscoveryFoundTicket(authority, result);
 
