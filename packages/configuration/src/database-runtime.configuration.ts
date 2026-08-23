@@ -8,6 +8,7 @@ import { InvalidConfigurationError, type RuntimeEnvironment } from './api-runtim
 
 const DEFAULT_DATABASE_PORT = 3306;
 const DEFAULT_CONNECTION_LIMIT = 5;
+const DEFAULT_TRANSACTION_CONNECTION_LIMIT = 2;
 const DEFAULT_CONNECT_TIMEOUT_MILLISECONDS = 5_000;
 const DEFAULT_ACQUIRE_TIMEOUT_MILLISECONDS = 10_000;
 const DEFAULT_PROBE_TIMEOUT_MILLISECONDS = 1_000;
@@ -38,7 +39,8 @@ const databaseEnvironmentSchema = z.object({
   DATABASE_USER: databaseUserSchema,
   DATABASE_PASSWORD: secretValueSchema.optional(),
   DATABASE_PASSWORD_FILE: secretFileSchema.optional(),
-  DATABASE_CONNECTION_LIMIT: boundedDecimalSchema(1, 50),
+  DATABASE_CONNECTION_LIMIT: boundedDecimalSchema(2, 50),
+  DATABASE_TRANSACTION_CONNECTION_LIMIT: boundedDecimalSchema(1, 49),
   DATABASE_CONNECT_TIMEOUT_MS: boundedDecimalSchema(100, 60_000),
   DATABASE_ACQUIRE_TIMEOUT_MS: boundedDecimalSchema(100, 60_000),
   DATABASE_PROBE_TIMEOUT_MS: boundedDecimalSchema(100, 5_000),
@@ -89,6 +91,7 @@ export interface DatabaseRuntimeConfiguration {
   readonly user: string;
   readonly password: DatabasePasswordSource;
   readonly connectionLimit: number;
+  readonly transactionConnectionLimit: number;
   readonly connectTimeoutMilliseconds: number;
   readonly acquireTimeoutMilliseconds: number;
   readonly probeTimeoutMilliseconds: number;
@@ -110,6 +113,7 @@ export interface ResolvedDatabaseRuntimeConfiguration {
   readonly user: string;
   readonly password: string;
   readonly connectionLimit: number;
+  readonly transactionConnectionLimit: number;
   readonly connectTimeoutMilliseconds: number;
   readonly acquireTimeoutMilliseconds: number;
   readonly probeTimeoutMilliseconds: number;
@@ -137,6 +141,9 @@ function withDefaults(
     DATABASE_PASSWORD_FILE: environment['DATABASE_PASSWORD_FILE'],
     DATABASE_CONNECTION_LIMIT:
       environment['DATABASE_CONNECTION_LIMIT'] ?? String(DEFAULT_CONNECTION_LIMIT),
+    DATABASE_TRANSACTION_CONNECTION_LIMIT:
+      environment['DATABASE_TRANSACTION_CONNECTION_LIMIT'] ??
+      String(DEFAULT_TRANSACTION_CONNECTION_LIMIT),
     DATABASE_CONNECT_TIMEOUT_MS:
       environment['DATABASE_CONNECT_TIMEOUT_MS'] ?? String(DEFAULT_CONNECT_TIMEOUT_MILLISECONDS),
     DATABASE_ACQUIRE_TIMEOUT_MS:
@@ -199,6 +206,12 @@ function addCrossFieldErrors(
   const acquireTimeout = boundedDecimalSchema(100, 60_000).safeParse(
     environment['DATABASE_ACQUIRE_TIMEOUT_MS'],
   );
+  const connectionLimit = boundedDecimalSchema(2, 50).safeParse(
+    environment['DATABASE_CONNECTION_LIMIT'],
+  );
+  const transactionConnectionLimit = boundedDecimalSchema(1, 49).safeParse(
+    environment['DATABASE_TRANSACTION_CONNECTION_LIMIT'],
+  );
 
   if (
     connectTimeout.success &&
@@ -215,6 +228,24 @@ function addCrossFieldErrors(
   ) {
     invalidVariables.add('DATABASE_CONNECT_TIMEOUT_MS');
     invalidVariables.add('DATABASE_ACQUIRE_TIMEOUT_MS');
+  }
+
+  if (
+    connectionLimit.success &&
+    transactionConnectionLimit.success &&
+    transactionConnectionLimit.data >= connectionLimit.data
+  ) {
+    invalidVariables.add('DATABASE_CONNECTION_LIMIT');
+    invalidVariables.add('DATABASE_TRANSACTION_CONNECTION_LIMIT');
+  }
+
+  if (
+    parsedEnvironment !== undefined &&
+    parsedEnvironment.DATABASE_TRANSACTION_CONNECTION_LIMIT >=
+      parsedEnvironment.DATABASE_CONNECTION_LIMIT
+  ) {
+    invalidVariables.add('DATABASE_CONNECTION_LIMIT');
+    invalidVariables.add('DATABASE_TRANSACTION_CONNECTION_LIMIT');
   }
 }
 
@@ -305,6 +336,7 @@ export function parseDatabaseRuntimeConfiguration(
     user: result.data.DATABASE_USER,
     password: passwordSource(result.data),
     connectionLimit: result.data.DATABASE_CONNECTION_LIMIT,
+    transactionConnectionLimit: result.data.DATABASE_TRANSACTION_CONNECTION_LIMIT,
     connectTimeoutMilliseconds: result.data.DATABASE_CONNECT_TIMEOUT_MS,
     acquireTimeoutMilliseconds: result.data.DATABASE_ACQUIRE_TIMEOUT_MS,
     probeTimeoutMilliseconds: result.data.DATABASE_PROBE_TIMEOUT_MS,
@@ -424,6 +456,7 @@ export function resolveDatabaseRuntimeConfiguration(
     user: configuration.user,
     password: resolvedPassword.value,
     connectionLimit: configuration.connectionLimit,
+    transactionConnectionLimit: configuration.transactionConnectionLimit,
     connectTimeoutMilliseconds: configuration.connectTimeoutMilliseconds,
     acquireTimeoutMilliseconds: configuration.acquireTimeoutMilliseconds,
     probeTimeoutMilliseconds: configuration.probeTimeoutMilliseconds,

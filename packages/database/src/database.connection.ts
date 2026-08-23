@@ -42,6 +42,7 @@ export class ManagedDatabaseConnection implements DatabaseConnection {
     }
 
     this.closed = true;
+    this.driver.beginClose();
     const activeProbeSettlement = this.waitForActiveProbe();
 
     this.closeOperation = activeProbeSettlement.then(() => this.driver.close());

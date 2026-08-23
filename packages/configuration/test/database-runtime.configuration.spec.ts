@@ -43,6 +43,7 @@ describe('parseDatabaseRuntimeConfiguration', (): void => {
         variableName: 'DATABASE_PASSWORD_FILE',
       },
       connectionLimit: 5,
+      transactionConnectionLimit: 2,
       connectTimeoutMilliseconds: 5_000,
       acquireTimeoutMilliseconds: 10_000,
       probeTimeoutMilliseconds: 1_000,
@@ -122,7 +123,10 @@ describe('parseDatabaseRuntimeConfiguration', (): void => {
     ['DATABASE_PORT', '0'],
     ['DATABASE_PORT', '65536'],
     ['DATABASE_PORT', ' 3306 '],
+    ['DATABASE_CONNECTION_LIMIT', '1'],
     ['DATABASE_CONNECTION_LIMIT', '51'],
+    ['DATABASE_TRANSACTION_CONNECTION_LIMIT', '0'],
+    ['DATABASE_TRANSACTION_CONNECTION_LIMIT', '50'],
     ['DATABASE_CONNECT_TIMEOUT_MS', '99'],
     ['DATABASE_ACQUIRE_TIMEOUT_MS', '60001'],
     ['DATABASE_PROBE_TIMEOUT_MS', '5001'],
@@ -138,6 +142,7 @@ describe('parseDatabaseRuntimeConfiguration', (): void => {
       parseDevelopment({
         DATABASE_PORT: '65535',
         DATABASE_CONNECTION_LIMIT: '50',
+        DATABASE_TRANSACTION_CONNECTION_LIMIT: '49',
         DATABASE_CONNECT_TIMEOUT_MS: '100',
         DATABASE_ACQUIRE_TIMEOUT_MS: '60000',
         DATABASE_PROBE_TIMEOUT_MS: '5000',
@@ -147,6 +152,7 @@ describe('parseDatabaseRuntimeConfiguration', (): void => {
       expect.objectContaining({
         port: 65_535,
         connectionLimit: 50,
+        transactionConnectionLimit: 49,
         connectTimeoutMilliseconds: 100,
         acquireTimeoutMilliseconds: 60_000,
         probeTimeoutMilliseconds: 5_000,
@@ -163,6 +169,20 @@ describe('parseDatabaseRuntimeConfiguration', (): void => {
       }),
     ).toThrow(
       new InvalidConfigurationError(['DATABASE_CONNECT_TIMEOUT_MS', 'DATABASE_ACQUIRE_TIMEOUT_MS']),
+    );
+  });
+
+  it('requires the exact-transaction reserve to be smaller than the total budget', (): void => {
+    expect(() =>
+      parseDevelopment({
+        DATABASE_CONNECTION_LIMIT: '5',
+        DATABASE_TRANSACTION_CONNECTION_LIMIT: '5',
+      }),
+    ).toThrow(
+      new InvalidConfigurationError([
+        'DATABASE_CONNECTION_LIMIT',
+        'DATABASE_TRANSACTION_CONNECTION_LIMIT',
+      ]),
     );
   });
 
@@ -268,6 +288,7 @@ describe('resolveDatabaseRuntimeConfiguration', (): void => {
       user: 'oms_app',
       password: ' password bytes ',
       connectionLimit: 5,
+      transactionConnectionLimit: 2,
       connectTimeoutMilliseconds: 5_000,
       acquireTimeoutMilliseconds: 10_000,
       probeTimeoutMilliseconds: 1_000,

@@ -1139,11 +1139,20 @@ Identity uses a hybrid boundary rather than repositories per aggregate. A
 small `IdentityUnitOfWork` owns transaction completion. Separate purpose-built
 reads operate outside a transaction, while workflow-scoped loaders and writers
 receive an opaque transaction capability. Private Prisma mappers may reuse
-implementation code later, but application code receives no generic
+driver-independent mapping code later, but the connection-owning transaction
+uses direct-driver scoped stores for every participating query; it never mixes
+Prisma work into that transaction. Application code receives no generic
 `find/save/delete`, arbitrary query, event append, or database client. Aggregate
 ownership and transaction ownership differ here: one refresh decision spans an
 Account, SessionFamily, presented RefreshCredential, optional successor and
 AccessCredential, current authority projection, and a security event.
+
+The runtime and connection ownership for this boundary is fixed by
+[ADR-0018](../adr/0018-own-security-critical-mysql-connections.md). Prisma
+remains the ordinary persistence and non-transactional discovery path. A
+separately reserved, package-private allocator supplies one-use exact
+connections, and it splits one per-runtime connection budget with Prisma's
+pool.
 
 For this refresh slice, `IdentityUnitOfWork.execute` accepts one authentic
 closed refresh command as its exact admission and invokes its fixed,
@@ -1388,9 +1397,12 @@ so only when given the exact root writer-client object captured by discovery.
 Neither that inspector nor the authority is exported from an Identity barrel.
 This pairing prevents a structurally convincing caller object from minting a
 ticket that the loader will trust and prevents an authentic discovery from
-being silently paired with another writer database. The future Unit of Work
-must still derive the injected transaction client from that same writer; this
-load-only increment does not authenticate Prisma's transaction-client lineage.
+being silently paired with another writer database. The delivered Prisma
+locked loader remains a load-only invariant and mapping proof, not the future
+Unit-of-Work adapter. The concrete Unit of Work must replace its query
+capability with a direct-driver scoped loader recovered from the same
+`DatabaseRuntime` as discovery's Prisma writer. No Prisma transaction client
+may participate in, or represent, the direct transaction.
 
 Each discovery performs one non-transactional equality lookup against the
 unique `BINARY(32)` refresh-digest index on the MySQL writer and limits the
@@ -3026,11 +3038,10 @@ public authentication surface.
   classification, competing refresh, and ambiguous commit before extending
   the pattern to login, logout, Account, authenticator, or Role workflows; do
   not generalize it into aggregate CRUD.
-- Prove bounded cancellation/drain and connection non-reuse against the pinned
-  Prisma adapter. If its public transaction API cannot quarantine the exact
-  connection, introduce a narrow connection-owning Identity executor or retire
-  the whole unhealthy runtime rather than weakening indeterminate-outcome
-  semantics.
+- Build the narrow Identity executor over the runtime-owned one-use connection
+  allocator. Prove its absolute deadline, serialized operation drain,
+  transaction settlement classification, scope non-escape, and connection
+  non-reuse without weakening indeterminate-outcome semantics.
 - Reject Prisma driver-adapter debug namespaces and query logging in production
   configuration before public credential ingress, and regression-test that
   bound credential digests cannot bypass the application logger.

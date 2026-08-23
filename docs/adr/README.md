@@ -38,6 +38,7 @@ partial-supersession relationship.
 | [0015](0015-authenticate-and-authorize-administrative-apis.md) | Accepted | Authenticate and authorize administrative APIs; supersedes ADR-0010 authenticated `401` deferral when delivery gates are complete |
 | [0016](0016-make-retryable-commands-durably-idempotent.md) | Accepted | Make retryable commands durably idempotent |
 | [0017](0017-use-split-browser-session-credentials.md) | Accepted | Use split browser session credentials and refine the ADR-0015 HTTP delivery gate |
+| [0018](0018-own-security-critical-mysql-connections.md) | Accepted | Own connections for security-critical MySQL transactions and refine the ADR-0006/ADR-0012 persistence lifecycle |
 
 ## Template
 

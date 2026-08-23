@@ -376,9 +376,19 @@ Applications never apply migrations during startup.
 Runtime database settings use the `DATABASE_*` namespace documented in
 `.env.example`. A runtime receives exactly one of `DATABASE_PASSWORD` or
 `DATABASE_PASSWORD_FILE`; migration URLs are never part of its configuration.
+`DATABASE_CONNECTION_LIMIT` is one total per-runtime budget. The reserved
+`DATABASE_TRANSACTION_CONNECTION_LIMIT` is assigned to security-critical
+exact-connection work and Prisma receives the remainder; the two values are
+never applied as independent full-size connection limits. The direct reserve
+uses bounded one-use connections rather than MariaDB's unobservable pool
+lifecycle. Its wait queue is capped at one requester per reserved connection,
+and a slot remains consumed until the exact socket is closed and every issued
+driver operation has settled.
 Production and showcase configuration requires `DATABASE_TLS_MODE` to be
 `verify-identity`. The only supported TLS behavior verifies the server
-certificate and hostname; there is no certificate-bypass option.
+certificate and hostname; there is no certificate-bypass option. The ownership
+and settlement rationale is recorded in
+[ADR-0018](docs/adr/0018-own-security-critical-mysql-connections.md).
 
 Create a migration only after adding and reviewing a module-owned schema
 change:

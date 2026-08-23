@@ -8,6 +8,7 @@ function connectionOptions(
     acquireTimeoutMilliseconds: 10_000,
     connectTimeoutMilliseconds: 5_000,
     connectionLimit: 5,
+    transactionConnectionLimit: 2,
     database: 'oms',
     host: '127.0.0.1',
     idleTimeoutSeconds: 300,
@@ -27,7 +28,7 @@ describe('toPrismaMariaDbPoolOptions', (): void => {
     expect(toPrismaMariaDbPoolOptions(connectionOptions())).toEqual({
       acquireTimeout: 10_000,
       connectTimeout: 5_000,
-      connectionLimit: 5,
+      connectionLimit: 3,
       database: 'oms',
       host: '127.0.0.1',
       idleTimeout: 300,
@@ -54,5 +55,13 @@ describe('toPrismaMariaDbPoolOptions', (): void => {
       minVersion: 'TLSv1.2',
       rejectUnauthorized: true,
     });
+  });
+
+  it('rejects a transaction reserve that consumes the total budget', (): void => {
+    expect((): unknown =>
+      toPrismaMariaDbPoolOptions(
+        connectionOptions({ connectionLimit: 2, transactionConnectionLimit: 2 }),
+      ),
+    ).toThrow(new TypeError('Invalid database connection budget'));
   });
 });

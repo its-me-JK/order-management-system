@@ -46,7 +46,13 @@ over the resulting typed database options in a NestJS provider factory.
 Configuration errors stop startup before the API binds a socket.
 
 Each API process owns one application-scoped `DatabaseRuntime` and therefore
-one Prisma client and pool. The NestJS composition module derives both the
+one Prisma client and pool. The same runtime also owns a lazy, package-private,
+bounded allocator of one-use MariaDB connections reserved for future
+exact-connection transactions. The Prisma pool and allocator split one
+aggregate `DATABASE_CONNECTION_LIMIT` rather than duplicating it. Direct
+checkout has a hard-bounded wait queue, and reserved capacity returns only
+after operation settlement and physical closure of the exact owned socket.
+The NestJS composition module derives both the
 infrastructure-only client provider and a narrow `DatabaseConnection` from
 that same runtime. The shutdown hook and health indicator depend only on the
 narrow facade; feature persistence adapters are the only consumers of the
@@ -54,7 +60,8 @@ client provider. Database probes are bounded and concurrent probes share the
 same in-flight driver operation. Nest closes the runtime after the HTTP server
 has stopped accepting and draining requests, and repeated closure through
 either lifecycle view reaches the same disconnect operation. See
-[ADR-0012](../adr/0012-expose-prisma-only-as-an-infrastructure-capability.md).
+[ADR-0012](../adr/0012-expose-prisma-only-as-an-infrastructure-capability.md)
+and [ADR-0018](../adr/0018-own-security-critical-mysql-connections.md).
 
 Startup intentionally does not require a successful database connection. A
 live but unready process can recover when MySQL returns without entering a

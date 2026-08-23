@@ -79,6 +79,12 @@ const rejectedImports = [
     name: 'application -> arbitrary bare vendor',
   },
   {
+    code: "import { createPool } from 'mariadb';\nexport const poolFactory = createPool;",
+    expectedMessage: 'The MariaDB driver is owned by @oms/database.',
+    filePath: 'packages/modules/catalog/src/infrastructure/__architecture_probe__/mariadb.ts',
+    name: 'module infrastructure -> direct database driver',
+  },
+  {
     code: "import type { CatalogReadRepository } from '@oms/catalog';\nexport type Repository = CatalogReadRepository;",
     expectedMessage: 'Application code may import only its own application and domain layers.',
     filePath: 'packages/modules/catalog/src/application/__architecture_probe__/package-root.ts',
@@ -100,6 +106,11 @@ const rejectedImports = [
 ];
 
 const allowedImports = [
+  {
+    code: "import { createPool } from 'mariadb';\nexport const poolFactory = createPool;",
+    filePath: 'packages/database/src/__architecture_probe__/mariadb.ts',
+    name: 'database package -> owned direct database driver',
+  },
   {
     code: "import type { Product } from './product';\nexport type CatalogProduct = Product;",
     filePath: 'packages/modules/catalog/src/domain/__architecture_probe__/domain.ts',

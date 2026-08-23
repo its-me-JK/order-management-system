@@ -9,6 +9,35 @@ const prismaBoundaryMessage =
   'Prisma is an infrastructure detail. Import it only from a database composition root or a business module infrastructure adapter; other layers must depend on application-owned ports.';
 const databaseClientTokenBoundaryMessage =
   'The concrete database client token is infrastructure-only. Domain, application, and presentation layers must inject application-owned ports.';
+const directDatabaseDriverBoundaryMessage =
+  'The MariaDB driver is owned by @oms/database. Other packages must depend on a narrow database capability, never the driver.';
+
+const directDatabaseDriverImportRestrictions = {
+  paths: [
+    {
+      message: directDatabaseDriverBoundaryMessage,
+      name: 'mariadb',
+    },
+  ],
+  patterns: [
+    {
+      group: ['mariadb/*', 'mariadb/*/**'],
+      message: directDatabaseDriverBoundaryMessage,
+    },
+  ],
+};
+
+const directDatabaseDriverDynamicImportRestrictions = [
+  {
+    message: directDatabaseDriverBoundaryMessage,
+    selector: 'ImportExpression[source.value=/^mariadb(?:\\/|$)/]',
+  },
+  {
+    message: directDatabaseDriverBoundaryMessage,
+    selector:
+      "CallExpression[callee.name='require'] > Literal.arguments[value=/^mariadb(?:\\/|$)/]",
+  },
+];
 
 const prismaImportRestrictions = {
   paths: [
@@ -170,8 +199,38 @@ export default tseslint.config(
     files: ['**/*.ts'],
     ignores: prismaInfrastructureFiles,
     rules: {
-      'no-restricted-imports': ['error', prismaImportRestrictions],
-      'no-restricted-syntax': ['error', ...prismaDynamicImportRestrictions],
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...prismaImportRestrictions.paths,
+            ...directDatabaseDriverImportRestrictions.paths,
+          ],
+          patterns: [
+            ...prismaImportRestrictions.patterns,
+            ...directDatabaseDriverImportRestrictions.patterns,
+          ],
+        },
+      ],
+      'no-restricted-syntax': [
+        'error',
+        ...prismaDynamicImportRestrictions,
+        ...directDatabaseDriverDynamicImportRestrictions,
+      ],
+    },
+  },
+  {
+    files: [
+      'apps/api/src/main.ts',
+      'apps/api/src/api.module.ts',
+      'apps/api/src/platform/database/**/*.ts',
+      'apps/worker/src/main.ts',
+      'apps/worker/src/worker.module.ts',
+      'apps/worker/src/platform/database/**/*.ts',
+    ],
+    rules: {
+      'no-restricted-imports': ['error', directDatabaseDriverImportRestrictions],
+      'no-restricted-syntax': ['error', ...directDatabaseDriverDynamicImportRestrictions],
     },
   },
   {
@@ -181,8 +240,16 @@ export default tseslint.config(
       'no-restricted-imports': [
         'error',
         {
-          paths: [...businessLoggingRestrictions.paths, ...prismaImportRestrictions.paths],
-          patterns: [...businessLoggingRestrictions.patterns, ...prismaImportRestrictions.patterns],
+          paths: [
+            ...businessLoggingRestrictions.paths,
+            ...prismaImportRestrictions.paths,
+            ...directDatabaseDriverImportRestrictions.paths,
+          ],
+          patterns: [
+            ...businessLoggingRestrictions.patterns,
+            ...prismaImportRestrictions.patterns,
+            ...directDatabaseDriverImportRestrictions.patterns,
+          ],
         },
       ],
       'no-console': 'error',
@@ -191,7 +258,20 @@ export default tseslint.config(
   {
     files: ['packages/modules/**/infrastructure/**/*.ts'],
     rules: {
-      'no-restricted-imports': ['error', businessLoggingRestrictions],
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...businessLoggingRestrictions.paths,
+            ...directDatabaseDriverImportRestrictions.paths,
+          ],
+          patterns: [
+            ...businessLoggingRestrictions.patterns,
+            ...directDatabaseDriverImportRestrictions.patterns,
+          ],
+        },
+      ],
+      'no-restricted-syntax': ['error', ...directDatabaseDriverDynamicImportRestrictions],
       'no-console': 'error',
     },
   },

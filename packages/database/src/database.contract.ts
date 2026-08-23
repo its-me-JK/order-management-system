@@ -11,6 +11,7 @@ export interface DatabaseConnectionOptions {
   readonly acquireTimeoutMilliseconds: number;
   readonly connectTimeoutMilliseconds: number;
   readonly connectionLimit: number;
+  readonly transactionConnectionLimit: number;
   readonly database: string;
   readonly host: string;
   readonly idleTimeoutSeconds: number;
