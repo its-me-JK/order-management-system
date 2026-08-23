@@ -37,12 +37,14 @@ import {
 import { InvalidIdentityAuthenticatedPrincipalError } from './identity-authenticated-principal.errors';
 import {
   claimIdentitySessionCredentialAttempt,
+  consumeCommittedIdentitySessionCredentialAttempt,
   inspectIdentitySessionCredentialAttemptDigestView,
   settleIdentitySessionCredentialAttemptAfterRefreshCommit,
   settleIdentitySessionCredentialAttemptAfterRefreshRevocation,
   type IdentitySessionCredentialAttempt,
   type IdentitySessionCredentialAttemptDigestView,
 } from './identity-session-credential-attempt';
+import type { IdentitySessionCredentialCandidates } from './identity-session-credential-candidates';
 import type {
   IdentityAccessCredentialDigest,
   IdentityRefreshCredentialDigest,
@@ -75,6 +77,7 @@ const capturedWeakMapSet = WeakMap.prototype.set;
 const createAuthenticatedPrincipal = createIdentityAuthenticatedPrincipalFromAuthority;
 const settleCredentialAttemptAfterRefreshCommit =
   settleIdentitySessionCredentialAttemptAfterRefreshCommit;
+const consumeCommittedCredentialAttempt = consumeCommittedIdentitySessionCredentialAttempt;
 const settleCredentialAttemptAfterRefreshRevocation =
   settleIdentitySessionCredentialAttemptAfterRefreshRevocation;
 // Capturing these references prevents later prototype mutation from changing the trust boundary.
@@ -353,7 +356,7 @@ interface EvidenceRegistration {
   status: EvidenceStatus;
 }
 
-type CompletionStatus = 'prepared' | 'committed' | 'revoked';
+type CompletionStatus = 'prepared' | 'committed' | 'consumed' | 'revoked';
 
 interface CompletionRegistration {
   state: WorkflowState | undefined;
@@ -1679,6 +1682,44 @@ export function inspectIdentitySessionRefreshCommittedCompletion(
   }
 
   return completionValue as IdentitySessionRefreshCommittedCompletion;
+}
+
+/**
+ * Consumes the exact rotated completion, its committed attempt, and the
+ * original candidate pair as one package-internal handoff.
+ *
+ * @internal The refresh credential-delivery gate is the only production caller.
+ */
+export function consumeIdentitySessionRefreshCommittedCredentialPair(
+  completionValue: unknown,
+  candidatesValue: unknown,
+): IdentitySessionCredentialCandidates {
+  const registration = isObject(completionValue)
+    ? readWeakMap(completionRegistrations, completionValue)
+    : undefined;
+
+  if (
+    registration?.status !== 'committed' ||
+    registration.kind !== 'rotated' ||
+    registration.attempt === undefined
+  ) {
+    invalidWorkflow();
+  }
+
+  const candidates = consumeCommittedCredentialAttempt(
+    registration.attempt,
+    completionValue,
+    candidatesValue,
+  );
+
+  if (candidates === undefined) {
+    invalidWorkflow();
+  }
+
+  registration.attempt = undefined;
+  registration.status = 'consumed';
+  deleteWeakMapValue(completionRegistrations, completionValue as object);
+  return candidates;
 }
 
 /**

@@ -1253,6 +1253,25 @@ until the runtime and deployment termination backstops. Neither the observer
 nor socket destruction is commit proof, retry authority, or credential-delivery
 authority.
 
+The tenth application increment is the package-internal exact-pair
+credential-delivery gate and is delivered. It accepts only an authentic
+committed `rotated` completion together with the exact original candidate pair.
+The completion registry follows that completion to its retained committed
+attempt, and the attempt registry verifies the candidate-pair identity before a
+synchronous one-shot transition consumes both registrations. A committed
+`rejected` or `reuse-detected` completion, a foreign or merely equivalent pair,
+a structural value or Proxy, and a replay all fail with one fresh cause-free
+delivery error and cannot mint or revive delivery authority.
+
+Success transfers the two correlated wire wrappers, principal, and four
+committed instants into private state associated with one frozen branded
+capability. String coercion, primitive coercion, and JSON serialization are
+redacted. The capability exposes no credential property or raw serializer; its
+factory and error remain absent from the package root and every public subpath.
+No HTTP response, cookie operation, route, or transport policy is part of this
+increment. Purpose-specific access-response and refresh-cookie sinks remain a
+future boundary to introduce only with the reviewed public refresh use case.
+
 Identity uses a hybrid boundary rather than repositories per aggregate. A
 small `IdentitySessionRefreshUnitOfWork` owns transaction completion. Separate purpose-built
 reads operate outside a transaction, while workflow-scoped loaders and writers
@@ -1391,19 +1410,24 @@ derive `expiresInSeconds` and the exact `SessionView` without leaking an
 aggregate, identifier, digest, or mutable callback-local closure.
 
 Before `execute`, application orchestration converts a candidate pair into an
-opaque runtime-authentic `IdentitySessionCredentialAttempt`. It asks the crypto
-port to digest both complete wire values again, compares both returned byte
-sequences in constant time with the pair's embedded digests, and only then
-registers the exact pair identity and its two original digest wrapper
-identities. This pre-transaction verification is deliberately redundant and
-cheap: the structural candidate factory cannot itself prove a wire-to-digest
-relationship, and authentic wires from one attempt must not be combined with
-authentic digests from another. Mismatch fails with the fixed candidate error;
-crypto inability fails with the existing cause-free crypto-unavailable error,
-and neither path starts a transaction. Every temporary 32-byte view copied from
-the four compared digest wrappers is overwritten in `finally`, including match,
-mismatch, partial-provider-failure, and thrown paths, while making no claim that
-immutable wrappers or provider internals are zeroized.
+opaque runtime-authentic `IdentitySessionCredentialAttempt`. Admission first
+synchronously removes the exact factory-minted pair from the candidate registry
+without inspecting caller-controlled properties. That ownership transfer is
+one-shot and happens before any asynchronous digest operation: a concurrent,
+failed, or replayed admission cannot reuse the pair, and recovery must generate
+fresh credentials. The attempt then asks the crypto port to digest both complete
+wire values again, compares both returned byte sequences in constant time with
+the pair's embedded digests, and only after success retains the exact pair
+identity and its two original digest wrapper identities. This pre-transaction
+verification is deliberately redundant and cheap: the structural candidate
+factory cannot itself prove a wire-to-digest relationship, and authentic wires
+from one attempt must not be combined with authentic digests from another.
+Mismatch fails with the fixed candidate error; crypto inability fails with the
+existing cause-free crypto-unavailable error, and neither path starts a
+transaction. Every temporary 32-byte view copied from the four compared digest
+wrappers is overwritten in `finally`, including match, mismatch,
+partial-provider-failure, and thrown paths, while making no claim that immutable
+wrappers or provider internals are zeroized.
 
 The verified attempt starts `unclaimed`. `execute` uses a synchronous atomic
 compare-and-set to change it to `claimed` before any asynchronous work and binds
@@ -1414,11 +1438,11 @@ the winner. The application module keeps settlement refresh-specific rather
 than exporting a generic attempt commit operation. One dormant completion is
 prepared while authentic pending evidence still owns the exact claim.
 Confirmed rotation commit changes that attempt to `committed` and retains only
-its exact candidate-pair binding for the later delivery gate. Every other
+its exact candidate-pair binding for the package-internal delivery gate. Every other
 settlement retires the attempt and releases the pair.
 
 Every confirmed committed decision promotes its distinct pre-created
-completion, but only `rotated` keeps its exact attempt eligible for the later
+completion, but only `rotated` keeps its exact attempt eligible for the delivered
 delivery gate. A committed `rejected` or `reuse-detected` decision, known
 rollback, unavailable, collision, orchestration failure, and indeterminate
 outcome all retire the attempt and its candidates forever. A retry therefore
@@ -1438,14 +1462,16 @@ credential-attempt identity admitted to that scope. Consuming that evidence
 pre-creates and registers a dormant, distinct
 runtime-authentic completion wrapper. After observing `COMMIT`
 acknowledgement, the concrete adapter synchronously activates it; confirmed rollback and every
-indeterminate path permanently revoke it. A future delivery gate accepts the
-authentic committed completion plus the original candidate pair and verifies
-that it is the exact pair registered to that attempt before exposing either
-wire value. It rejects a structural committed object, a captured pending
-evidence, a completion clone or Proxy, revoked evidence, mixed authentic wires
-and digests, and candidates from a different issuance attempt. Thus one
-successful transaction cannot authorize a different candidate pair even when
-its public metadata or digest wrapper identities happen to match.
+indeterminate path permanently revoke it. The delivered package-internal gate
+accepts the authentic committed completion plus the original candidate pair,
+follows the completion to its retained committed attempt, and verifies that
+pair's exact runtime identity before consuming the completion registration,
+attempt registration, and pair binding once. It rejects a structural committed
+object, a captured pending evidence value, a completion clone or Proxy, revoked
+evidence, committed rejection or reuse, mixed authentic wires and digests,
+candidates from a different issuance attempt, and replay.
+Thus one successful transaction cannot authorize a different candidate pair
+even when its public metadata or digest wrapper identities happen to match.
 
 Consuming pending evidence is the one-shot handoff from callback execution to
 private commit handling; it is not commit proof. Callback close invalidates the
@@ -1706,9 +1732,11 @@ transition required by non-commit and ambiguous paths. The concrete Unit of
 Work invokes the correct transition only after joining real database settlement
 with program close or proven non-start. Pending evidence or a structurally
 similar object can never become commit proof. The guarded real-MySQL suite now
-proves acknowledged-commit promotion through that adapter. The rotation-only
-delivery gate remains a blocker: no delivered capability reveals either wire
-value.
+proves acknowledged-commit promotion through that adapter. The package-internal
+rotation-only delivery gate now consumes that completion-to-attempt-to-pair
+chain once and returns only a redacting opaque capability. Channel-specific
+access-response and refresh-cookie sinks remain blockers; no delivered public
+operation reveals either wire value.
 
 The delivered command's transaction-scoped `IdentitySessionRefreshStore`
 surface contains only locked load, rotated persistence, and reuse-detected
@@ -1915,9 +1943,12 @@ The remaining transaction proof matrix is deliberately narrower than the
 delivered implementation. It must inject rollback after every participating
 operation, exercise escaped-scope attempts through the production composition,
 prove competing refresh behavior against real MySQL, and simulate
-protocol-level commit-acknowledgement loss. The later delivery gate must
-separately prove exact-pair disclosure. Until then, no committed completion is
-credential-delivery authority.
+protocol-level commit-acknowledgement loss. Focused application tests now prove
+the delivery gate's exact completion-to-attempt-to-pair authority, one-shot
+consumption, uniform rejection, and redaction. Future channel sinks and
+transport tests must separately prove that each credential is disclosed only
+through its intended response or cookie channel; neither a committed completion
+nor the opaque delivery capability directly serializes a wire value.
 
 The rejected alternatives are public aggregate repositories and one Unit of
 Work containing every query and mutation. Repositories make partial refresh
@@ -1947,11 +1978,12 @@ commit-resolution window with its transaction deadline. In return they reject
 replay, cross-scope, and wrong-kind writes before SQL. An interview-level
 consequence is that consumed pending evidence must survive program-scope close:
 the scope must be invalid before `COMMIT`, while confirmed commit still needs
-the exact attempt binding for later delivery. That retained registration grants
-neither SQL nor delivery authority. The next improvements are the exact-pair
-delivery gate and the remaining real-MySQL fault matrix for the delivered Unit
-of Work: per-operation rollback injection, competing refresh, escaped scope,
-and protocol-level commit-acknowledgement loss.
+the exact attempt binding for the later one-shot delivery exchange. That
+retained registration grants neither SQL nor raw credential access. The
+remaining improvements are channel-specific access-response and refresh-cookie
+sinks plus the real-MySQL fault matrix for the delivered Unit of Work:
+per-operation rollback injection, competing refresh, escaped scope, and
+protocol-level commit-acknowledgement loss.
 
 ## Credential and password representation
 
@@ -2073,11 +2105,19 @@ receives the attempt's package-private digest view alongside the complete
 domain result; it derives record IDs from that result and receives no duplicate
 caller-supplied IDs, candidate pair, or raw wire value. A `reuse-detected`
 writer receives no credential attempt, and `rejected` invokes no writer. The
-package-owned transaction orchestration returns only non-secret pending issuance evidence. Only
-an authentic completion activated after confirmed `COMMIT` permits a later
-Identity delivery capability to serialize the exact correlated access value
-and set the refresh cookie. The orchestration cannot mark candidates committed or
-release them itself.
+package-owned transaction orchestration returns only non-secret pending issuance evidence. The
+orchestration cannot mark candidates committed or release them itself.
+
+The delivered package-internal credential-delivery gate is the only transition
+from confirmed rotation to post-transaction delivery authority. It consumes an
+authentic committed completion, follows it to the retained committed attempt,
+and accepts only that attempt's exact original candidate-pair identity. Success
+removes the completion and attempt registrations once and returns a frozen
+opaque capability backed by private state containing the correlated access and
+refresh wrappers, principal, and four committed instants. A committed rejection
+or reuse decision, a foreign or equivalent pair, a structural value or Proxy,
+and every replay fail uniformly without returning a capability. Coercion and
+JSON are redacted, and no raw serializer or public reveal operation exists.
 
 A rejected transition, replay closure, known rollback, or definite credential
 collision discards the entire pair. Neither the Unit of Work nor infrastructure
@@ -2098,11 +2138,13 @@ never an exception or credential fragment. No parser, serializer, wrapper,
 candidate, digest, error, or crypto port is added to the package root in this
 credential increment. They remain internal: the Bearer resolver now consumes
 the access parser and digester without re-exporting either, while login and
-refresh still require reviewed use cases and delivery results. That later
-delivery boundary may add a restricted
+refresh still require reviewed use cases and delivery results. The delivery
+capability, factory, and fixed error are likewise package-internal and add no
+root export or public subpath. When the public refresh use case and HTTP policy
+exist, a later reviewed boundary may add a restricted
 `@oms/identity/delivery/session-credentials` subpath with only access-for-HTTP
-and refresh-for-cookie reveal functions; it will export no parser, constructor,
-candidate factory, or generic reveal capability.
+and refresh-for-cookie sink functions. It will export no raw serializer,
+parser, constructor, candidate factory, or generic reveal capability.
 
 ### Node session-credential cryptography adapter
 
@@ -2972,10 +3014,12 @@ direct-MySQL Unit of Work now captures all 12 statement tokens, pairs discovery
 with the exact runtime, composes those stores on one executor connection, maps
 the closed database outcomes, promotes exact evidence only after acknowledged
 commit and program close, and implements the Identity-owned two-sided command
-cleanup rendezvous for deadline-driven `indeterminate`. The delivery gate,
-remaining security-event paths, cleanup use case, NestJS composition, complete
-delivery-gate tests, and the remaining real-MySQL Unit-of-Work fault matrix
-remain.
+cleanup rendezvous for deadline-driven `indeterminate`. The package-internal
+one-shot delivery gate now authenticates and consumes the committed
+completion-to-attempt-to-exact-pair chain into a redacting opaque capability.
+Channel-specific access-response and refresh-cookie sinks, remaining
+security-event paths, cleanup use case, NestJS composition, transport-level
+delivery tests, and the remaining real-MySQL Unit-of-Work fault matrix remain.
 A trusted caller can now
 resolve an already-extracted canonical access-wire value, but there is still no
 `Authorization` extraction, request association, credential ingress, route, or
@@ -3266,8 +3310,9 @@ public authentication surface.
     must additionally own closed-command admission, writer time, fixed-program
     execution, DML, rollback and commit ambiguity, settlement rendezvous,
     attempt retirement, and database-gated pending-evidence promotion. The
-    separate downstream gate owns exact-pair delivery. Calling a load-only
-    adapter a Unit of Work would overstate its transaction authority.
+    delivered downstream gate owns the one-shot exact-pair handoff, while future
+    channel sinks will own primitive disclosure. Calling a load-only adapter a
+    Unit of Work would overstate its transaction authority.
 38. **Why is exact-connection quarantine insufficient after a transaction
     deadline?** Destroying the socket prevents that session from being reused,
     but the JavaScript program Promise may still be settling. If the caller
@@ -3307,12 +3352,14 @@ public authentication surface.
   crypto-availability metrics, and evaluate FIPS/runtime attestation where a
   deployment requires it. A future HSM or managed provider remains a separate
   implementation of the unchanged application port.
-- Add the exact-pair delivery gate after the delivered concrete refresh Unit of
-  Work. Extend its real-MySQL proof with scope escape, rollback injection after
-  every participating operation, competing refresh, and protocol-level
-  commit-acknowledgement loss before applying the pattern to login, logout,
-  Account, authenticator, or Role workflows; do not generalize it into
-  aggregate CRUD.
+- Add channel-specific access-response and refresh-cookie sinks for the
+  delivered opaque capability only alongside a reviewed public refresh use case
+  and HTTP policy. Keep raw serializers, the internal delivery factory, and
+  generic reveal authority unavailable. Extend the Unit of Work's real-MySQL
+  proof with scope escape, rollback injection after every participating
+  operation, competing refresh, and protocol-level commit-acknowledgement loss
+  before applying the pattern to login, logout, Account, authenticator, or Role
+  workflows; do not generalize it into aggregate CRUD.
 - Extend the delivered two-sided settlement-rendezvous proof with an
   established-driver deadline case while preserving exact-connection
   quarantine, never treating the observer as commit proof, and never allowing

@@ -26,6 +26,7 @@ import {
   type IdentitySessionCredentialAttempt,
 } from '../../src/application/identity-session-credential-attempt';
 import { createIdentitySessionRefreshCommand } from '../../src/application/identity-session-refresh-command';
+import { createIdentitySessionRefreshCredentialDelivery } from '../../src/application/identity-session-refresh-credential-delivery';
 import {
   createIdentitySessionCredentialCandidates,
   type IdentitySessionCredentialCandidates,
@@ -58,6 +59,7 @@ import {
   closeIdentitySessionRefreshWorkflow,
   createIdentitySessionRefreshWorkflow,
   inspectIdentitySessionRefreshCommittedCompletion,
+  InvalidIdentitySessionRefreshWorkflowError,
   type IdentitySessionRefreshLockedLoadResult,
 } from '../../src/application/identity-session-refresh-workflow';
 import { IdentityAccount, type IdentityAccountSnapshot } from '../../src/domain/identity-account';
@@ -855,9 +857,12 @@ async function credentialAttempt(
   return createIdentitySessionCredentialAttempt(candidates, crypto);
 }
 
-async function rotatedCredentialAttempt(
-  fixture: RotatedFixture,
-): Promise<IdentitySessionCredentialAttempt> {
+async function rotatedCredentialAttempt(fixture: RotatedFixture): Promise<
+  Readonly<{
+    attempt: IdentitySessionCredentialAttempt;
+    candidates: IdentitySessionCredentialCandidates;
+  }>
+> {
   const candidates = createIdentitySessionCredentialCandidates({
     access: {
       wireValue: ACCESS_WIRE_VALUE,
@@ -880,7 +885,8 @@ async function rotatedCredentialAttempt(
     },
   });
 
-  return createIdentitySessionCredentialAttempt(candidates, crypto);
+  const attempt = await createIdentitySessionCredentialAttempt(candidates, crypto);
+  return Object.freeze({ attempt, candidates });
 }
 
 async function readCredentialPersistenceState(
@@ -1170,14 +1176,19 @@ async function executeReuseDetected(
 async function executeRotated(
   context: IntegrationContext,
   fixture: RotatedFixture,
-): Promise<IdentitySessionRefreshOutcome> {
+): Promise<
+  Readonly<{
+    candidates: IdentitySessionCredentialCandidates;
+    outcome: IdentitySessionRefreshOutcome;
+  }>
+> {
   const ticket = await discoverTicket(context, fixture.credential);
-  const attempt = await rotatedCredentialAttempt(fixture);
+  const credentialAttemptFixture = await rotatedCredentialAttempt(fixture);
 
-  return context.unitOfWork.execute(
+  const outcome = await context.unitOfWork.execute(
     createIdentitySessionRefreshCommand({
       discoveryTicket: ticket,
-      credentialAttempt: attempt,
+      credentialAttempt: credentialAttemptFixture.attempt,
       successorRefreshCredentialId: fixture.decisionSuccessorCredentialId,
       refreshIdleLifetimeSeconds: 900,
       issuedAccessCredentialId: fixture.decisionAccessCredentialId,
@@ -1185,6 +1196,11 @@ async function executeRotated(
       securityEventId: fixture.eventId,
     }),
   );
+
+  return Object.freeze({
+    candidates: credentialAttemptFixture.candidates,
+    outcome,
+  });
 }
 
 async function readRotatedPersistenceSnapshot(
@@ -1469,7 +1485,8 @@ void test(
         'atomically persists the exact rotated credential graph, authority, and success event',
         async () => {
           const fixture = await createRotatedFixture(integration, ROTATION_SUCCESS_FIXTURE_INDEX);
-          const outcome = await executeRotated(integration, fixture);
+          const execution = await executeRotated(integration, fixture);
+          const { outcome } = execution;
 
           if (outcome.kind !== 'committed') {
             throw new Error(`Expected committed rotation persistence, received ${outcome.kind}`);
@@ -1500,6 +1517,20 @@ void test(
             refreshIdleExpiresAt,
           });
           assert.match(writerTime, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/u);
+
+          const delivery = createIdentitySessionRefreshCredentialDelivery(
+            completion,
+            execution.candidates,
+          );
+
+          assert.equal(Object.isFrozen(delivery), true);
+          assert.deepEqual(Reflect.ownKeys(delivery), []);
+          assert.equal(String(delivery), '[IdentitySessionRefreshCredentialDelivery]');
+          assert.equal(JSON.stringify(delivery), '"[IdentitySessionRefreshCredentialDelivery]"');
+          assert.throws(
+            () => inspectIdentitySessionRefreshCommittedCompletion(completion),
+            InvalidIdentitySessionRefreshWorkflowError,
+          );
 
           const persisted = await readRotatedPersistenceSnapshot(integration, fixture);
 
@@ -1580,7 +1611,7 @@ void test(
             { collideRefreshDigest: true },
           );
           const before = await readRotatedPersistenceSnapshot(integration, fixture);
-          const outcome = await executeRotated(integration, fixture);
+          const { outcome } = await executeRotated(integration, fixture);
 
           assert.deepEqual(outcome, {
             kind: 'not-committed',
@@ -1607,7 +1638,7 @@ void test(
             ROTATION_CONDITIONAL_COLLISION_FIXTURE_INDEX,
           );
           const before = await readRotatedPersistenceSnapshot(integration, fixture);
-          const outcome = await executeRotated(integration, fixture);
+          const { outcome } = await executeRotated(integration, fixture);
 
           assert.deepEqual(outcome, {
             kind: 'not-committed',
@@ -1630,7 +1661,7 @@ void test(
 
           await insertPreexistingRotationSecurityEvent(integration, fixture);
           const before = await readRotatedPersistenceSnapshot(integration, fixture);
-          const outcome = await executeRotated(integration, fixture);
+          const { outcome } = await executeRotated(integration, fixture);
 
           assert.deepEqual(outcome, {
             kind: 'not-committed',

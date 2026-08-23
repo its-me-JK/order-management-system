@@ -2,6 +2,7 @@ import { inspect } from 'node:util';
 
 import {
   claimIdentitySessionCredentialAttempt,
+  consumeCommittedIdentitySessionCredentialAttempt,
   createIdentitySessionCredentialAttempt,
   inspectIdentitySessionCredentialAttemptDigestView,
   retireIdentitySessionCredentialAttempt,
@@ -343,9 +344,8 @@ describe('Identity session credential attempt verification', (): void => {
   });
 
   it('rejects a wire-to-digest mismatch only after checking both target kinds', async (): Promise<void> => {
-    const pair = candidates();
-
     for (const mismatchedKind of ['access', 'refresh'] as const) {
+      const pair = candidates();
       const trace: string[] = [];
       const crypto: IdentitySessionCredentialCrypto = Object.freeze({
         generateSessionCredentialCandidates(): Promise<IdentitySessionCredentialCandidates> {
@@ -396,45 +396,65 @@ describe('Identity session credential attempt verification', (): void => {
     },
   );
 
-  it('collapses hostile candidate reflection to the fixed candidate error', async (): Promise<void> => {
+  it('rejects transparent and hostile candidate proxies without reflection or cryptography', async (): Promise<void> => {
     const pair = candidates();
     const secret = 'hostile-attempt-secret';
+    let trapCalls = 0;
+    const transparent = new Proxy(pair, {});
     const hostile = new Proxy(pair, {
+      get(): never {
+        trapCalls += 1;
+        throw new Error(secret);
+      },
+      getOwnPropertyDescriptor(): never {
+        trapCalls += 1;
+        throw new Error(secret);
+      },
       getPrototypeOf(): never {
+        trapCalls += 1;
+        throw new Error(secret);
+      },
+      ownKeys(): never {
+        trapCalls += 1;
         throw new Error(secret);
       },
     });
+    const trace: string[] = [];
 
-    const error = await captureAsyncError(() =>
-      createIdentitySessionCredentialAttempt(hostile, matchingCrypto(pair)),
-    );
-    expectFixedError(
-      error,
-      InvalidIdentitySessionCredentialCandidatesError,
-      CANDIDATE_ERROR_MESSAGE,
-      [secret, ACCESS_WIRE, REFRESH_WIRE],
-    );
+    for (const proxy of [transparent, hostile]) {
+      const error = await captureAsyncError(() =>
+        createIdentitySessionCredentialAttempt(proxy, matchingCrypto(pair, trace)),
+      );
+      expectFixedError(
+        error,
+        InvalidIdentitySessionCredentialCandidatesError,
+        CANDIDATE_ERROR_MESSAGE,
+        [secret, ACCESS_WIRE, REFRESH_WIRE],
+      );
+    }
+
+    expect(trapCalls).toBe(0);
+    expect(trace).toEqual([]);
+
+    const attempt = await createIdentitySessionCredentialAttempt(pair, matchingCrypto(pair));
+    const owner = Object.freeze({});
+    claimIdentitySessionCredentialAttempt(attempt, owner);
+    retireIdentitySessionCredentialAttempt(attempt, owner);
   });
 
   it('collapses provider exceptions and invalid target-kind output to unavailable', async (): Promise<void> => {
-    const pair = candidates();
     const secret = 'provider-attempt-secret';
-    const scenarios: IdentitySessionCredentialCrypto[] = [
-      Object.freeze({
-        ...matchingCrypto(pair),
-        digestAccessCredential(): Promise<IdentityAccessCredentialDigest> {
-          return Promise.reject(new Error(secret));
-        },
-      }),
-      Object.freeze({
-        ...matchingCrypto(pair),
-        digestAccessCredential(): Promise<IdentityAccessCredentialDigest> {
-          return Promise.resolve(refreshDigest() as unknown as IdentityAccessCredentialDigest);
-        },
-      }),
-    ];
 
-    for (const crypto of scenarios) {
+    for (const scenario of ['thrown', 'wrong-kind'] as const) {
+      const pair = candidates();
+      const crypto: IdentitySessionCredentialCrypto = Object.freeze({
+        ...matchingCrypto(pair),
+        digestAccessCredential(): Promise<IdentityAccessCredentialDigest> {
+          return scenario === 'thrown'
+            ? Promise.reject(new Error(secret))
+            : Promise.resolve(refreshDigest() as unknown as IdentityAccessCredentialDigest);
+        },
+      });
       const error = await captureAsyncError(() =>
         createIdentitySessionCredentialAttempt(pair, crypto),
       );
@@ -444,7 +464,44 @@ describe('Identity session credential attempt verification', (): void => {
         CRYPTO_ERROR_MESSAGE,
         [secret, ACCESS_WIRE, REFRESH_WIRE],
       );
+
+      const replayTrace: string[] = [];
+      await expectCandidateRejection(() =>
+        createIdentitySessionCredentialAttempt(pair, matchingCrypto(pair, replayTrace)),
+      );
+      expect(replayTrace).toEqual([]);
     }
+  });
+
+  it('claims a pair before asynchronous verification so concurrent admission cannot reuse it', async (): Promise<void> => {
+    const pair = candidates();
+    const deferred = createDeferred<IdentityAccessCredentialDigest>();
+    const trace: string[] = [];
+    const crypto: IdentitySessionCredentialCrypto = Object.freeze({
+      ...matchingCrypto(pair),
+      digestAccessCredential(): Promise<IdentityAccessCredentialDigest> {
+        trace.push('first-access');
+        return deferred.promise;
+      },
+      digestRefreshCredential(): Promise<IdentityRefreshCredentialDigest> {
+        trace.push('first-refresh');
+        return Promise.resolve(refreshDigest());
+      },
+    });
+    const pendingAttempt = createIdentitySessionCredentialAttempt(pair, crypto);
+    const replayTrace: string[] = [];
+
+    await expectCandidateRejection(() =>
+      createIdentitySessionCredentialAttempt(pair, matchingCrypto(pair, replayTrace)),
+    );
+    expect(trace).toEqual(['first-access']);
+    expect(replayTrace).toEqual([]);
+
+    deferred.resolve(accessDigest());
+    const attempt = await pendingAttempt;
+    const owner = Object.freeze({});
+    claimIdentitySessionCredentialAttempt(attempt, owner);
+    retireIdentitySessionCredentialAttempt(attempt, owner);
   });
 
   it('captures both digest function references before the first asynchronous provider result', async (): Promise<void> => {
@@ -481,7 +538,10 @@ describe('Identity session credential attempt lifecycle', (): void => {
   it('remains absent from the package root', (): void => {
     expect(identityPublicApi).not.toHaveProperty('createIdentitySessionCredentialAttempt');
     expect(identityAttemptModule).not.toHaveProperty('commitIdentitySessionCredentialAttempt');
-    expect(identityAttemptModule).not.toHaveProperty(
+    expect(identityAttemptModule.consumeCommittedIdentitySessionCredentialAttempt).toBe(
+      consumeCommittedIdentitySessionCredentialAttempt,
+    );
+    expect(identityPublicApi).not.toHaveProperty(
       'consumeCommittedIdentitySessionCredentialAttempt',
     );
   });
@@ -593,6 +653,101 @@ describe('Identity session credential attempt lifecycle', (): void => {
     expectCandidateThrow((): void => {
       retireIdentitySessionCredentialAttempt(attempt, owner);
     });
+  });
+
+  it('consumes one committed attempt only for its exact completion and original pair', async (): Promise<void> => {
+    const pair = candidates();
+    const attempt = await createIdentitySessionCredentialAttempt(pair, matchingCrypto(pair));
+    const transactionOwner = Object.freeze({ owner: 'transaction' });
+    const completion = Object.freeze({ owner: 'completion' });
+
+    claimIdentitySessionCredentialAttempt(attempt, transactionOwner);
+    expect(
+      settleIdentitySessionCredentialAttemptAfterRefreshCommit(
+        attempt,
+        transactionOwner,
+        completion,
+      ),
+    ).toBe(true);
+
+    expect(consumeCommittedIdentitySessionCredentialAttempt(attempt, completion, pair)).toBe(pair);
+    expect(
+      consumeCommittedIdentitySessionCredentialAttempt(attempt, completion, pair),
+    ).toBeUndefined();
+  });
+
+  it('keeps the rightful committed pair live after foreign, cloned, or proxied consume attempts', async (): Promise<void> => {
+    const pair = candidates();
+    const wrongAuthenticPair = candidates();
+    const attempt = await createIdentitySessionCredentialAttempt(pair, matchingCrypto(pair));
+    const transactionOwner = Object.freeze({ owner: 'transaction' });
+    const completion = Object.freeze({ owner: 'completion' });
+    const wrongOwner = Object.freeze({ owner: 'foreign-completion' });
+    const structuralClone = Object.freeze({ access: pair.access, refresh: pair.refresh });
+    const transparentPairProxy = new Proxy(pair, {});
+    let trapCalls = 0;
+    const hostilePairProxy = new Proxy(pair, {
+      get(): never {
+        trapCalls += 1;
+        throw new Error('hostile-consume-secret');
+      },
+      getOwnPropertyDescriptor(): never {
+        trapCalls += 1;
+        throw new Error('hostile-consume-secret');
+      },
+      getPrototypeOf(): never {
+        trapCalls += 1;
+        throw new Error('hostile-consume-secret');
+      },
+      ownKeys(): never {
+        trapCalls += 1;
+        throw new Error('hostile-consume-secret');
+      },
+    });
+    const hostileAttemptProxy = new Proxy(attempt, {
+      get(): never {
+        trapCalls += 1;
+        throw new Error('hostile-consume-secret');
+      },
+      ownKeys(): never {
+        trapCalls += 1;
+        throw new Error('hostile-consume-secret');
+      },
+    });
+
+    claimIdentitySessionCredentialAttempt(attempt, transactionOwner);
+    expect(
+      settleIdentitySessionCredentialAttemptAfterRefreshCommit(
+        attempt,
+        transactionOwner,
+        completion,
+      ),
+    ).toBe(true);
+
+    expect(
+      consumeCommittedIdentitySessionCredentialAttempt(attempt, wrongOwner, pair),
+    ).toBeUndefined();
+    expect(
+      consumeCommittedIdentitySessionCredentialAttempt(attempt, completion, wrongAuthenticPair),
+    ).toBeUndefined();
+    expect(
+      consumeCommittedIdentitySessionCredentialAttempt(attempt, completion, structuralClone),
+    ).toBeUndefined();
+    expect(
+      consumeCommittedIdentitySessionCredentialAttempt(attempt, completion, transparentPairProxy),
+    ).toBeUndefined();
+    expect(
+      consumeCommittedIdentitySessionCredentialAttempt(attempt, completion, hostilePairProxy),
+    ).toBeUndefined();
+    expect(
+      consumeCommittedIdentitySessionCredentialAttempt(hostileAttemptProxy, completion, pair),
+    ).toBeUndefined();
+    expect(trapCalls).toBe(0);
+
+    expect(consumeCommittedIdentitySessionCredentialAttempt(attempt, completion, pair)).toBe(pair);
+    expect(
+      consumeCommittedIdentitySessionCredentialAttempt(attempt, completion, pair),
+    ).toBeUndefined();
   });
 
   it('makes refresh revocation one-shot without foreign-call sabotage', async (): Promise<void> => {

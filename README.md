@@ -171,12 +171,26 @@ deadline returns `indeterminate` first, the later observer closes and revokes
 the exact attempt without changing that already-returned result. The adapter
 accepts no callback, exposes no transaction or SQL capability, performs no
 retry, grants no credential-delivery authority, and remains outside every
-Identity package export. The exact-pair credential-delivery gate, public
-refresh use case, remaining security-event adapters, NestJS composition,
-Argon2 adapter, password input policy, and Redis abuse control still do not
-complete the runtime path. The invariant-failure quarantine also needs bounded
-observability and an explicit unhealthy-process recycle policy before public
-refresh traffic. Before credential ingress becomes public, production
+Identity package export. A package-internal one-shot delivery gate now exchanges
+only an authentic committed rotation and its exact original candidate pair for
+one opaque capability. The handoff consumes the completion, its retained
+committed attempt, and their exact pair binding by runtime identity; a committed
+rejection or reuse decision, foreign or equivalent pair, structural value,
+Proxy, or replay receives one fresh cause-free delivery error without exposing
+a credential. Each candidate pair's attempt admission is one-shot: the first
+admission synchronously takes ownership before digest verification, so a
+concurrent or failed admission burns that pair and a retry must generate fresh
+credentials.
+The frozen capability keeps both correlated wire wrappers, the principal, and
+the committed instants only in private state and redacts string coercion and
+JSON. It exposes no raw serializer, is absent from the package root and every
+public subpath, and has no HTTP response or cookie operation. The future public
+refresh use case and channel-specific access-response and refresh-cookie sinks,
+remaining security-event adapters, NestJS composition, Argon2 adapter, password
+input policy, and Redis abuse control still do not complete the runtime path.
+The invariant-failure quarantine also needs bounded observability and an
+explicit unhealthy-process recycle policy before public refresh traffic. Before
+credential ingress becomes public, production
 configuration must disable Prisma driver-adapter debug/query logging because
 those namespaces can emit bound digest arguments. That configuration gate is
 not implemented yet, so public credential ingress remains blocked. Pricing,

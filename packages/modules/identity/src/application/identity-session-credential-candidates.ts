@@ -18,6 +18,13 @@ import {
 
 const IDENTITY_SESSION_CREDENTIAL_CANDIDATE_KEYS = Object.freeze(['wireValue', 'digest'] as const);
 const IDENTITY_SESSION_CREDENTIAL_CANDIDATES_KEYS = Object.freeze(['access', 'refresh'] as const);
+const capturedReflectApply = Reflect.apply;
+// eslint-disable-next-line @typescript-eslint/unbound-method
+const capturedWeakMapDelete = WeakMap.prototype.delete;
+// eslint-disable-next-line @typescript-eslint/unbound-method
+const capturedWeakMapGet = WeakMap.prototype.get;
+// eslint-disable-next-line @typescript-eslint/unbound-method
+const capturedWeakMapSet = WeakMap.prototype.set;
 
 declare const identityAccessCredentialCandidateBrand: unique symbol;
 declare const identityRefreshCredentialCandidateBrand: unique symbol;
@@ -40,6 +47,8 @@ export type IdentitySessionCredentialCandidates = Readonly<{
   refresh: IdentityRefreshCredentialCandidate;
   readonly [identitySessionCredentialCandidatesBrand]: true;
 }>;
+
+const candidateRegistrations = new WeakMap<object, true>();
 
 function invalidCandidates(): never {
   throw new InvalidIdentitySessionCredentialCandidatesError();
@@ -158,7 +167,45 @@ export function createIdentitySessionCredentialCandidates(
       digest: refreshDigest,
     }) as unknown as IdentityRefreshCredentialCandidate;
 
-    return Object.freeze({ access, refresh }) as unknown as IdentitySessionCredentialCandidates;
+    const candidates = Object.freeze({
+      access,
+      refresh,
+    }) as unknown as IdentitySessionCredentialCandidates;
+    capturedReflectApply(capturedWeakMapSet, candidateRegistrations, [candidates, true]);
+    return candidates;
+  } catch {
+    throw new InvalidIdentitySessionCredentialCandidatesError();
+  }
+}
+
+/**
+ * Atomically transfers the exact factory-minted pair to its first credential
+ * attempt without reading caller-controlled properties.
+ *
+ * @internal Identity credential-attempt admission is the only production caller.
+ */
+export function claimIdentitySessionCredentialCandidatesForAttempt(
+  value: unknown,
+): IdentitySessionCredentialCandidates {
+  try {
+    const registration: unknown =
+      typeof value === 'object' && value !== null
+        ? capturedReflectApply(capturedWeakMapGet, candidateRegistrations, [value])
+        : undefined;
+
+    if (registration !== true) {
+      invalidCandidates();
+    }
+
+    const claimed: unknown = capturedReflectApply(capturedWeakMapDelete, candidateRegistrations, [
+      value,
+    ]);
+
+    if (claimed !== true) {
+      invalidCandidates();
+    }
+
+    return value as IdentitySessionCredentialCandidates;
   } catch {
     throw new InvalidIdentitySessionCredentialCandidatesError();
   }

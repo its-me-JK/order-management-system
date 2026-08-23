@@ -56,7 +56,12 @@ import {
   type IdentitySessionRefreshWorkflowBoundary,
   type IdentityTransactionEvidence,
   type IdentityTransactionScope,
+  type IdentitySessionRefreshCommittedCompletion,
 } from '../src/application/identity-session-refresh-workflow';
+import {
+  createIdentitySessionRefreshCredentialDelivery,
+  InvalidIdentitySessionRefreshCredentialDeliveryError,
+} from '../src/application/identity-session-refresh-credential-delivery';
 import * as identityPublicApi from '../src';
 import { IdentityAccount } from '../src/domain/identity-account';
 import { IdentityRefreshCredential } from '../src/domain/identity-refresh-credential';
@@ -64,6 +69,8 @@ import { IdentitySessionFamily } from '../src/domain/identity-session-family';
 import type {
   // @ts-expect-error Refresh commands remain package-internal.
   IdentitySessionRefreshCommand as LeakedIdentitySessionRefreshCommand,
+  // @ts-expect-error Refresh credential deliveries remain package-internal.
+  IdentitySessionRefreshCredentialDelivery as LeakedIdentitySessionRefreshCredentialDelivery,
 } from '../src';
 
 const ACCOUNT_ID = '01890f3a-8bcd-7def-8abc-0123456789ab';
@@ -81,8 +88,12 @@ const REUSE_DETECTED_AT = '2026-08-23T10:06:00.000003Z';
 const ACCESS_WIRE = `oms_at_v1_${'A'.repeat(42)}E`;
 const REFRESH_WIRE = `oms_rt_v1_${'E'.repeat(42)}M`;
 const COMMAND_ERROR_MESSAGE = 'Expected a valid Identity session refresh command transition';
+const DELIVERY_ERROR_MESSAGE =
+  'Expected an authorized Identity session refresh credential delivery';
+const DELIVERY_REDACTION = '[IdentitySessionRefreshCredentialDelivery]';
 
 void (undefined as unknown as LeakedIdentitySessionRefreshCommand);
+void (undefined as unknown as LeakedIdentitySessionRefreshCredentialDelivery);
 
 type CredentialAttemptFixture = Readonly<{
   attempt: IdentitySessionCredentialAttempt;
@@ -384,6 +395,43 @@ function expectCommandError(action: () => unknown, forbidden: readonly string[] 
   }
 }
 
+function expectDeliveryError(action: () => unknown, forbidden: readonly string[] = []): void {
+  const error = captureError(action);
+  expect(error).toBeInstanceOf(InvalidIdentitySessionRefreshCredentialDeliveryError);
+  expect(error).toMatchObject({
+    name: 'InvalidIdentitySessionRefreshCredentialDeliveryError',
+    message: DELIVERY_ERROR_MESSAGE,
+  });
+  expect(error).not.toHaveProperty('cause');
+
+  const rendered = inspect(error, { showHidden: true });
+  for (const value of forbidden) {
+    expect(rendered).not.toContain(value);
+  }
+}
+
+async function committedCompletion(
+  prepared: PreparedCommand,
+  mode: StoreMode,
+): Promise<IdentitySessionRefreshCommittedCompletion> {
+  const evidence = await runIdentitySessionRefreshCommand(
+    prepared.boundary.controller,
+    prepared.context,
+    transactionStore(prepared, mode).store,
+  );
+  closeIdentitySessionRefreshCommand(prepared.boundary.controller);
+  const completion = promoteIdentityTransactionPendingEvidence(
+    prepared.boundary.controller,
+    evidence,
+  );
+
+  if (completion === undefined) {
+    throw new Error('Expected committed refresh completion fixture');
+  }
+
+  return completion;
+}
+
 function closeAndRevokePendingEvidence(
   prepared: PreparedCommand,
   evidence: IdentityTransactionEvidence,
@@ -672,6 +720,234 @@ describe('Identity session refresh command', (): void => {
       }).not.toThrow();
     },
   );
+
+  it('exchanges only the exact rotated completion and original pair for one opaque delivery', async (): Promise<void> => {
+    const prepared = await prepareCommand();
+    const completion = await committedCompletion(prepared, 'rotated');
+    const evidence = completion.evidence;
+
+    if (evidence.kind !== 'rotated') {
+      throw new Error('Expected rotated completion fixture');
+    }
+
+    const privateValues = [
+      ACCESS_WIRE,
+      REFRESH_WIRE,
+      evidence.principal.actorId,
+      evidence.principal.sessionId,
+      ...evidence.principal.permissions,
+      evidence.accessCredentialIssuedAt,
+      evidence.accessCredentialExpiresAt,
+      evidence.refreshIdleExpiresAt,
+      evidence.refreshAbsoluteExpiresAt,
+    ];
+    const delivery = createIdentitySessionRefreshCredentialDelivery(
+      completion,
+      prepared.credentialAttempt.candidates,
+    );
+
+    expect(Object.isFrozen(delivery)).toBe(true);
+    expect(Reflect.ownKeys(delivery)).toEqual([]);
+    expect(String(delivery)).toBe(DELIVERY_REDACTION);
+    expect(JSON.stringify(delivery)).toBe(JSON.stringify(DELIVERY_REDACTION));
+    const rendered = inspect(delivery, { showHidden: true });
+    for (const value of privateValues) {
+      expect(rendered).not.toContain(value);
+    }
+
+    expect(() => inspectIdentitySessionRefreshCommittedCompletion(completion)).toThrow(
+      InvalidIdentitySessionRefreshWorkflowError,
+    );
+    expectDeliveryError(
+      () =>
+        createIdentitySessionRefreshCredentialDelivery(
+          completion,
+          prepared.credentialAttempt.candidates,
+        ),
+      [ACCESS_WIRE, REFRESH_WIRE],
+    );
+  });
+
+  it('rejects a frozen outer candidate clone without consuming the rightful pair', async (): Promise<void> => {
+    const prepared = await prepareCommand();
+    const completion = await committedCompletion(prepared, 'rotated');
+    const candidates = prepared.credentialAttempt.candidates;
+    const outerClone = Object.freeze({
+      access: candidates.access,
+      refresh: candidates.refresh,
+    }) as unknown as IdentitySessionCredentialCandidates;
+
+    expectDeliveryError(
+      () => createIdentitySessionRefreshCredentialDelivery(completion, outerClone),
+      [ACCESS_WIRE, REFRESH_WIRE],
+    );
+    expect(inspectIdentitySessionRefreshCommittedCompletion(completion)).toBe(completion);
+
+    expect(createIdentitySessionRefreshCredentialDelivery(completion, candidates)).toBeDefined();
+  });
+
+  it('rejects transparent and hostile pair proxies without observation or sabotage', async (): Promise<void> => {
+    const prepared = await prepareCommand();
+    const completion = await committedCompletion(prepared, 'rotated');
+    const candidates = prepared.credentialAttempt.candidates;
+    const transparentProxy = new Proxy(candidates, {});
+    const hostileSecret = 'hostile-delivery-pair-secret';
+    let trapCalls = 0;
+    const hostileProxy = new Proxy(candidates, {
+      get(): never {
+        trapCalls += 1;
+        throw new Error(hostileSecret);
+      },
+      getOwnPropertyDescriptor(): never {
+        trapCalls += 1;
+        throw new Error(hostileSecret);
+      },
+      getPrototypeOf(): never {
+        trapCalls += 1;
+        throw new Error(hostileSecret);
+      },
+      ownKeys(): never {
+        trapCalls += 1;
+        throw new Error(hostileSecret);
+      },
+    });
+
+    for (const proxy of [transparentProxy, hostileProxy]) {
+      expectDeliveryError(
+        () => createIdentitySessionRefreshCredentialDelivery(completion, proxy),
+        [ACCESS_WIRE, REFRESH_WIRE, hostileSecret],
+      );
+      expect(inspectIdentitySessionRefreshCommittedCompletion(completion)).toBe(completion);
+    }
+
+    expect(trapCalls).toBe(0);
+    expect(createIdentitySessionRefreshCredentialDelivery(completion, candidates)).toBeDefined();
+  });
+
+  it('rejects crossed authentic completion and candidate pairs without consuming either owner', async (): Promise<void> => {
+    const first = await prepareCommand();
+    const second = await prepareCommand();
+    const firstCompletion = await committedCompletion(first, 'rotated');
+    const secondCompletion = await committedCompletion(second, 'rotated');
+
+    expectDeliveryError(() =>
+      createIdentitySessionRefreshCredentialDelivery(
+        firstCompletion,
+        second.credentialAttempt.candidates,
+      ),
+    );
+    expectDeliveryError(() =>
+      createIdentitySessionRefreshCredentialDelivery(
+        secondCompletion,
+        first.credentialAttempt.candidates,
+      ),
+    );
+    expect(inspectIdentitySessionRefreshCommittedCompletion(firstCompletion)).toBe(firstCompletion);
+    expect(inspectIdentitySessionRefreshCommittedCompletion(secondCompletion)).toBe(
+      secondCompletion,
+    );
+
+    expect(
+      createIdentitySessionRefreshCredentialDelivery(
+        firstCompletion,
+        first.credentialAttempt.candidates,
+      ),
+    ).toBeDefined();
+    expect(
+      createIdentitySessionRefreshCredentialDelivery(
+        secondCompletion,
+        second.credentialAttempt.candidates,
+      ),
+    ).toBeDefined();
+  });
+
+  it.each([
+    ['rejected', 'not-found', ROTATED_AT],
+    ['reuse', 'reuse-detected', REUSE_DETECTED_AT],
+  ] as const)(
+    'refuses %s committed completions without consuming their registration',
+    async (_branch, mode, dbNow): Promise<void> => {
+      const prepared = await prepareCommand(dbNow);
+      const completion = await committedCompletion(prepared, mode);
+
+      expectDeliveryError(
+        () =>
+          createIdentitySessionRefreshCredentialDelivery(
+            completion,
+            prepared.credentialAttempt.candidates,
+          ),
+        [ACCESS_WIRE, REFRESH_WIRE],
+      );
+      expect(inspectIdentitySessionRefreshCommittedCompletion(completion)).toBe(completion);
+    },
+  );
+
+  it('rejects authentic pending evidence without preventing later close, promotion, and delivery', async (): Promise<void> => {
+    const prepared = await prepareCommand();
+    const evidence = await runIdentitySessionRefreshCommand(
+      prepared.boundary.controller,
+      prepared.context,
+      transactionStore(prepared, 'rotated').store,
+    );
+    const candidates = prepared.credentialAttempt.candidates;
+
+    expectDeliveryError(
+      () => createIdentitySessionRefreshCredentialDelivery(evidence, candidates),
+      [ACCESS_WIRE, REFRESH_WIRE],
+    );
+    closeIdentitySessionRefreshCommand(prepared.boundary.controller);
+    const completion = promoteIdentityTransactionPendingEvidence(
+      prepared.boundary.controller,
+      evidence,
+    );
+
+    expect(completion).toBeDefined();
+    expect(createIdentitySessionRefreshCredentialDelivery(completion, candidates)).toBeDefined();
+  });
+
+  it('rejects forged, cloned, and hostile completion values cause-free without observation or mutation', async (): Promise<void> => {
+    const prepared = await prepareCommand();
+    const completion = await committedCompletion(prepared, 'rotated');
+    const forgedCompletion = Object.freeze({
+      kind: 'committed',
+      evidence: completion.evidence,
+    });
+    const clonedCompletion = structuredClone(completion);
+    let trapCalls = 0;
+    const hostileSecret = 'hostile-delivery-completion-secret';
+    const hostileCompletion = new Proxy(completion, {
+      get(): never {
+        trapCalls += 1;
+        throw new Error(hostileSecret);
+      },
+      getPrototypeOf(): never {
+        trapCalls += 1;
+        throw new Error(hostileSecret);
+      },
+      ownKeys(): never {
+        trapCalls += 1;
+        throw new Error(hostileSecret);
+      },
+    });
+    const candidates = prepared.credentialAttempt.candidates;
+
+    expectDeliveryError(
+      () => createIdentitySessionRefreshCredentialDelivery(forgedCompletion, candidates),
+      [ACCESS_WIRE, REFRESH_WIRE],
+    );
+    expectDeliveryError(
+      () => createIdentitySessionRefreshCredentialDelivery(clonedCompletion, candidates),
+      [ACCESS_WIRE, REFRESH_WIRE],
+    );
+    expectDeliveryError(
+      () => createIdentitySessionRefreshCredentialDelivery(hostileCompletion, candidates),
+      [ACCESS_WIRE, REFRESH_WIRE, hostileSecret],
+    );
+    expect(trapCalls).toBe(0);
+    expect(inspectIdentitySessionRefreshCommittedCompletion(completion)).toBe(completion);
+
+    expect(createIdentitySessionRefreshCredentialDelivery(completion, candidates)).toBeDefined();
+  });
 
   it('rejects store getter and method reentry without starting another command path', async (): Promise<void> => {
     const prepared = await prepareCommand();
@@ -1042,13 +1318,20 @@ describe('Identity session refresh command', (): void => {
     expect(mutationCalls).toBe(0);
   });
 
-  it('keeps the command and store absent from the supported package surface', (): void => {
+  it('keeps the command, store, and delivery gate absent from the supported package surface', (): void => {
     expect(identityPublicApi).not.toHaveProperty('createIdentitySessionRefreshCommand');
     expect(identityPublicApi).not.toHaveProperty('runIdentitySessionRefreshCommand');
     expect(identityPublicApi).not.toHaveProperty('InvalidIdentitySessionRefreshCommandError');
     expect(identityPublicApi).not.toHaveProperty('promoteIdentityTransactionPendingEvidence');
     expect(identityPublicApi).not.toHaveProperty(
       'inspectIdentitySessionRefreshCommittedCompletion',
+    );
+    expect(identityPublicApi).not.toHaveProperty(
+      'consumeIdentitySessionRefreshCommittedCredentialPair',
+    );
+    expect(identityPublicApi).not.toHaveProperty('createIdentitySessionRefreshCredentialDelivery');
+    expect(identityPublicApi).not.toHaveProperty(
+      'InvalidIdentitySessionRefreshCredentialDeliveryError',
     );
   });
 });

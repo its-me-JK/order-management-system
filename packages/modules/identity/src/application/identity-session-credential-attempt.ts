@@ -1,4 +1,7 @@
-import type { IdentitySessionCredentialCandidates } from './identity-session-credential-candidates';
+import {
+  claimIdentitySessionCredentialCandidatesForAttempt,
+  type IdentitySessionCredentialCandidates,
+} from './identity-session-credential-candidates';
 import type { IdentitySessionCredentialCrypto } from './identity-session-credential-crypto';
 import {
   copyIdentityAccessCredentialDigestBytes,
@@ -34,6 +37,7 @@ const capturedReflectApply = Reflect.apply;
 const capturedWeakMapDelete = WeakMap.prototype.delete;
 // eslint-disable-next-line @typescript-eslint/unbound-method
 const capturedWeakMapGet = WeakMap.prototype.get;
+const claimCredentialCandidates = claimIdentitySessionCredentialCandidatesForAttempt;
 const CANDIDATE_KEYS = capturedFreeze(['wireValue', 'digest'] as const);
 const CANDIDATES_KEYS = capturedFreeze(['access', 'refresh'] as const);
 const typedArrayPrototype = capturedGetPrototypeOf(Uint8Array.prototype) as object;
@@ -65,7 +69,7 @@ export type IdentitySessionCredentialAttemptDigestView = Readonly<{
   [identitySessionCredentialAttemptDigestViewBrand]: true;
 }>;
 
-type AttemptStatus = 'unclaimed' | 'claimed' | 'committed' | 'retired';
+type AttemptStatus = 'unclaimed' | 'claimed' | 'committed' | 'consumed' | 'retired';
 
 interface AttemptState {
   status: AttemptStatus;
@@ -234,7 +238,8 @@ function captureCandidates(
   value: unknown,
   registeredCopies: Uint8Array<ArrayBuffer>[],
 ): CapturedCandidates {
-  const candidates = readExactFrozenRecord(value, CANDIDATES_KEYS);
+  const authenticCandidates = claimCredentialCandidates(value);
+  const candidates = readExactFrozenRecord(authenticCandidates, CANDIDATES_KEYS);
   const access = readExactFrozenRecord(candidates['access'], CANDIDATE_KEYS);
   const refresh = readExactFrozenRecord(candidates['refresh'], CANDIDATE_KEYS);
   const accessWireValue = access['wireValue'];
@@ -270,7 +275,7 @@ function captureCandidates(
   }
 
   return capturedFreeze({
-    candidates: value as IdentitySessionCredentialCandidates,
+    candidates: authenticCandidates,
     accessWireValue: accessWireValue as IdentityAccessCredentialWireValue,
     accessCredentialDigest: accessCredentialDigest as IdentityAccessCredentialDigest,
     refreshWireValue: refreshWireValue as IdentityRefreshCredentialWireValue,
@@ -619,6 +624,46 @@ export function settleIdentitySessionCredentialAttemptAfterRefreshCommit(
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Releases one committed attempt only to its exact completion owner and exact
+ * original candidate pair.
+ *
+ * Invalid, foreign, crossed, proxied, or replayed values return `undefined`
+ * without changing a rightful registration.
+ *
+ * @internal The refresh completion registry is the only production caller.
+ */
+export function consumeCommittedIdentitySessionCredentialAttempt(
+  attemptValue: unknown,
+  committedOwnerValue: unknown,
+  candidatesValue: unknown,
+): IdentitySessionCredentialCandidates | undefined {
+  if (!isObject(attemptValue) || !isObject(committedOwnerValue) || !isObject(candidatesValue)) {
+    return undefined;
+  }
+
+  try {
+    const state = capturedReflectApply(capturedWeakMapGet, attemptStates, [attemptValue]) as
+      AttemptState | undefined;
+
+    if (
+      state?.status !== 'committed' ||
+      state.owner !== committedOwnerValue ||
+      state.candidates !== candidatesValue
+    ) {
+      return undefined;
+    }
+
+    const candidates = state.candidates;
+    releaseAttemptReferences(state);
+    state.status = 'consumed';
+    capturedReflectApply(capturedWeakMapDelete, attemptStates, [attemptValue]);
+    return candidates;
+  } catch {
+    return undefined;
   }
 }
 

@@ -1,6 +1,7 @@
 import { inspect } from 'node:util';
 
 import {
+  claimIdentitySessionCredentialCandidatesForAttempt,
   createIdentitySessionCredentialCandidates,
   type IdentityAccessCredentialCandidate,
   type IdentityRefreshCredentialCandidate,
@@ -25,6 +26,7 @@ import {
   type IdentityAccessCredentialWireValue,
   type IdentityRefreshCredentialWireValue,
 } from '../src/application/identity-session-credential-wire.values';
+import * as identityPublicApi from '../src';
 
 const ACCESS_PAYLOAD = `${'A'.repeat(42)}E`;
 const REFRESH_PAYLOAD = `${'A'.repeat(42)}I`;
@@ -146,6 +148,68 @@ describe('Identity session credential candidates', (): void => {
     expect(() => {
       (candidates.access as unknown as { digest: unknown }).digest = null;
     }).toThrow(TypeError);
+  });
+
+  it('transfers only the exact factory-minted pair to one attempt admission', (): void => {
+    const candidates = createIdentitySessionCredentialCandidates(candidateInput());
+    const structuralClone = Object.freeze({
+      access: candidates.access,
+      refresh: candidates.refresh,
+    });
+
+    expectFixedSafeError(
+      () => claimIdentitySessionCredentialCandidatesForAttempt(structuralClone),
+      InvalidIdentitySessionCredentialCandidatesError,
+      [ACCESS_WIRE, REFRESH_WIRE],
+    );
+    expect(claimIdentitySessionCredentialCandidatesForAttempt(candidates)).toBe(candidates);
+    expectFixedSafeError(
+      () => claimIdentitySessionCredentialCandidatesForAttempt(candidates),
+      InvalidIdentitySessionCredentialCandidatesError,
+      [ACCESS_WIRE, REFRESH_WIRE],
+    );
+  });
+
+  it('rejects transparent and hostile pair proxies without invoking their traps', (): void => {
+    const candidates = createIdentitySessionCredentialCandidates(candidateInput());
+    const transparentProxy = new Proxy(candidates, {});
+    const secret = 'candidate-inspector-proxy-secret';
+    let trapCalls = 0;
+    const hostileProxy = new Proxy(candidates, {
+      get(): never {
+        trapCalls += 1;
+        throw new Error(secret);
+      },
+      getOwnPropertyDescriptor(): never {
+        trapCalls += 1;
+        throw new Error(secret);
+      },
+      getPrototypeOf(): never {
+        trapCalls += 1;
+        throw new Error(secret);
+      },
+      ownKeys(): never {
+        trapCalls += 1;
+        throw new Error(secret);
+      },
+    });
+
+    for (const proxy of [transparentProxy, hostileProxy]) {
+      expectFixedSafeError(
+        () => claimIdentitySessionCredentialCandidatesForAttempt(proxy),
+        InvalidIdentitySessionCredentialCandidatesError,
+        [secret, ACCESS_WIRE, REFRESH_WIRE],
+      );
+    }
+
+    expect(trapCalls).toBe(0);
+    expect(claimIdentitySessionCredentialCandidatesForAttempt(candidates)).toBe(candidates);
+  });
+
+  it('keeps candidate-attempt ownership transfer off the package root', (): void => {
+    expect(identityPublicApi).not.toHaveProperty(
+      'claimIdentitySessionCredentialCandidatesForAttempt',
+    );
   });
 
   it.each([
