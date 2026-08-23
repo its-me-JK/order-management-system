@@ -956,6 +956,16 @@ surface. It adds no Prisma model, migration, adapter, use case, route, root
 export, infrastructure barrel, or package subpath. The contracts remain
 package-internal until a composed use case creates a real public consumer.
 
+Implementation is deliberately staged at the strongest boundary the current
+layer can prove. The first executable increment implements only a
+runtime-authentic, one-load/one-decision workflow and the attempt transitions
+`unclaimed -> claimed -> retired`. It has no application-memory "commit proof",
+committed evidence, or credential-delivery helper. Those capabilities arrive
+with the concrete MySQL Unit of Work, whose real transaction trace can prove
+the writes and `COMMIT`; a caller-selected object or pending workflow result is
+never commit authority. This avoids turning a structurally convincing test
+double into a security boundary.
+
 Identity uses a hybrid boundary rather than repositories per aggregate. A
 small `IdentityUnitOfWork` owns transaction completion. Separate purpose-built
 reads operate outside a transaction, while workflow-scoped loaders and writers
@@ -967,10 +977,14 @@ Account, SessionFamily, presented RefreshCredential, optional successor and
 AccessCredential, current authority projection, and a security event.
 
 For this refresh slice, `IdentityUnitOfWork.execute` accepts one verified
-credential attempt as its exact admission and invokes one asynchronous callback
-at most once. It invokes it exactly once only after atomically claiming that
-attempt, `BEGIN`, a valid writer-owned `dbNow`, and an active context have all
-been established. The callback receives one exact frozen context containing:
+credential attempt as its exact admission and invokes one fixed,
+package-owned asynchronous orchestration at most once. This is not an
+externally supplied plugin callback: validating its return value could not
+prevent hostile callback code from leaking credentials through side effects.
+The Unit of Work invokes the orchestration exactly once only after atomically
+claiming that attempt, `BEGIN`, a valid writer-owned `dbNow`, and an active
+context have all been established. The orchestration receives one exact frozen
+context containing:
 
 | Field | Contract |
 | --- | --- |
@@ -992,22 +1006,55 @@ or result settlement. Failure to quiesce safely forbids connection reuse and is
 refusing `COMMIT` is insufficient because a floating Promise may still be
 using the connection.
 
-Each active scope also owns a closed refresh-workflow state machine. It accepts
-one authentic discovery ticket, consumes that ticket before the first query,
-and permits one `loadForUpdate` attempt. A failed load ends that workflow; a
-successful load records its exact `not-found` result or the identities and
-snapshots of the locked Account, SessionFamily, and presented
-RefreshCredential. A package-internal decision function is the only production
-caller of `presentRefreshCredential`: it accepts that registered load result,
-uses the scope's `dbNow` as `occurredAt`, passes the exact loaded objects to the
-domain, validates the returned basis and derived instants, and registers the
-result to that scope. The state then permits exactly one matching terminal
-action: rejected completion with no DML, rotated persistence, or reuse
-persistence. Persist-before-load, a second or sequential load, load after a
-terminal action, a second terminal action, a result from another scope, a
-mismatched kind or aggregate basis, and a result whose occurrence-derived
-instants do not originate at `dbNow` all fail before SQL. Semantically identical
-data does not make a foreign result authentic.
+The adapter mints a provisional scope before `BEGIN` solely so a private
+run-controller capability can win the credential-attempt claim. The
+controller, not the callback-visible scope, owns claim inspection, retirement,
+and future commit promotion; neither it nor the provisional scope is exposed to
+orchestration before activation. Only confirmed `BEGIN` plus the one valid
+writer time activates the context. A scoped operation synchronously acquires a
+one-shot lease before its first SQL statement, and at most one lease may be
+outstanding. It settles only after the actual driver Promise settles. An
+outstanding lease when orchestration settles is a contract failure even if it
+later drains, and inability to drain or quarantine its connection makes the
+outcome indeterminate.
+
+Each active scope also owns a closed refresh-workflow state machine:
+`awaiting-load -> loading -> loaded -> deciding -> decided-{rejected|rotated|reuse}
+-> terminal-action-started -> terminal`. It accepts one authentic discovery
+ticket, consumes that ticket before the first query, and permits one
+`loadForUpdate` attempt. Invalid or foreign capabilities fail without changing
+the rightful workflow; once an authentic load or decision starts, any SQL,
+rehydration, relationship-validation, domain, or result-validation failure
+permanently changes it to `failed`. Scope settlement changes every non-terminal
+state to `closed` and clears strong aggregate references.
+
+A successful load records its exact runtime-authentic `not-found` result or the
+identities and snapshots of the locked Account, SessionFamily, and presented
+RefreshCredential. The loader must correlate the consumed ticket's refresh
+digest in its SQL predicate or an equivalent bounded comparison as well as
+checking all three identifiers; matching IDs alone do not prove the row was
+discovered by that credential. Discovery `not-found` never starts a Unit of
+Work or credential generation. Locked `not-found` represents only deletion or
+integrity drift after an authentic found ticket and becomes rejected with no
+DML.
+
+A package-internal decision function is the only production caller of
+`presentRefreshCredential`. It accepts that registered load result, uses the
+scope's `dbNow` as `occurredAt`, passes the exact loaded objects to the domain,
+preserves the domain's conditional issuance-input read order, validates the
+returned basis and every occurrence-derived instant, and registers the result
+to that scope. The public decision is a frozen thin capability enumerating only
+its kind; the complete domain result remains in a private identity registry.
+The state then permits exactly one matching terminal action: rejected
+completion with no DML, rotated persistence, or reuse persistence.
+Persist-before-load, a second or sequential load, load after a terminal action,
+a second terminal action, a result from another scope, a mismatched kind or
+aggregate basis, and a result whose occurrence-derived instants do not
+originate at `dbNow` all fail before SQL. Semantically identical data does not
+make a foreign result authentic. Workflow ownership, phase, replay, and
+cross-scope violations collapse to one fresh cause-free
+`InvalidIdentitySessionRefreshWorkflowError`; established domain policy errors
+remain their fixed internal errors after the workflow is irreversibly failed.
 
 The callback may return only an authentic package-internal
 `IdentityTransactionEvidence`. For this slice the closed refresh evidence is:
@@ -1056,16 +1103,21 @@ immutable wrappers or provider internals are zeroized.
 
 The verified attempt starts `unclaimed`. `execute` uses a synchronous atomic
 compare-and-set to change it to `claimed` before any asynchronous work and binds
-it to the new scope. Only the call that wins `unclaimed -> claimed` owns later
-lifecycle changes. A concurrent or later claim of that same attempt fails
-before `BEGIN` or SQL without changing the owner, attempt, evidence, or
-completion state. Every completion, rejection, failure after the owner claims,
-and indeterminate outcome permanently retires it from execution. A confirmed
-commit may leave only its separately registered completion eligible for one
-exact-pair delivery; that delivery consumes the eligibility. Known rollback,
-unavailable, collision, callback failure, and indeterminate outcome make it
-forever non-deliverable. A retry therefore requires a newly generated and
-verified pair, never reuse of a candidate from an ambiguous attempt.
+it to the private run controller, never to the callback-visible scope. Only the
+call that wins `unclaimed -> claimed` owns later lifecycle changes. A concurrent
+or later claim of that same attempt fails before `BEGIN` or SQL without changing
+the winner. The current application module implements only retirement after a
+claim; it deliberately exposes no generic commit or delivery transition.
+
+When the concrete adapter arrives, only a confirmed committed `rotated`
+decision promotes a distinct pre-created completion and makes its exact attempt
+eligible for delivery. A committed `rejected` or `reuse-detected` decision,
+known rollback, unavailable, collision, orchestration failure, and
+indeterminate outcome all retire the attempt and its candidates forever. A
+retry therefore requires a newly generated and verified pair, never reuse of a
+candidate from an ambiguous attempt. Pending evidence captured by orchestration
+never changes identity into committed evidence; post-commit promotion is a
+separate synchronous, non-throwing registry transition.
 
 Callback evidence is pending, not delivery authority. Its private registration
 binds the exact scope, registered decision, and, for rotation, the authentic
