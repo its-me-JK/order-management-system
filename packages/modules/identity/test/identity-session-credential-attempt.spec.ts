@@ -2,14 +2,13 @@ import { inspect } from 'node:util';
 
 import {
   claimIdentitySessionCredentialAttempt,
-  commitIdentitySessionCredentialAttempt,
-  consumeCommittedIdentitySessionCredentialAttempt,
   createIdentitySessionCredentialAttempt,
   inspectIdentitySessionCredentialAttemptDigestView,
   retireIdentitySessionCredentialAttempt,
   type IdentitySessionCredentialAttempt,
   type IdentitySessionCredentialAttemptDigestView,
 } from '../src/application/identity-session-credential-attempt';
+import * as identityAttemptModule from '../src/application/identity-session-credential-attempt';
 import {
   createIdentitySessionCredentialCandidates,
   type IdentitySessionCredentialCandidates,
@@ -335,9 +334,10 @@ describe('Identity session credential attempt verification', (): void => {
     expect(inspect(attempt, { showHidden: true })).not.toContain(REFRESH_WIRE);
 
     const owner = Object.freeze({});
-    claimIdentitySessionCredentialAttempt(attempt, owner);
-    commitIdentitySessionCredentialAttempt(attempt, owner);
-    expect(consumeCommittedIdentitySessionCredentialAttempt(attempt, pair)).toBe(pair);
+    const view = claimIdentitySessionCredentialAttempt(attempt, owner);
+    expect(inspectIdentitySessionCredentialAttemptDigestView(view, owner)).toBe(view);
+    retireIdentitySessionCredentialAttempt(attempt, owner);
+    expectCandidateThrow(() => inspectIdentitySessionCredentialAttemptDigestView(view, owner));
   });
 
   it('rejects a wire-to-digest mismatch only after checking both target kinds', async (): Promise<void> => {
@@ -478,6 +478,10 @@ describe('Identity session credential attempt verification', (): void => {
 describe('Identity session credential attempt lifecycle', (): void => {
   it('remains absent from the package root', (): void => {
     expect(identityPublicApi).not.toHaveProperty('createIdentitySessionCredentialAttempt');
+    expect(identityAttemptModule).not.toHaveProperty('commitIdentitySessionCredentialAttempt');
+    expect(identityAttemptModule).not.toHaveProperty(
+      'consumeCommittedIdentitySessionCredentialAttempt',
+    );
   });
 
   it('claims synchronously once and exposes only the original authentic digest wrappers', async (): Promise<void> => {
@@ -509,70 +513,30 @@ describe('Identity session credential attempt lifecycle', (): void => {
 
     expectCandidateThrow(() => claimIdentitySessionCredentialAttempt(attempt, owner));
     expectCandidateThrow(() => claimIdentitySessionCredentialAttempt(attempt, foreignOwner));
-    commitIdentitySessionCredentialAttempt(attempt, owner);
+    retireIdentitySessionCredentialAttempt(attempt, owner);
     expectCandidateThrow(() => inspectIdentitySessionCredentialAttemptDigestView(view, owner));
-    expect(consumeCommittedIdentitySessionCredentialAttempt(attempt, pair)).toBe(pair);
-    expectCandidateThrow(() => inspectIdentitySessionCredentialAttemptDigestView(view, owner));
+    expectCandidateThrow(() => claimIdentitySessionCredentialAttempt(attempt, owner));
+    expectCandidateThrow((): void => {
+      retireIdentitySessionCredentialAttempt(attempt, owner);
+    });
   });
 
-  it('lets only the winning owner commit or retire without foreign-call sabotage', async (): Promise<void> => {
-    const pairToCommit = candidates();
-    const committedAttempt = await createIdentitySessionCredentialAttempt(
-      pairToCommit,
-      matchingCrypto(pairToCommit),
-    );
-    const owner = Object.freeze({});
-    const foreignOwner = Object.freeze({});
-    claimIdentitySessionCredentialAttempt(committedAttempt, owner);
-
-    expectCandidateThrow((): void => {
-      commitIdentitySessionCredentialAttempt(committedAttempt, foreignOwner);
-    });
-    expectCandidateThrow((): void => {
-      retireIdentitySessionCredentialAttempt(committedAttempt, foreignOwner);
-    });
-    commitIdentitySessionCredentialAttempt(committedAttempt, owner);
-    expect(consumeCommittedIdentitySessionCredentialAttempt(committedAttempt, pairToCommit)).toBe(
-      pairToCommit,
-    );
-
-    const pairToRetire = candidates();
-    const retiredAttempt = await createIdentitySessionCredentialAttempt(
-      pairToRetire,
-      matchingCrypto(pairToRetire),
-    );
-    const retiredView = claimIdentitySessionCredentialAttempt(retiredAttempt, owner);
-    expectCandidateThrow((): void => {
-      retireIdentitySessionCredentialAttempt(retiredAttempt, foreignOwner);
-    });
-    retireIdentitySessionCredentialAttempt(retiredAttempt, owner);
-    expectCandidateThrow(() =>
-      inspectIdentitySessionCredentialAttemptDigestView(retiredView, owner),
-    );
-    expectCandidateThrow((): void => {
-      commitIdentitySessionCredentialAttempt(retiredAttempt, owner);
-    });
-    expectCandidateThrow(() =>
-      consumeCommittedIdentitySessionCredentialAttempt(retiredAttempt, pairToRetire),
-    );
-  });
-
-  it('requires the exact registered pair and consumes committed delivery once', async (): Promise<void> => {
+  it('lets only the winning owner retire without foreign-call sabotage', async (): Promise<void> => {
     const pair = candidates();
     const attempt = await createIdentitySessionCredentialAttempt(pair, matchingCrypto(pair));
     const owner = Object.freeze({});
-    claimIdentitySessionCredentialAttempt(attempt, owner);
-    commitIdentitySessionCredentialAttempt(attempt, owner);
-    const sameMembersInAnotherPair = Object.freeze({
-      access: pair.access,
-      refresh: pair.refresh,
-    });
+    const foreignOwner = Object.freeze({});
+    const view = claimIdentitySessionCredentialAttempt(attempt, owner);
 
-    expectCandidateThrow(() =>
-      consumeCommittedIdentitySessionCredentialAttempt(attempt, sameMembersInAnotherPair),
-    );
-    expect(consumeCommittedIdentitySessionCredentialAttempt(attempt, pair)).toBe(pair);
-    expectCandidateThrow(() => consumeCommittedIdentitySessionCredentialAttempt(attempt, pair));
+    expectCandidateThrow((): void => {
+      retireIdentitySessionCredentialAttempt(attempt, foreignOwner);
+    });
+    expect(inspectIdentitySessionCredentialAttemptDigestView(view, owner)).toBe(view);
+    retireIdentitySessionCredentialAttempt(attempt, owner);
+    expectCandidateThrow(() => inspectIdentitySessionCredentialAttemptDigestView(view, owner));
+    expectCandidateThrow((): void => {
+      retireIdentitySessionCredentialAttempt(attempt, foreignOwner);
+    });
   });
 
   it('rejects forged, cloned, and recovered-constructor attempts', async (): Promise<void> => {

@@ -61,16 +61,14 @@ export type IdentitySessionCredentialAttemptDigestView = Readonly<{
   [identitySessionCredentialAttemptDigestViewBrand]: true;
 }>;
 
-type AttemptStatus = 'available' | 'claimed' | 'committed' | 'retired' | 'delivered';
+type AttemptStatus = 'unclaimed' | 'claimed' | 'retired';
 
 interface AttemptState {
   status: AttemptStatus;
   owner: object | undefined;
   digestView: IdentitySessionCredentialAttemptDigestView | undefined;
   candidates: IdentitySessionCredentialCandidates | undefined;
-  accessWireValue: IdentityAccessCredentialWireValue | undefined;
   accessCredentialDigest: IdentityAccessCredentialDigest | undefined;
-  refreshWireValue: IdentityRefreshCredentialWireValue | undefined;
   refreshCredentialDigest: IdentityRefreshCredentialDigest | undefined;
 }
 
@@ -382,9 +380,7 @@ function releaseAttemptReferences(state: AttemptState): void {
   state.owner = undefined;
   state.digestView = undefined;
   state.candidates = undefined;
-  state.accessWireValue = undefined;
   state.accessCredentialDigest = undefined;
-  state.refreshWireValue = undefined;
   state.refreshCredentialDigest = undefined;
 }
 
@@ -487,13 +483,11 @@ export async function createIdentitySessionCredentialAttempt(
 
   try {
     return createAttemptValue({
-      status: 'available',
+      status: 'unclaimed',
       owner: undefined,
       digestView: undefined,
       candidates: capturedCandidates.candidates,
-      accessWireValue: capturedCandidates.accessWireValue,
       accessCredentialDigest: capturedCandidates.accessCredentialDigest,
-      refreshWireValue: capturedCandidates.refreshWireValue,
       refreshCredentialDigest: capturedCandidates.refreshCredentialDigest,
     }) as IdentitySessionCredentialAttempt;
   } catch {
@@ -514,7 +508,7 @@ export function claimIdentitySessionCredentialAttempt(
   const state = stateFor(attempt);
 
   if (
-    state.status !== 'available' ||
+    state.status !== 'unclaimed' ||
     state.accessCredentialDigest === undefined ||
     state.refreshCredentialDigest === undefined
   ) {
@@ -575,48 +569,4 @@ export function retireIdentitySessionCredentialAttempt(attempt: unknown, owner: 
 
   state.status = 'retired';
   releaseAttemptReferences(state);
-}
-
-/** Marks a claimed attempt deliverable only after the owning transaction confirms COMMIT. */
-export function commitIdentitySessionCredentialAttempt(attempt: unknown, owner: object): void {
-  assertOwner(owner);
-  const state = stateFor(attempt);
-
-  if (state.status !== 'claimed' || state.owner !== owner) {
-    invalidCandidates();
-  }
-
-  if (state.digestView !== undefined) {
-    digestViewRegistrations.delete(state.digestView);
-  }
-
-  state.owner = undefined;
-  state.digestView = undefined;
-  state.status = 'committed';
-}
-
-/**
- * Consumes a committed attempt for the exact pre-verified pair without serializing either wire.
- *
- * @internal A future committed-completion delivery gate is the only production caller.
- */
-export function consumeCommittedIdentitySessionCredentialAttempt(
-  attempt: unknown,
-  candidates: unknown,
-): IdentitySessionCredentialCandidates {
-  const state = stateFor(attempt);
-  const registeredCandidates = state.candidates;
-
-  if (
-    state.status !== 'committed' ||
-    registeredCandidates === undefined ||
-    registeredCandidates !== candidates
-  ) {
-    invalidCandidates();
-  }
-
-  state.status = 'delivered';
-  releaseAttemptReferences(state);
-
-  return registeredCandidates;
 }
