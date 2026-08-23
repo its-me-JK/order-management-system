@@ -58,12 +58,16 @@ free. The package's first public application contract is now a nominal,
 immutable authenticated principal containing only opaque actor/session IDs and
 the bounded current permission set. Its authority factory remains internal and
 validates role-count evidence, so the runtime package root exports no
-constructor. Identity still exposes no resolver use case or route; the Unit of
-Work and persistence, token/digest and Argon2 adapters, password input policy,
-and Redis remain gated later slices. Pricing, inventory, Redis caching, and
-integration events also remain separate later slices.
+constructor. Its internal credential boundary now adds fixed-policy Node
+CSPRNG/SHA-256 generation, a pre-transaction one-shot attempt that re-verifies
+the exact wire-to-digest pair, a nominal SecurityEvent identifier, and
+digest-only refresh discovery with authentic one-use tickets. Identity still
+exposes no resolver use case or route; the locked refresh workflow, Unit of Work
+adapter, MySQL persistence, Argon2 adapter, password input policy, and Redis
+remain gated later slices. Pricing, inventory, Redis caching, and integration
+events also remain separate later slices.
 
-**Overall project progress: 33%.** The fixed, deployment-inclusive scoring
+**Overall project progress: 34%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
 
 ## Planned technology
