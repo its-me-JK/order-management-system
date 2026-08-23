@@ -252,6 +252,9 @@ jobs:
       - name: Test Redis runtime
         run: pnpm test:integration:redis
 
+      - name: Test Identity refresh abuse control against Redis
+        run: pnpm test:integration:identity-refresh-abuse
+
       - name: Print Redis logs on failure
         if: failure()
         run: docker compose logs --no-color redis

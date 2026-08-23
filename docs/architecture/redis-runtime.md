@@ -8,12 +8,13 @@ framework-independent `@oms/redis` package owns the exact
 bounded admission, command deadlines, health probing, script execution, safe
 failure mapping, and shutdown.
 
-This increment is infrastructure, not an Identity capability. It does **not**
-implement the Identity abuse-control Lua algorithm or key schema, connect the
-Identity refresh port, compose Redis into the API or worker, add an
-authentication route, make Redis part of global readiness, add caching, or
-deploy a public environment. MySQL remains session authority. The intended
-Identity policy and algorithm remain defined in the
+The technical runtime remains infrastructure rather than an Identity
+capability. The separate delivered `@oms/identity/infrastructure/redis`
+adapter now implements the refresh port, static Lua algorithm, and key schema
+through this package's restricted executor. Neither component is composed into
+the API or worker, adds an authentication route, makes Redis part of global
+readiness, adds caching, or deploys a public environment. MySQL remains session
+authority. The Identity-owned policy and algorithm are defined in the
 [Identity and session contract](identity-and-session.md).
 
 ## Ownership and public surfaces
@@ -21,7 +22,7 @@ Identity policy and algorithm remain defined in the
 ```mermaid
 flowchart LR
     Composition[Future API or worker composition root] --> Root["@oms/redis"]
-    IdentityAdapter[Future Identity infrastructure adapter] --> Script["@oms/redis/lua-script"]
+    IdentityAdapter[Identity refresh infrastructure adapter] --> Script["@oms/redis/lua-script"]
     Root --> Runtime[One process-wide Redis runtime]
     Script --> Runtime
     Runtime --> Client["@redis/client@6.2.1"]
@@ -50,8 +51,8 @@ import this subpath. Executable architecture checks protect both boundaries.
 
 This is capability-oriented design: the package exposes the smallest operation
 needed by a caller, while retaining connection and command authority itself.
-An Identity adapter may later own its policy and key derivation without
-becoming a Redis connection manager.
+The Identity adapter owns its policy and key derivation without becoming a
+Redis connection manager.
 
 ## Runtime lifecycle
 
@@ -88,9 +89,9 @@ failed operation is never replayed. This distinction permits recovery without
 making an ambiguous request look idempotent.
 
 The root probe performs only bounded connectivity/authentication validation. It
-does not mutate business state and does not assert that an Identity script or
-adapter has been composed. Redis remains absent from global API readiness at
-this stage.
+does not mutate business state and does not assert that the Identity script or
+adapter has been process-composed. Redis remains absent from global API
+readiness at this stage.
 
 ## Script execution and ambiguity
 
@@ -119,9 +120,10 @@ transport failure does not prove non-execution. Because Redis does not
 cryptographically distinguish that server reply from an identical error
 deliberately returned by Lua, every registered script is reviewed static code
 and must never emit the reserved reply. Prefixes, suffixes, and other
-`NOSCRIPT`-looking errors fail closed. The future Identity script returns only
-its closed result vocabulary. This invariant is required before an abuse
-decision can authorize credential issuance.
+`NOSCRIPT`-looking errors fail closed. The delivered Identity script returns
+only its closed versioned allow/deny vocabulary. This invariant remains
+required when the abuse decision is later composed ahead of credential
+issuance.
 
 ## Configuration and secret handling
 
@@ -173,8 +175,8 @@ must not subscribe to or export Redis command-payload channels.
 Registered scripts must receive only pseudonymous keys and non-sensitive
 structural arguments. They must never receive raw credentials, personal data,
 or business payloads, because Lua source, keys, arguments, and replies could
-otherwise cross an instrumentation boundary outside this package. The future
-Identity adapter satisfies this rule with HMAC-derived keys and bounded policy
+otherwise cross an instrumentation boundary outside this package. The
+delivered Identity adapter satisfies this rule with HMAC-derived keys and bounded policy
 integers; Redis credentials remain connection configuration only.
 
 ## Shutdown
@@ -226,10 +228,14 @@ deployment must provide its own authenticated, encrypted Redis service and
 capacity policy.
 
 CI starts the same digest with an ephemeral password, verifies authentication,
-runs the real-Redis integration suite, and tears the service down. The gate
-exercises the production package boundary rather than importing the vendor
-client from test orchestration. This creates a reproducible infrastructure
-proof but is not a release pipeline or public deployment.
+runs both the technical runtime suite and the Identity adapter's real-Redis
+suite, and tears the service down. The adapter gate covers cache-cold execution,
+two-runtime atomic contention, isolated dimension capacities, all-or-none
+denial, refill/expiry, corrupt state, policy drift, time regression, and a
+timed-out single invocation without replay. The gates exercise production
+package boundaries rather than importing the vendor client from test
+orchestration. This is a reproducible infrastructure proof, not managed
+failover evidence, a release pipeline, or a public deployment.
 
 Redis 7.2 is retained for this slice because its source remains under the
 [three-clause BSD license](https://github.com/redis/redis/blob/7.2/COPYING)
@@ -354,9 +360,10 @@ signal so a Redis outage does not remove unrelated API traffic.
 
 ## Future improvements
 
-- Implement the Identity refresh abuse-control adapter and its registered
-  static script, HMAC-derived key namespace, Redis `TIME` logic, fixed-point
-  refill, TTL, and real concurrency/failover tests.
+- Compose the delivered refresh adapter into the first private refresh use case
+  ahead of credential verification and MySQL, without opening a route. Add an
+  operator runbook for intentional epoch migration and poisoned/mismatched
+  marker repair.
 - Compose one runtime into each process that needs Redis, with
   capability-specific readiness, metrics, tracing, saturation alerts, and
   credential-safe diagnostics. Add a regression gate proving that any future

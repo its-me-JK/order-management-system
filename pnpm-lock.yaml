@@ -177,6 +177,9 @@ importers:
       '@oms/database':
         specifier: workspace:*
         version: link:../../database
+      '@oms/redis':
+        specifier: workspace:*
+        version: link:../../redis
     devDependencies:
       '@oms/configuration':
         specifier: workspace:*

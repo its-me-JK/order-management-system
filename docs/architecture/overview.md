@@ -240,11 +240,11 @@ the trust, redaction, and propagation contracts.
 
 ## Redis policy
 
-Redis accelerates catalog, pricing, advisory availability reads, and fast-path
-replay or idempotency checks. Separately, future login and refresh require its
-atomic abuse decision and fail closed when no decision is possible. Durable
-MySQL records back any check whose loss could alter a business outcome and
-remain authoritative for sessions.
+Redis may later accelerate catalog, pricing, advisory availability reads, and
+fast-path replay or idempotency checks. Separately, future login and the first
+refresh use case require an atomic abuse decision and fail closed when no
+decision is possible. Durable MySQL records back any check whose loss could
+alter a business outcome and remain authoritative for sessions.
 
 The delivered framework-independent `@oms/redis` substrate now owns the exact
 official client dependency and one bounded process runtime. Its root exposes
@@ -257,10 +257,14 @@ one `EVAL` only for Redis's exact canonical script-cache-miss reply; every
 ambiguous outcome fails closed without retry. Registered static scripts must
 never emit that reserved reply themselves.
 
-This substrate is not composed into the API or worker and does not yet
-implement an Identity adapter, cache, route, or global readiness dependency.
-Local Compose and CI provide an authenticated ephemeral Redis 7.2.16 instance
-for infrastructure verification only. See the
+The Identity package now adds a restricted refresh adapter over that executor:
+one static script atomically evaluates deployment, canonical-network, and
+presented-credential token buckets using Redis time and pseudonymous same-slot
+keys. It fails closed on provider ambiguity, policy/secret drift, corrupt state,
+or clock regression. The adapter and substrate are not composed into the API or
+worker and add no cache, route, or global readiness dependency. Local Compose
+and CI provide an authenticated ephemeral Redis 7.2.16 instance for runtime and
+adapter verification only. See the
 [Redis runtime contract](redis-runtime.md) for ownership, failure semantics,
 alternatives, and operational trade-offs.
 

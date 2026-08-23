@@ -202,8 +202,17 @@ native IPv6 is grouped by `/64`, and IPv4-mapped IPv6 shares the IPv4 namespace.
 The capability shell is redacting; its extracted version/family-tagged
 key-material copies are visible but isolated. Exact registered results expose
 only `allowed` or `denied` with a bounded 1-through-180-second retry. This slice
-establishes no proxy trust by itself and adds no Identity Redis adapter, route,
-or public export; those remain later composition work. The separate
+establishes no proxy trust by itself and adds no route or public root export.
+The restricted `@oms/identity/infrastructure/redis` subpath now implements the
+port with one reviewed static four-key/seven-argument script. It atomically
+checks deployment, canonical-network, and presented-credential token buckets
+using one Redis `TIME`, fixed-point refill, all-or-none consumption, and
+time-to-full expiry. Keys use a same-slot deployment/epoch namespace plus full
+HMAC-SHA-256 dimension digests; a secret-bound policy marker rejects replica
+drift, and a poisoned marker keeps any partial provider write fail-closed.
+The adapter validates only configuration and executes no network operation at
+construction. It is not composed into an API or worker, so it still makes no
+runtime admission decision. The separate
 framework-independent `@oms/redis` technical substrate now owns the exact
 official client dependency, one bounded RESP2 client, authentication and TLS,
 bounded queue/deadline behavior, probe and shutdown lifecycle, and fixed safe
@@ -214,8 +223,10 @@ reviewed static code and must never emit that reserved error themselves. It
 disables offline queuing, automatic in-operation reconnect, and ambiguous
 retries. Authenticated ephemeral Redis 7.2.16 now runs in local Compose and CI
 with a least-privilege user, persistence disabled, 64 MiB `noeviction`, and
-loopback-only publication. This technical capability is not composed into
-Identity, the API, or the worker and makes no abuse decision.
+loopback-only publication. Real-Redis tests exercise the adapter through two
+independent runtimes, cache-cold execution, exact capacity, refill/TTL,
+corruption, policy/secret drift, clock regression, and ambiguous no-retry
+failure.
 Identity now also owns the refresh-specific pre-transaction identifier bundle:
 one separately branded successor-refresh ID, issued-access ID, and security-event
 ID. The restricted Node identifiers subpath exposes only a zero-argument
@@ -230,7 +241,8 @@ JSON. It exposes no raw serializer, is absent from the package root and every
 public subpath, and has no HTTP response or cookie operation. The future public
 refresh use case and channel-specific access-response and refresh-cookie sinks,
 remaining security-event adapters, NestJS composition, Argon2 adapter, password
-input policy, and Redis abuse control still do not complete the runtime path.
+input policy, and composition of the delivered Redis abuse control still do not
+complete the runtime path.
 The invariant-failure quarantine also needs bounded observability and an
 explicit unhealthy-process recycle policy before public refresh traffic. Before
 credential ingress becomes public, production
@@ -547,9 +559,13 @@ Runtime Redis settings use the `REDIS_*` namespace documented in
 `.env.example`. A runtime receives exactly one password value or password-file
 source; credentials are never embedded in a Redis URL. Showcase, staging, and
 production configuration requires verified TLS. The API and worker do not yet
-construct this runtime, so the local service and real-Redis gate prove only the
-technical substrate. Its ownership, canonical cache-miss fallback, and
-ambiguity rules are defined in the
+construct this runtime, so the local service and real-Redis gates prove the
+technical substrate and the non-routed Identity adapter, not process
+composition or availability. Identity abuse configuration uses a separate
+exact 32-byte HMAC secret, stable deployment scope, coordinated key epoch, and
+bounded refresh policies under `IDENTITY_*`; replicas sharing a scope and
+epoch must share the same secret and policy. Its ownership, canonical
+cache-miss fallback, and ambiguity rules are defined in the
 [Redis runtime contract](docs/architecture/redis-runtime.md).
 
 Create a migration only after adding and reviewing a module-owned schema
@@ -679,6 +695,7 @@ Useful repository commands:
 | `pnpm test:integration:identity-refresh-discovery` | Verify lifecycle-blind refresh-digest discovery and its production Prisma query in an isolated local MySQL database |
 | `pnpm test:integration:identity-refresh-locked-loader` | Verify the Prisma reference lock contract and production direct refresh transaction composition, including exact-connection locking, commit-gated completion, mutation-statement atomicity, cumulative rollback, lossless rehydration, and causal Account contention, in an isolated local MySQL database |
 | `pnpm test:integration:identity-refresh-lineage` | Verify the Identity lineage migration, invariants, and Prisma drift against isolated real MySQL databases |
+| `pnpm test:integration:identity-refresh-abuse` | Verify atomic refresh abuse admission, isolated dimension limits, refill/TTL, corruption, policy/secret drift, clock regression, and ambiguous no-retry behavior against authenticated real Redis |
 | `pnpm test:integration:redis` | Verify the bounded runtime, authenticated script execution, and atomic behavior against real Redis |
 | `pnpm format:check` | Verify formatting without modifying files |
 | `pnpm check` | Run every required quality gate in CI order |

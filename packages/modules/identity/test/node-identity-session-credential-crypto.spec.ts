@@ -924,6 +924,7 @@ describe('Node Identity cryptography construction and real provider', (): void =
       './infrastructure/prisma',
       './infrastructure/cryptography',
       './infrastructure/identifiers',
+      './infrastructure/redis',
     ]);
     expect(Object.isFrozen(crypto)).toBe(true);
     expect(Object.isFrozen(Object.getPrototypeOf(crypto))).toBe(true);

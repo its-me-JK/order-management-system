@@ -155,6 +155,13 @@ const rejectedImports = [
     name: 'module infrastructure -> Redis runtime root',
   },
   {
+    code: "import { createRedisRuntime } from '@oms/redis';\nexport const runtimeFactory = createRedisRuntime;",
+    expectedMessage: 'The Redis runtime root is composition-only.',
+    filePath:
+      'packages/modules/identity/test/infrastructure/__architecture_probe__/redis-runtime.spec.ts',
+    name: 'ordinary module infrastructure test -> Redis runtime root',
+  },
+  {
     code: "import type { CatalogReadRepository } from '@oms/catalog';\nexport type Repository = CatalogReadRepository;",
     expectedMessage: 'Application code may import only its own application and domain layers.',
     filePath: 'packages/modules/catalog/src/application/__architecture_probe__/package-root.ts',
@@ -200,6 +207,12 @@ const allowedImports = [
     code: "import { createRedisRuntime } from '@oms/redis';\nexport const runtimeFactory = createRedisRuntime;",
     filePath: 'apps/worker/src/composition/__architecture_probe__/redis-runtime.ts',
     name: 'worker composition root -> Redis runtime root',
+  },
+  {
+    code: "import { createRedisRuntime } from '@oms/redis';\nexport const runtimeFactory = createRedisRuntime;",
+    filePath:
+      'packages/modules/identity/test/infrastructure/__architecture_probe__/redis-runtime.integration-test.ts',
+    name: 'real module infrastructure integration -> Redis runtime root',
   },
   {
     code: "import type { Product } from './product';\nexport type CatalogProduct = Product;",

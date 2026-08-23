@@ -532,6 +532,35 @@ export default tseslint.config(
     },
   },
   {
+    // A real module integration test is the smallest composition root that can
+    // bind a technical runtime to its infrastructure adapter. Production
+    // module code and ordinary tests remain subject to the rule above.
+    files: ['packages/modules/**/test/infrastructure/**/*.integration-test.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...businessLoggingRestrictions.paths,
+            ...directDatabaseDriverImportRestrictions.paths,
+            ...directRedisDriverImportRestrictions.paths,
+          ],
+          patterns: [
+            ...businessLoggingRestrictions.patterns,
+            ...directDatabaseDriverImportRestrictions.patterns,
+            ...directRedisDriverImportRestrictions.patterns,
+          ],
+        },
+      ],
+      'no-restricted-syntax': [
+        'error',
+        ...directDatabaseDriverDynamicImportRestrictions,
+        ...directRedisDriverDynamicImportRestrictions,
+      ],
+      'no-console': 'error',
+    },
+  },
+  {
     files: ['packages/modules/**/domain/**/*.ts'],
     rules: {
       'oms-architecture/enforce-layer-imports': ['error', { layer: 'domain' }],

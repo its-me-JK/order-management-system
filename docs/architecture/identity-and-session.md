@@ -102,12 +102,14 @@ API composition root. Delivery belongs under
 `apps/api/src/features/identity/delivery/http`; reusable Bearer extraction and
 request association belong to the API authentication platform adapter.
 
-The separate `@oms/redis` package now supplies the bounded technical runtime
+The separate `@oms/redis` package supplies the bounded technical runtime
 described in the [Redis runtime contract](redis-runtime.md). It exposes no raw
-client or generic command surface. A future Identity infrastructure adapter
-may import only its restricted registered-script executor; Identity domain and
-application code remain vendor-free, and no current Identity port is wired to
-that runtime.
+client or generic command surface. The delivered
+`@oms/identity/infrastructure/redis` adapter imports only its restricted
+registered-script executor and implements the refresh abuse-control port;
+Identity domain and application code remain vendor-free. No API or worker
+composition root currently creates that adapter or wires the port to a public
+use case.
 
 The delivered `IdentityAccessAuthorityReader` is a package-internal,
 digest-level persistence port. Its Prisma adapter executes the writer-MySQL
@@ -1368,7 +1370,9 @@ port once and authenticate and branch on that exact result within the same
 execution. If a later design needs to carry admission authority across an
 asynchronous or package boundary, it must introduce an input-bound one-shot
 capability instead of widening these records. No Redis client, key HMAC, token
-bucket, retry, route, or root export is part of this increment.
+bucket, retry, route, or root export is part of this application-boundary
+increment. The separate infrastructure increment described below now supplies
+the Redis implementation without changing that root surface or adding a route.
 
 Identity uses a hybrid boundary rather than repositories per aggregate. A
 small `IdentitySessionRefreshUnitOfWork` owns transaction completion. Separate purpose-built
@@ -2931,53 +2935,89 @@ must not start preserving `WWW-Authenticate` or `Set-Cookie` globally.
 The Identity application now owns the package-internal,
 refresh-specific `IdentitySessionRefreshCredentialAbuseControl` port described
 above. Login will receive a separate narrow facet instead of a generic
-route-discriminated rate-limiter API; one Identity Redis adapter may implement
-both facets. The current Identity contract does not connect to Redis. The
-delivered technical `@oms/redis` package owns connection lifecycle, TLS,
-authentication, bounded admission/deadlines, safe failures, and shutdown; the
-future Identity Redis adapter owns the atomic algorithm and key schema. The
-technical package's root is lifecycle/probe only. Its restricted
-`@oms/redis/lua-script` subpath accepts registered static definitions with
-exact key/argument counts, not arbitrary commands or dynamic source. One
-future Identity Lua operation refills and conditionally consumes every
-applicable token bucket so concurrent replicas cannot overspend a limit.
+route-discriminated rate-limiter API; it is not implemented by this refresh
+adapter. The delivered technical `@oms/redis` package owns connection
+lifecycle, TLS, authentication, bounded admission/deadlines, safe failures,
+and shutdown. The Identity-owned restricted adapter owns refresh policy, key
+derivation, result authentication, and one registered static Lua script. The
+technical package's root remains lifecycle/probe only; the adapter receives
+only `RedisLuaScriptExecutor` from `@oms/redis/lua-script`, never a raw client,
+runtime root, arbitrary command, or dynamic source. Executable import probes
+enforce that split. A real module integration test is the only package-local
+composition seam permitted to join the adapter to the runtime.
+
+One admission invokes exactly one four-key/seven-argument script. Its keys are
+the persistent policy marker, deployment bucket, canonical-network bucket, and
+presented-refresh-credential bucket. The arguments are the expected policy
+fingerprint followed by capacity and refill interval for each bucket. The
+operation validates every key-independent argument, marker, existing state,
+calculation, and prepared write before its first mutation. It refills all
+three buckets from one instant and consumes one token from all three only when
+all can admit; denial consumes none and returns only the largest bounded
+whole-second wait. Concurrent replicas therefore cannot overspend one
+dimension or charge the permissive dimensions for an attempt denied by
+another.
 
 The operation obtains `TIME` once from the authoritative Redis server; API
 replica clocks are never inputs. Each bucket stores its last accepted server
-microsecond and clamps a regressed post-failover time to that value. Refill and
+microsecond. A server time earlier than any stored high-water mark fails closed
+before mutation: rewriting a relative expiry from the regressed wall clock
+could otherwise expire a bucket before its logical refill instant. Refill and
 consumption use checked integer fixed-point units with a carried remainder,
-never Lua floating-point comparison, and update all applicable buckets from
-the same instant. A forward clock jump may refill no more than capacity. The
-runtime first uses `EVALSHA`; script-cache loss permits exactly one `EVAL` of
+never fractional-token arithmetic or comparison, and update all applicable buckets from
+the same instant. Missing or expired state starts full; non-full state is
+encoded as `1:<tokens>:<remainder>:<last-microseconds>` and expires at the
+ceiling of its exact time-to-full, bounded to one hour. Full state is deleted.
+A forward clock jump may refill no more than capacity. Corrupt, non-canonical,
+or policy-incompatible state fails closed before bucket mutation.
+
+Because a Redis script error does not roll back earlier writes, the script sets
+a non-valid poison marker before the three prepared bucket writes and restores
+the expected fingerprint only as its final write. A mid-write provider failure
+therefore leaves the namespace unavailable for operator repair rather than
+making a missing partial bucket look full. The runtime first uses `EVALSHA`;
+script-cache loss permits exactly one `EVAL` of
 the same registered source only for Redis's exact canonical cache-miss reply.
 Registered static scripts must never emit that reserved reply themselves; the
-future Identity script returns only its closed result vocabulary. One deadline
+Identity script returns only `['v1', 'allowed', '0']` or
+`['v1', 'denied', '<1..180>']`. One deadline
 spans both calls. Timeout, connection loss, failover, or any result whose commit
 state is unknown is not retried in-request and is `503`. Keys share one static
 Redis Cluster hash tag so the atomic operation cannot silently become
-cross-slot if the runtime topology changes.
+cross-slot if the runtime topology changes. The current runtime supports one
+standalone endpoint, not Redis Cluster discovery or failover; the key schema is
+same-slot compatible, not a claim of Cluster support.
 
-The initial adapter requires Redis 7 or a protocol-compatible managed service
+The adapter requires Redis 7 or a protocol-compatible managed service
 with effect-replicated scripts, `TIME`, `EVALSHA`, `EVAL`, key expiry, and
-hash-tag semantics enabled. Startup capability checks are read-only and
-sanitized; an incompatible provider prevents Identity issuance readiness
-rather than selecting a weaker client-side-clock algorithm.
+hash-tag semantics enabled. The delivered root probe checks bounded
+connectivity and authentication only; capability-specific issuance readiness
+is future composition work. An incompatible provider must prevent Identity
+issuance rather than select a weaker client-side-clock algorithm.
 
-Initial configurable defaults are:
+The delivered refresh defaults and separately planned login starting values
+are:
 
-| Route | Dimension | Capacity | Refill |
-| --- | --- | ---: | ---: |
-| Login | Deployment | 60 | 1 per second |
-| Login | Trusted network | 30 | 1 per 10 seconds |
-| Login | Canonical candidate | 5 | 1 per 3 minutes |
-| Refresh | Deployment | 300 | 5 per second |
-| Refresh | Trusted network | 120 | 1 per 2.5 seconds |
-| Refresh | Presented credential | 3 | 1 per 100 seconds |
+| Route | Delivery | Dimension | Capacity | Refill |
+| --- | --- | --- | ---: | ---: |
+| Login | Planned | Deployment | 60 | 1 per second |
+| Login | Planned | Trusted network | 30 | 1 per 10 seconds |
+| Login | Planned | Canonical candidate | 5 | 1 per 3 minutes |
+| Refresh | Configured | Deployment | 300 | 5 per second |
+| Refresh | Configured | Trusted network | 120 | 1 per 2.5 seconds |
+| Refresh | Configured | Presented credential | 3 | 1 per 100 seconds |
 
 These are conservative operating starting points for the administrator-only
 surface, not values prescribed by a standard. Load, credential-stuffing, NAT,
 and false-positive tests must validate them before public issuance; changes
 remain reviewed configuration within bounded limits.
+Each delivered capacity is an integer from 1 through 10,000; each refill
+interval is 1,000 through 180,000,000 microseconds; and capacity multiplied by
+interval may not exceed 3,600,000,000 microseconds. Local/test configuration
+may default the deployment scope and epoch, while showcase, staging, and
+production must provide both explicitly. Exactly one inline or file-backed
+canonical lowercase 64-hex secret source is required and resolves to exactly
+32 bytes.
 
 All permitted login attempts consume every login dimension before account
 lookup or Argon2id. Successful login may clear only the candidate bucket; it
@@ -2986,13 +3026,27 @@ before MySQL authority. The response exposes only the largest whole-second
 wait as `Retry-After`, bounded from 1 through 180, never which dimension denied
 it. No per-dimension rate-limit header is exposed.
 
-Redis keys contain an algorithm version and base64url HMAC-SHA-256 of the
-canonical candidate, normalized network, or presented wire credential using a
-dedicated abuse-key secret containing at least 32 CSPRNG bytes. It is separate
-from database and Redis credentials. Keys contain no raw login, IP, token,
-actor, or session value. Key TTL is the bounded time to refill. Secret rotation
-changes the namespace and temporarily resets throttle history, so it is an
-explicit operational event rather than an ad hoc environment change.
+The four keys share a 43-character base64url SHA-256 hash tag over
+length-framed algorithm context, deployment scope, and epoch. The locator is
+deliberately independent of the secret and policy, so replicas using the same
+scope and epoch meet at one marker. Deployment, normalized-network, and
+presented-credential bucket suffixes are separate full HMAC-SHA-256 digests
+over length-framed context and dimension material using a dedicated exact
+32-byte CSPRNG secret; it is separate from database and Redis credentials. The
+marker value is another HMAC over that secret, scope, epoch, and all three
+policies. A replica with different secret or policy therefore reaches the same
+marker and fails closed before state mutation. Keys contain no raw scope,
+login, IP, token, actor, or session value.
+
+Scope, epoch, and key-algorithm version intentionally select a new namespace;
+the marker cannot detect drift in values that choose its own location. Their
+rollout must be coordinated across replicas. A mixed rollout would split
+limits, and a new namespace begins with full buckets, so migration requires an
+explicit quiesce or a future dual-policy transition. Rotating only the secret
+under an unchanged scope and epoch does not reset safely: it causes marker
+mismatch and denies admission until the coordinated epoch migration or
+operator repair completes. Changing any bucket policy has the same coordinated
+epoch requirement.
 
 Network normalization is binary rather than textual: a version/family tag
 precedes the canonical individual IPv4 address or native IPv6 `/64` prefix,
@@ -3012,15 +3066,19 @@ Argon2id semaphore caps simultaneous verification according to the configured
 memory budget; the initial default is two with no unbounded wait queue.
 Saturation is `429` with `Retry-After: 1`.
 
-The technical runtime already enforces this no-retry boundary, uses one RESP2
+The technical runtime enforces this no-retry boundary, uses one RESP2
 client with offline queuing and automatic in-operation reconnect disabled, and
-maps dependency failures to one safe unavailable error. That is execution
-infrastructure only: until the Identity script and adapter exist, no abuse
-decision, denial, `Retry-After`, or issuance readiness capability is present.
+maps dependency failures to one safe unavailable error. The adapter maps any
+provider rejection, malformed fulfilled reply, corrupt state, marker mismatch,
+or regressed Redis time to the Identity-owned unavailable error without a
+cause. It is still non-routed infrastructure: until a future refresh use case
+composes exactly one decision, no HTTP denial, `Retry-After`, or issuance
+readiness capability is present.
 
 Redis remains absent from global API readiness because anonymous reads and
 Bearer authority do not require it. Credential-issuance availability and
-Redis decision latency receive separate metrics and alerts.
+Redis decision latency require separate future metrics and alerts when the
+capability is composed.
 
 ## Security events, privacy, and retention
 
@@ -3178,8 +3236,9 @@ The implementation increment is incomplete until tests prove:
    TTY/file-descriptor, redaction, operator-boundary, atomic revocation, and
    race contracts; create no default or showcase credential.
 5. Deliver the bounded technical Redis runtime and authenticated ephemeral
-   Compose/CI Redis; then add the separate Identity abuse adapter and its
-   algorithm-specific real-Redis tests.
+   Compose/CI Redis; add the separate Identity abuse adapter and its
+   algorithm-specific real-Redis tests; then compose it ahead of refresh
+   verification without opening a route.
 6. Compose the bounded Identity cleanup worker, metrics, and retention failure
    tests without exposing authentication routes.
 7. Add trusted ingress, exact CORS/CSRF/cookie transport, typed exchange
@@ -3220,10 +3279,12 @@ gate.
 The package-internal refresh abuse-control boundary is also delivered: it owns
 the opaque binary IPv4/IPv6 network grouping, the refresh-specific port, exact
 registered allow/deny decisions, bounded retry delay, and fixed safe failures.
-It deliberately performs no Redis operation and adds no Identity adapter or
-trusted proxy provenance. The separate technical `@oms/redis` substrate is now
-delivered, but it is not wired to this boundary and therefore makes no abuse
-decision.
+The restricted Redis infrastructure subpath now implements that port with the
+static atomic three-bucket script, pseudonymous same-slot keys, secret/policy
+marker, fail-closed time/state/write behavior, bounded configuration, and
+real-Redis tests. It still adds no trusted proxy provenance, public use case,
+route, API/worker composition, readiness dependency, or production telemetry;
+therefore no running process currently makes this admission decision.
 The guarded production composition now proves atomic failure for each of six
 exact root-installed, fixture-scoped rotation mutation statements, cumulative
 rollback of every earlier successful write, rollback at an invalid post-write
@@ -3386,6 +3447,25 @@ process recycle policy.
   exact network and credential would add stronger transferable authority at
   the cost of another state machine. Introduce that form if admission ever
   crosses an asynchronous or package boundary.
+- A fixed window is cheaper but permits boundary bursts; an exact sliding log
+  grows with attempts; and a sliding counter approximates weighting at window
+  edges. The selected token bucket stores one bounded value per active
+  dimension, permits a reviewed burst, and refills continuously, at the cost of
+  carried-remainder arithmetic and Redis-time dependence.
+- Per-process buckets are available during Redis failure but multiply limits by
+  replica count. A MySQL limiter would make hot credential ingress compete with
+  durable session transactions and hold rows for disposable attack pressure.
+  One Redis script gives cross-replica serialization, but the deployment
+  dimension deliberately creates one hot Cluster slot and one security-specific
+  availability dependency.
+- Plain hashes would make low-entropy network values enumerable; full keyed
+  HMAC digests hide dimension material. A stable unkeyed scope/epoch locator is
+  retained only so secret or policy drift reaches the same marker and fails
+  closed. Lua execution is isolated from concurrency but does not roll back
+  writes after a runtime error, so poison-before-write/fingerprint-last ordering
+  trades automatic recovery for conservative operator repair. Retrying a timed
+  admission would improve apparent availability but could consume twice, so
+  ambiguous outcomes are never replayed.
 - Disabling the password authenticator at 100 consecutive failures satisfies
   the hard guessing ceiling but lets a sufficiently persistent known-login
   attacker force an offline operator rebind. Lower distributed limits, alerts,
@@ -3614,6 +3694,26 @@ process recycle policy.
     is harder to evade than `/128`, but may deny unrelated users behind a shared
     prefix; bounded limits, telemetry, and false-positive tests must validate
     that trade-off.
+43. **Why use a token bucket instead of a fixed or sliding window?** It bounds
+    state to one compact record per active dimension, supports a controlled
+    burst, and refills continuously. The cost is more carefully reviewed
+    integer/remainder and expiry logic than a fixed counter.
+44. **Why is the deployment bucket a deliberate hot slot?** The limit is global
+    across replicas, so one atomic decision must serialize that shared pressure.
+    Sharding it would improve throughput by weakening the exact deployment cap;
+    measured saturation should change policy or topology explicitly instead.
+45. **Why HMAC bucket material but use an unkeyed namespace locator?** Network
+    and credential material can be enumerable and therefore needs a secret
+    keyed digest. The non-secret scope/epoch locator must remain stable across
+    secret drift so all replicas meet at one marker and reject the mismatch.
+46. **Why poison the marker inside an atomic Lua script?** Atomic here means no
+    concurrent command observes intermediate state, not rollback after a Lua
+    runtime error. Poisoning before bucket writes and restoring the fingerprint
+    last ensures any partial write remains fail-closed until repaired.
+47. **Why not retry an admission after a timeout?** The script may have consumed
+    all three buckets even though its response was lost. Replaying would charge
+    the attempt twice and distort attacker cost; one cache-miss fallback is
+    allowed only when canonical `NOSCRIPT` proves the first command did not run.
 
 ## Future improvements
 
@@ -3658,12 +3758,12 @@ process recycle policy.
 - Make the future refresh orchestrator terminally consume every committed
   rejection or reuse through the non-delivery transition, while sending a
   committed rotation only to the exact-pair delivery gate.
-- Add the refresh adapter behind the delivered abuse-control port and technical
-  Redis runtime. Prove the atomic multi-bucket script, HMAC key schema,
-  authoritative Redis time, `NOSCRIPT`-only fallback, fail-closed ambiguity,
-  and real-Redis concurrency before composing one decision ahead of credential
-  verification and MySQL. Add trusted proxy-chain resolution separately and
-  feed only its fully parsed address bytes into the delivered network factory.
+- Compose one delivered refresh abuse decision ahead of credential verification
+  and MySQL without adding it to global readiness. Add trusted proxy-chain
+  resolution separately and feed only its fully parsed address bytes into the
+  delivered network factory. Add capability-specific readiness, sanitized
+  metrics, and an operator repair/runbook for a poisoned or mismatched marker
+  before opening the route.
 - Add a closed-cardinality metric and explicit unhealthy-process recycle policy
   for the Unit of Work's fail-stop cleanup quarantine before public refresh
   ingress; never expose command, attempt, or evidence identity in telemetry.
@@ -3683,6 +3783,10 @@ process recycle policy.
 - [RFC 10017: OAuth 2.0 for Browser-Based Applications](https://www.rfc-editor.org/rfc/rfc10017.html)
 - [NIST SP 800-63B-4](https://pages.nist.gov/800-63-4/sp800-63b.html)
 - [OWASP Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html)
+- [Redis scripting and atomic execution](https://redis.io/docs/latest/develop/interact/programmability/eval-intro/)
+- [Redis `TIME`](https://redis.io/docs/latest/commands/time/)
+- [Redis `SET` expiry options](https://redis.io/docs/latest/commands/set/)
+- [Redis Cluster key-slot and hash-tag rules](https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/)
 - [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)
 - [OWASP Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)
 - [OWASP CSRF Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html)

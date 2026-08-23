@@ -464,6 +464,7 @@ describe('Node Identity refresh identifier export and runtime isolation', (): vo
       './infrastructure/prisma',
       './infrastructure/cryptography',
       './infrastructure/identifiers',
+      './infrastructure/redis',
     ]);
     expect(packageExports['./infrastructure/identifiers']).toEqual({
       types: './src/infrastructure/identifiers/index.ts',
