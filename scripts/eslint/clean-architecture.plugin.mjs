@@ -33,8 +33,8 @@ const literalSpecifier = (node) =>
 
 const layerMessageId = {
   application: 'applicationBoundary',
-  'api-feature': 'apiFeatureBoundary',
   domain: 'domainBoundary',
+  'feature-delivery': 'featureDeliveryBoundary',
 };
 
 const enforceLayerImports = {
@@ -64,7 +64,7 @@ const enforceLayerImports = {
       }
     };
 
-    const validateApiFeatureImport = (node, specifier) => {
+    const validateFeatureDeliveryImport = (node, specifier) => {
       if (!specifier) {
         report(node);
         return;
@@ -87,8 +87,8 @@ const enforceLayerImports = {
     const validate = (node, sourceNode) => {
       const specifier = literalSpecifier(sourceNode);
 
-      if (layer === 'api-feature') {
-        validateApiFeatureImport(node, specifier);
+      if (layer === 'feature-delivery') {
+        validateFeatureDeliveryImport(node, specifier);
         return;
       }
 
@@ -132,8 +132,8 @@ const enforceLayerImports = {
     messages: {
       applicationBoundary:
         'Application code may import only its own application and domain layers. Depend on application-owned ports; wire every vendor and infrastructure concern outside the application.',
-      apiFeatureBoundary:
-        'API feature delivery code cannot import a business module infrastructure adapter. Wire adapters only in the API composition root.',
+      featureDeliveryBoundary:
+        'Feature delivery code cannot import a business module infrastructure adapter. Wire adapters only in the process composition root.',
       domainBoundary:
         'Domain code may import only its own domain layer. Move framework, vendor, application, and infrastructure concerns behind an outer-layer port.',
     },
@@ -142,7 +142,7 @@ const enforceLayerImports = {
         additionalProperties: false,
         properties: {
           layer: {
-            enum: ['application', 'api-feature', 'domain'],
+            enum: ['application', 'domain', 'feature-delivery'],
           },
         },
         required: ['layer'],

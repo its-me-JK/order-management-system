@@ -33,7 +33,8 @@ are implemented and integration-tested together:
   credentials;
 - an explicit Identity Unit of Work for login, rotation, reuse revocation,
   logout, and security events;
-- a real Redis runtime and atomic Identity abuse-control adapter;
+- the delivered technical Redis runtime composed with an atomic Identity
+  abuse-control adapter;
 - reviewed trusted-ingress, exact credentialed CORS, cookie, Origin, Fetch
   Metadata, and CSRF behavior;
 - the fixed Bearer `401`, authorization `403`, and Identity-owned cookie clear
@@ -100,6 +101,13 @@ Infrastructure adapters use explicit subpaths such as
 API composition root. Delivery belongs under
 `apps/api/src/features/identity/delivery/http`; reusable Bearer extraction and
 request association belong to the API authentication platform adapter.
+
+The separate `@oms/redis` package now supplies the bounded technical runtime
+described in the [Redis runtime contract](redis-runtime.md). It exposes no raw
+client or generic command surface. A future Identity infrastructure adapter
+may import only its restricted registered-script executor; Identity domain and
+application code remain vendor-free, and no current Identity port is wired to
+that runtime.
 
 The delivered `IdentityAccessAuthorityReader` is a package-internal,
 digest-level persistence port. Its Prisma adapter executes the writer-MySQL
@@ -2924,27 +2932,34 @@ The Identity application now owns the package-internal,
 refresh-specific `IdentitySessionRefreshCredentialAbuseControl` port described
 above. Login will receive a separate narrow facet instead of a generic
 route-discriminated rate-limiter API; one Identity Redis adapter may implement
-both facets. The current contract does not connect to Redis. A future technical
-Redis package owns connection lifecycle, TLS, authentication, timeouts, and
-shutdown; the Identity Redis adapter owns the atomic algorithm and key schema.
-One Lua/function operation refills and conditionally consumes every applicable
-token bucket so concurrent replicas cannot overspend a limit.
+both facets. The current Identity contract does not connect to Redis. The
+delivered technical `@oms/redis` package owns connection lifecycle, TLS,
+authentication, bounded admission/deadlines, safe failures, and shutdown; the
+future Identity Redis adapter owns the atomic algorithm and key schema. The
+technical package's root is lifecycle/probe only. Its restricted
+`@oms/redis/lua-script` subpath accepts registered static definitions with
+exact key/argument counts, not arbitrary commands or dynamic source. One
+future Identity Lua operation refills and conditionally consumes every
+applicable token bucket so concurrent replicas cannot overspend a limit.
 
 The operation obtains `TIME` once from the authoritative Redis server; API
 replica clocks are never inputs. Each bucket stores its last accepted server
 microsecond and clamps a regressed post-failover time to that value. Refill and
 consumption use checked integer fixed-point units with a carried remainder,
 never Lua floating-point comparison, and update all applicable buckets from
-the same instant. A forward clock jump may refill no more than capacity. Script
-cache loss triggers one bounded `EVAL` reload-and-retry only for the explicit
-`NOSCRIPT` response before any script ran; timeout, connection loss, failover,
-or any result whose commit state is unknown is not retried in-request and is
-`503`. Keys share one static Redis Cluster hash tag so the atomic operation
-cannot silently become cross-slot if the runtime topology changes.
+the same instant. A forward clock jump may refill no more than capacity. The
+runtime first uses `EVALSHA`; script-cache loss permits exactly one `EVAL` of
+the same registered source only for Redis's exact canonical cache-miss reply.
+Registered static scripts must never emit that reserved reply themselves; the
+future Identity script returns only its closed result vocabulary. One deadline
+spans both calls. Timeout, connection loss, failover, or any result whose commit
+state is unknown is not retried in-request and is `503`. Keys share one static
+Redis Cluster hash tag so the atomic operation cannot silently become
+cross-slot if the runtime topology changes.
 
 The initial adapter requires Redis 7 or a protocol-compatible managed service
-with effect-replicated scripts, `TIME`, `SCRIPT LOAD`, `EVALSHA`, key expiry,
-and hash-tag semantics enabled. Startup capability checks are read-only and
+with effect-replicated scripts, `TIME`, `EVALSHA`, `EVAL`, key expiry, and
+hash-tag semantics enabled. Startup capability checks are read-only and
 sanitized; an incompatible provider prevents Identity issuance readiness
 rather than selecting a weaker client-side-clock algorithm.
 
@@ -2996,6 +3011,12 @@ identity is `503` with `Retry-After: 5` for login and refresh. A per-process
 Argon2id semaphore caps simultaneous verification according to the configured
 memory budget; the initial default is two with no unbounded wait queue.
 Saturation is `429` with `Retry-After: 1`.
+
+The technical runtime already enforces this no-retry boundary, uses one RESP2
+client with offline queuing and automatic in-operation reconnect disabled, and
+maps dependency failures to one safe unavailable error. That is execution
+infrastructure only: until the Identity script and adapter exist, no abuse
+decision, denial, `Retry-After`, or issuance readiness capability is present.
 
 Redis remains absent from global API readiness because anonymous reads and
 Bearer authority do not require it. Credential-issuance availability and
@@ -3156,8 +3177,9 @@ The implementation increment is incomplete until tests prove:
    offline first-admin and disabled-authenticator rebind commands; prove their
    TTY/file-descriptor, redaction, operator-boundary, atomic revocation, and
    race contracts; create no default or showcase credential.
-5. Add the technical Redis runtime, Identity abuse adapter, Compose/CI Redis,
-   and real-Redis tests.
+5. Deliver the bounded technical Redis runtime and authenticated ephemeral
+   Compose/CI Redis; then add the separate Identity abuse adapter and its
+   algorithm-specific real-Redis tests.
 6. Compose the bounded Identity cleanup worker, metrics, and retention failure
    tests without exposing authentication routes.
 7. Add trusted ingress, exact CORS/CSRF/cookie transport, typed exchange
@@ -3198,8 +3220,10 @@ gate.
 The package-internal refresh abuse-control boundary is also delivered: it owns
 the opaque binary IPv4/IPv6 network grouping, the refresh-specific port, exact
 registered allow/deny decisions, bounded retry delay, and fixed safe failures.
-It deliberately adds no Redis runtime or adapter, performs no decision, and
-does not establish trusted proxy provenance.
+It deliberately performs no Redis operation and adds no Identity adapter or
+trusted proxy provenance. The separate technical `@oms/redis` substrate is now
+delivered, but it is not wired to this boundary and therefore makes no abuse
+decision.
 The guarded production composition now proves atomic failure for each of six
 exact root-installed, fixture-scoped rotation mutation statements, cumulative
 rollback of every earlier successful write, rollback at an invalid post-write
@@ -3634,9 +3658,9 @@ process recycle policy.
 - Make the future refresh orchestrator terminally consume every committed
   rejection or reuse through the non-delivery transition, while sending a
   committed rotation only to the exact-pair delivery gate.
-- Add the technical Redis runtime and refresh adapter behind the delivered
-  abuse-control port. Prove the atomic multi-bucket script, HMAC key schema,
-  authoritative Redis time, `NOSCRIPT`-only recovery, fail-closed ambiguity,
+- Add the refresh adapter behind the delivered abuse-control port and technical
+  Redis runtime. Prove the atomic multi-bucket script, HMAC key schema,
+  authoritative Redis time, `NOSCRIPT`-only fallback, fail-closed ambiguity,
   and real-Redis concurrency before composing one decision ahead of credential
   verification and MySQL. Add trusted proxy-chain resolution separately and
   feed only its fully parsed address bytes into the delivered network factory.

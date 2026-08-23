@@ -61,14 +61,14 @@ const rejectedImports = [
   {
     code: "import { PrismaCatalogReadRepository } from '@oms/catalog/infrastructure/prisma';\nexport const Repository = PrismaCatalogReadRepository;",
     expectedMessage:
-      'API feature delivery code cannot import a business module infrastructure adapter.',
+      'Feature delivery code cannot import a business module infrastructure adapter.',
     filePath: 'apps/api/src/features/catalog/__architecture_probe__/infrastructure.ts',
     name: 'API feature delivery -> business infrastructure',
   },
   {
     code: "export const loadRepository = async () => import('@oms/catalog/infrastructure/prisma');",
     expectedMessage:
-      'API feature delivery code cannot import a business module infrastructure adapter.',
+      'Feature delivery code cannot import a business module infrastructure adapter.',
     filePath: 'apps/api/src/features/catalog/__architecture_probe__/dynamic-infrastructure.ts',
     name: 'API feature delivery -> dynamic business infrastructure import',
   },
@@ -92,6 +92,69 @@ const rejectedImports = [
     name: 'module infrastructure -> direct database driver',
   },
   {
+    code: "import { createClient } from '@redis/client';\nexport const clientFactory = createClient;",
+    expectedMessage: 'The Redis driver and internal runtime are owned by @oms/redis.',
+    filePath: 'packages/modules/identity/src/infrastructure/__architecture_probe__/redis.ts',
+    name: 'module infrastructure -> direct Redis client',
+  },
+  {
+    code: "export type Client = import('@redis/client').RedisClientType;",
+    expectedMessage: 'The Redis driver and internal runtime are owned by @oms/redis.',
+    filePath: 'packages/modules/identity/src/infrastructure/__architecture_probe__/redis-type.ts',
+    name: 'module infrastructure -> direct Redis client import type',
+  },
+  {
+    code: "import RedisClient = require('@redis/client');\nexport type Client = RedisClient.RedisClientType;",
+    expectedMessage: 'The Redis driver and internal runtime are owned by @oms/redis.',
+    filePath:
+      'packages/modules/identity/src/infrastructure/__architecture_probe__/redis-import-equals.ts',
+    name: 'module infrastructure -> direct Redis client import equals',
+  },
+  {
+    code: "import { createRedisRuntimeWithClientFactory } from '../../../../../../redis/dist/redis-runtime';\nexport const runtimeFactory = createRedisRuntimeWithClientFactory;",
+    expectedMessage: 'The Redis driver and internal runtime are owned by @oms/redis.',
+    filePath: 'apps/api/src/composition/__architecture_probe__/redis-dist-internal.ts',
+    name: 'API composition root -> built Redis internals',
+  },
+  {
+    code: "export type Client = import('../../../../../../redis/dist/client/redis-client').ManagedRedisClient;",
+    expectedMessage: 'The Redis driver and internal runtime are owned by @oms/redis.',
+    filePath: 'apps/api/src/composition/__architecture_probe__/redis-dist-type.ts',
+    name: 'API composition root -> built Redis internal import type',
+  },
+  {
+    code: "import { defineRedisLuaScript } from '@oms/redis/lua-script';\nexport const defineScript = defineRedisLuaScript;",
+    expectedMessage: 'Business and delivery code cannot import Redis capabilities.',
+    filePath: 'apps/api/src/features/identity/__architecture_probe__/redis-script.ts',
+    name: 'API feature delivery -> Redis script capability',
+  },
+  {
+    code: "import { createRedisRuntime } from '@oms/redis';\nexport const runtimeFactory = createRedisRuntime;",
+    expectedMessage: 'Business and delivery code cannot import Redis capabilities.',
+    filePath: 'apps/worker/src/features/identity/__architecture_probe__/redis-runtime.ts',
+    name: 'worker feature delivery -> Redis runtime capability',
+  },
+  {
+    code: "import { defineRedisLuaScript } from '@oms/redis/lua-script';\nexport const defineScript = defineRedisLuaScript;",
+    expectedMessage: 'Business and delivery code cannot import Redis capabilities.',
+    filePath: 'apps/worker/src/features/identity/__architecture_probe__/redis-script.ts',
+    name: 'worker feature delivery -> Redis script capability',
+  },
+  {
+    code: "import { PrismaCatalogReadRepository } from '@oms/catalog/infrastructure/prisma';\nexport const Repository = PrismaCatalogReadRepository;",
+    expectedMessage:
+      'Feature delivery code cannot import a business module infrastructure adapter.',
+    filePath: 'apps/worker/src/features/catalog/__architecture_probe__/infrastructure.ts',
+    name: 'worker feature delivery -> business infrastructure',
+  },
+  {
+    code: "import { createRedisRuntime } from '@oms/redis';\nexport const runtimeFactory = createRedisRuntime;",
+    expectedMessage: 'The Redis runtime root is composition-only.',
+    filePath:
+      'packages/modules/identity/src/infrastructure/__architecture_probe__/redis-runtime.ts',
+    name: 'module infrastructure -> Redis runtime root',
+  },
+  {
     code: "import type { CatalogReadRepository } from '@oms/catalog';\nexport type Repository = CatalogReadRepository;",
     expectedMessage: 'Application code may import only its own application and domain layers.',
     filePath: 'packages/modules/catalog/src/application/__architecture_probe__/package-root.ts',
@@ -106,7 +169,7 @@ const rejectedImports = [
   {
     code: "import { PrismaCatalogReadRepository } from '@oms/catalog/src/infrastructure/prisma';\nexport const Repository = PrismaCatalogReadRepository;",
     expectedMessage:
-      'API feature delivery code cannot import a business module infrastructure adapter.',
+      'Feature delivery code cannot import a business module infrastructure adapter.',
     filePath: 'apps/api/src/features/catalog/__architecture_probe__/source-infrastructure.ts',
     name: 'API feature delivery -> source infrastructure alias',
   },
@@ -117,6 +180,26 @@ const allowedImports = [
     code: "import { createPool } from 'mariadb';\nexport const poolFactory = createPool;",
     filePath: 'packages/database/src/__architecture_probe__/mariadb.ts',
     name: 'database package -> owned direct database driver',
+  },
+  {
+    code: "import { createClient } from '@redis/client';\nexport const clientFactory = createClient;",
+    filePath: 'packages/redis/src/__architecture_probe__/client.ts',
+    name: 'Redis package -> owned direct Redis client',
+  },
+  {
+    code: "import type { RedisLuaScript } from '@oms/redis/lua-script';\nexport type Script = RedisLuaScript;",
+    filePath: 'packages/modules/identity/src/infrastructure/__architecture_probe__/redis-script.ts',
+    name: 'module infrastructure -> restricted Redis script capability',
+  },
+  {
+    code: "import { createRedisRuntime } from '@oms/redis';\nexport const runtimeFactory = createRedisRuntime;",
+    filePath: 'apps/api/src/composition/__architecture_probe__/redis-runtime.ts',
+    name: 'API composition root -> Redis runtime root',
+  },
+  {
+    code: "import { createRedisRuntime } from '@oms/redis';\nexport const runtimeFactory = createRedisRuntime;",
+    filePath: 'apps/worker/src/composition/__architecture_probe__/redis-runtime.ts',
+    name: 'worker composition root -> Redis runtime root',
   },
   {
     code: "import type { Product } from './product';\nexport type CatalogProduct = Product;",

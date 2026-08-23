@@ -11,6 +11,12 @@ const databaseClientTokenBoundaryMessage =
   'The concrete database client token is infrastructure-only. Domain, application, and presentation layers must inject application-owned ports.';
 const directDatabaseDriverBoundaryMessage =
   'The MariaDB driver is owned by @oms/database. Other packages must depend on a narrow database capability, never the driver.';
+const directRedisDriverBoundaryMessage =
+  'The Redis driver and internal runtime are owned by @oms/redis. Other packages must use only its supported narrow package surfaces.';
+const redisBusinessBoundaryMessage =
+  'Business and delivery code cannot import Redis capabilities. Depend on an application-owned port and compose its infrastructure adapter outside the feature.';
+const redisRuntimeCompositionBoundaryMessage =
+  'The Redis runtime root is composition-only. Module infrastructure may depend only on the restricted @oms/redis/lua-script capability.';
 
 const directDatabaseDriverImportRestrictions = {
   paths: [
@@ -36,6 +42,178 @@ const directDatabaseDriverDynamicImportRestrictions = [
     message: directDatabaseDriverBoundaryMessage,
     selector:
       "CallExpression[callee.name='require'] > Literal.arguments[value=/^mariadb(?:\\/|$)/]",
+  },
+];
+
+const directRedisDriverImportRestrictions = {
+  paths: [
+    {
+      message: directRedisDriverBoundaryMessage,
+      name: '@redis/client',
+    },
+  ],
+  patterns: [
+    {
+      group: [
+        '@redis/client/*',
+        '@redis/client/*/**',
+        '**/redis/src',
+        '**/redis/src/**',
+        '**/redis/dist',
+        '**/redis/dist/**',
+      ],
+      message: directRedisDriverBoundaryMessage,
+    },
+  ],
+};
+
+const directRedisDriverDynamicImportRestrictions = [
+  {
+    message: directRedisDriverBoundaryMessage,
+    selector: 'ImportExpression[source.value=/^@redis\\/client(?:\\/|$)/]',
+  },
+  {
+    message: directRedisDriverBoundaryMessage,
+    selector:
+      "CallExpression[callee.name='require'] > Literal.arguments[value=/^@redis\\/client(?:\\/|$)/]",
+  },
+  {
+    message: directRedisDriverBoundaryMessage,
+    selector: 'ImportExpression[source.value=/(?:^|\\/)redis\\/(?:src|dist)(?:\\/|$)/]',
+  },
+  {
+    message: directRedisDriverBoundaryMessage,
+    selector:
+      "CallExpression[callee.name='require'] > Literal.arguments[value=/(?:^|\\/)redis\\/(?:src|dist)(?:\\/|$)/]",
+  },
+  {
+    message: directRedisDriverBoundaryMessage,
+    selector: 'TSImportType[source.value=/^@redis\\/client(?:\\/|$)/]',
+  },
+  {
+    message: directRedisDriverBoundaryMessage,
+    selector: 'TSImportType[source.value=/(?:^|\\/)redis\\/(?:src|dist)(?:\\/|$)/]',
+  },
+  {
+    message: directRedisDriverBoundaryMessage,
+    selector:
+      'TSImportEqualsDeclaration > TSExternalModuleReference > Literal[value=/^@redis\\/client(?:\\/|$)|(?:^|\\/)redis\\/(?:src|dist)(?:\\/|$)/]',
+  },
+];
+
+const redisBusinessImportRestrictions = {
+  paths: [
+    {
+      message: redisBusinessBoundaryMessage,
+      name: '@oms/redis',
+    },
+    {
+      message: redisBusinessBoundaryMessage,
+      name: '@oms/redis/lua-script',
+    },
+  ],
+  patterns: [
+    {
+      group: [
+        '@oms/redis/*',
+        '@oms/redis/*/**',
+        '**/redis/src',
+        '**/redis/src/**',
+        '**/redis/dist',
+        '**/redis/dist/**',
+      ],
+      message: redisBusinessBoundaryMessage,
+    },
+  ],
+};
+
+const redisBusinessDynamicImportRestrictions = [
+  {
+    message: redisBusinessBoundaryMessage,
+    selector: 'ImportExpression[source.value=/^@oms\\/redis(?:\\/|$)/]',
+  },
+  {
+    message: redisBusinessBoundaryMessage,
+    selector: 'ImportExpression[source.value=/(?:^|\\/)redis\\/(?:src|dist)(?:\\/|$)/]',
+  },
+  {
+    message: redisBusinessBoundaryMessage,
+    selector:
+      "CallExpression[callee.name='require'] > Literal.arguments[value=/^@oms\\/redis(?:\\/|$)/]",
+  },
+  {
+    message: redisBusinessBoundaryMessage,
+    selector:
+      "CallExpression[callee.name='require'] > Literal.arguments[value=/(?:^|\\/)redis\\/(?:src|dist)(?:\\/|$)/]",
+  },
+  {
+    message: redisBusinessBoundaryMessage,
+    selector: 'TSImportType[source.value=/^@oms\\/redis(?:\\/|$)/]',
+  },
+  {
+    message: redisBusinessBoundaryMessage,
+    selector:
+      'TSImportEqualsDeclaration > TSExternalModuleReference > Literal[value=/^@oms\\/redis(?:\\/|$)/]',
+  },
+];
+
+const redisRuntimeCompositionImportRestrictions = {
+  paths: [
+    {
+      message: redisRuntimeCompositionBoundaryMessage,
+      name: '@oms/redis',
+    },
+  ],
+  patterns: [
+    {
+      group: [
+        '@oms/redis/src',
+        '@oms/redis/src/**',
+        '**/redis/src',
+        '**/redis/src/**',
+        '**/redis/dist',
+        '**/redis/dist/**',
+      ],
+      message: redisRuntimeCompositionBoundaryMessage,
+    },
+  ],
+};
+
+const redisRuntimeCompositionDynamicImportRestrictions = [
+  {
+    message: redisRuntimeCompositionBoundaryMessage,
+    selector: 'ImportExpression[source.value=/^@oms\\/redis$/]',
+  },
+  {
+    message: redisRuntimeCompositionBoundaryMessage,
+    selector: 'ImportExpression[source.value=/^@oms\\/redis\\/(?:src|dist)(?:\\/|$)/]',
+  },
+  {
+    message: redisRuntimeCompositionBoundaryMessage,
+    selector: 'ImportExpression[source.value=/(?:^|\\/)redis\\/(?:src|dist)(?:\\/|$)/]',
+  },
+  {
+    message: redisRuntimeCompositionBoundaryMessage,
+    selector: "CallExpression[callee.name='require'] > Literal.arguments[value=/^@oms\\/redis$/]",
+  },
+  {
+    message: redisRuntimeCompositionBoundaryMessage,
+    selector:
+      "CallExpression[callee.name='require'] > Literal.arguments[value=/^@oms\\/redis\\/(?:src|dist)(?:\\/|$)/]",
+  },
+  {
+    message: redisRuntimeCompositionBoundaryMessage,
+    selector:
+      "CallExpression[callee.name='require'] > Literal.arguments[value=/(?:^|\\/)redis\\/(?:src|dist)(?:\\/|$)/]",
+  },
+  {
+    message: redisRuntimeCompositionBoundaryMessage,
+    selector: 'TSImportType[source.value=/^@oms\\/redis$|(?:^|\\/)redis\\/(?:src|dist)(?:\\/|$)/]',
+  },
+  {
+    message: redisRuntimeCompositionBoundaryMessage,
+    selector:
+      'TSImportEqualsDeclaration > TSExternalModuleReference > Literal[value=/^@oms\\/redis$|(?:^|\\/)redis\\/(?:src|dist)(?:\\/|$)/]',
   },
 ];
 
@@ -143,6 +321,8 @@ const prismaInfrastructureFiles = [
   'apps/worker/src/platform/database/**/*.ts',
 ];
 
+const redisOwnerFiles = ['packages/redis/src/**/*.ts', 'packages/redis/test/**/*.ts'];
+
 export default tseslint.config(
   {
     ignores: [
@@ -197,7 +377,40 @@ export default tseslint.config(
   },
   {
     files: ['**/*.ts'],
-    ignores: prismaInfrastructureFiles,
+    ignores: [...prismaInfrastructureFiles, ...redisOwnerFiles],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...prismaImportRestrictions.paths,
+            ...directDatabaseDriverImportRestrictions.paths,
+            ...directRedisDriverImportRestrictions.paths,
+          ],
+          patterns: [
+            ...prismaImportRestrictions.patterns,
+            ...directDatabaseDriverImportRestrictions.patterns,
+            ...directRedisDriverImportRestrictions.patterns,
+          ],
+        },
+      ],
+      'no-restricted-syntax': [
+        'error',
+        ...prismaDynamicImportRestrictions,
+        ...directDatabaseDriverDynamicImportRestrictions,
+        ...directRedisDriverDynamicImportRestrictions,
+      ],
+    },
+  },
+  {
+    files: ['packages/database/**/*.ts'],
+    rules: {
+      'no-restricted-imports': ['error', directRedisDriverImportRestrictions],
+      'no-restricted-syntax': ['error', ...directRedisDriverDynamicImportRestrictions],
+    },
+  },
+  {
+    files: redisOwnerFiles,
     rules: {
       'no-restricted-imports': [
         'error',
@@ -229,13 +442,36 @@ export default tseslint.config(
       'apps/worker/src/platform/database/**/*.ts',
     ],
     rules: {
-      'no-restricted-imports': ['error', directDatabaseDriverImportRestrictions],
-      'no-restricted-syntax': ['error', ...directDatabaseDriverDynamicImportRestrictions],
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...directDatabaseDriverImportRestrictions.paths,
+            ...directRedisDriverImportRestrictions.paths,
+          ],
+          patterns: [
+            ...directDatabaseDriverImportRestrictions.patterns,
+            ...directRedisDriverImportRestrictions.patterns,
+          ],
+        },
+      ],
+      'no-restricted-syntax': [
+        'error',
+        ...directDatabaseDriverDynamicImportRestrictions,
+        ...directRedisDriverDynamicImportRestrictions,
+      ],
     },
   },
   {
-    files: ['packages/modules/**/*.ts', 'apps/api/src/features/**/*.ts'],
-    ignores: ['packages/modules/**/infrastructure/**/*.ts'],
+    files: [
+      'packages/modules/**/*.ts',
+      'apps/api/src/features/**/*.ts',
+      'apps/worker/src/features/**/*.ts',
+    ],
+    ignores: [
+      'packages/modules/**/infrastructure/**/*.ts',
+      'packages/modules/**/test/infrastructure/**/*.ts',
+    ],
     rules: {
       'no-restricted-imports': [
         'error',
@@ -244,13 +480,24 @@ export default tseslint.config(
             ...businessLoggingRestrictions.paths,
             ...prismaImportRestrictions.paths,
             ...directDatabaseDriverImportRestrictions.paths,
+            ...directRedisDriverImportRestrictions.paths,
+            ...redisBusinessImportRestrictions.paths,
           ],
           patterns: [
             ...businessLoggingRestrictions.patterns,
             ...prismaImportRestrictions.patterns,
             ...directDatabaseDriverImportRestrictions.patterns,
+            ...directRedisDriverImportRestrictions.patterns,
+            ...redisBusinessImportRestrictions.patterns,
           ],
         },
+      ],
+      'no-restricted-syntax': [
+        'error',
+        ...prismaDynamicImportRestrictions,
+        ...directDatabaseDriverDynamicImportRestrictions,
+        ...directRedisDriverDynamicImportRestrictions,
+        ...redisBusinessDynamicImportRestrictions,
       ],
       'no-console': 'error',
     },
@@ -264,14 +511,23 @@ export default tseslint.config(
           paths: [
             ...businessLoggingRestrictions.paths,
             ...directDatabaseDriverImportRestrictions.paths,
+            ...directRedisDriverImportRestrictions.paths,
+            ...redisRuntimeCompositionImportRestrictions.paths,
           ],
           patterns: [
             ...businessLoggingRestrictions.patterns,
             ...directDatabaseDriverImportRestrictions.patterns,
+            ...directRedisDriverImportRestrictions.patterns,
+            ...redisRuntimeCompositionImportRestrictions.patterns,
           ],
         },
       ],
-      'no-restricted-syntax': ['error', ...directDatabaseDriverDynamicImportRestrictions],
+      'no-restricted-syntax': [
+        'error',
+        ...directDatabaseDriverDynamicImportRestrictions,
+        ...directRedisDriverDynamicImportRestrictions,
+        ...redisRuntimeCompositionDynamicImportRestrictions,
+      ],
       'no-console': 'error',
     },
   },
@@ -288,9 +544,9 @@ export default tseslint.config(
     },
   },
   {
-    files: ['apps/api/src/features/**/*.ts'],
+    files: ['apps/api/src/features/**/*.ts', 'apps/worker/src/features/**/*.ts'],
     rules: {
-      'oms-architecture/enforce-layer-imports': ['error', { layer: 'api-feature' }],
+      'oms-architecture/enforce-layer-imports': ['error', { layer: 'feature-delivery' }],
     },
   },
   prettier,

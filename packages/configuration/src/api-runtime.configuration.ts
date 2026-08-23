@@ -62,6 +62,17 @@ export function parseApiRuntimeConfiguration(
 
   const deploymentEnvironment =
     result.data.DEPLOYMENT_ENVIRONMENT ?? (result.data.NODE_ENV === 'test' ? 'test' : 'local');
+
+  const deploymentMatchesRuntime =
+    (result.data.NODE_ENV === 'development' && deploymentEnvironment === 'local') ||
+    (result.data.NODE_ENV === 'test' && deploymentEnvironment === 'test') ||
+    (result.data.NODE_ENV === 'production' &&
+      ['showcase', 'staging', 'production'].includes(deploymentEnvironment));
+
+  if (!deploymentMatchesRuntime) {
+    throw new InvalidConfigurationError(['DEPLOYMENT_ENVIRONMENT']);
+  }
+
   const logLevel =
     result.data.LOG_LEVEL ??
     (result.data.NODE_ENV === 'production'

@@ -31,11 +31,55 @@ services:
       start_period: 30s
     stop_grace_period: 30s
 
+  redis:
+    image: redis:7.2.16-alpine3.21@sha256:ccd6aa8d45ff3f033d6fa15b8cc1a50579f65c89f38cf9bb607a954c4f2128ed
+    entrypoint:
+      - /bin/sh
+      - /usr/local/bin/oms-redis-entrypoint.sh
+    ports:
+      - 127.0.0.1:${REDIS_PORT:-6379}:6379
+    volumes:
+      - ./infrastructure/compose/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ./infrastructure/compose/redis/entrypoint.sh:/usr/local/bin/oms-redis-entrypoint.sh:ro
+    secrets:
+      - source: redis_password
+        target: redis_password
+    read_only: true
+    tmpfs:
+      - /data:rw,noexec,nosuid,nodev,size=16m,mode=0700,uid=999,gid=1000
+      - /tmp:rw,noexec,nosuid,nodev,size=1m,mode=0700,uid=999,gid=1000
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    pids_limit: 64
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          exec setpriv --reuid redis --regid redis --clear-groups
+          sh -ec 'test "$$(id -u):$$(id -g)" = "999:1000";
+          redis-cli --raw ping 2>&1
+          | grep -qx "NOAUTH Authentication required."'
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    stop_grace_period: 10s
+
 secrets:
   mysql_app_password:
     file: ${COMPOSE_MYSQL_APP_PASSWORD_FILE:-./.local/secrets/mysql-app-password}
   mysql_root_password:
     file: ${MYSQL_ROOT_PASSWORD_FILE:-./.local/secrets/mysql-root-password}
+  redis_password:
+    file: ${COMPOSE_REDIS_PASSWORD_FILE:-./.local/secrets/redis-app-password}
 
 volumes:
   mysql_data:

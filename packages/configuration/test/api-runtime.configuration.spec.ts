@@ -106,6 +106,27 @@ describe('parseApiRuntimeConfiguration', (): void => {
     );
   });
 
+  it.each([
+    ['development', 'test'],
+    ['development', 'showcase'],
+    ['development', 'staging'],
+    ['development', 'production'],
+    ['test', 'local'],
+    ['test', 'showcase'],
+    ['production', 'local'],
+    ['production', 'test'],
+  ] as const)(
+    'rejects deployment %s runtime labelled as %s',
+    (runtimeEnvironment, deploymentEnvironment): void => {
+      expect(() =>
+        parseApiRuntimeConfiguration({
+          DEPLOYMENT_ENVIRONMENT: deploymentEnvironment,
+          NODE_ENV: runtimeEnvironment,
+        }),
+      ).toThrow(new InvalidConfigurationError(['DEPLOYMENT_ENVIRONMENT']));
+    },
+  );
+
   it.each(['verbose', 'INFO', ''])('rejects an unsupported log level: %s', (level): void => {
     expect(() => parseApiRuntimeConfiguration({ LOG_LEVEL: level })).toThrow(
       new InvalidConfigurationError(['LOG_LEVEL']),

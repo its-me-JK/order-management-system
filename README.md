@@ -202,8 +202,20 @@ native IPv6 is grouped by `/64`, and IPv4-mapped IPv6 shares the IPv4 namespace.
 The capability shell is redacting; its extracted version/family-tagged
 key-material copies are visible but isolated. Exact registered results expose
 only `allowed` or `denied` with a bounded 1-through-180-second retry. This slice
-establishes no proxy trust by itself and adds no Redis runtime, adapter, route,
-or public export; those remain later composition work.
+establishes no proxy trust by itself and adds no Identity Redis adapter, route,
+or public export; those remain later composition work. The separate
+framework-independent `@oms/redis` technical substrate now owns the exact
+official client dependency, one bounded RESP2 client, authentication and TLS,
+bounded queue/deadline behavior, probe and shutdown lifecycle, and fixed safe
+failures. Its package root exposes lifecycle/probe only; its restricted
+registered-script subpath uses `EVALSHA` followed by exactly one `EVAL` only
+for Redis's exact canonical script-cache-miss reply. Registered scripts are
+reviewed static code and must never emit that reserved error themselves. It
+disables offline queuing, automatic in-operation reconnect, and ambiguous
+retries. Authenticated ephemeral Redis 7.2.16 now runs in local Compose and CI
+with a least-privilege user, persistence disabled, 64 MiB `noeviction`, and
+loopback-only publication. This technical capability is not composed into
+Identity, the API, or the worker and makes no abuse decision.
 Identity now also owns the refresh-specific pre-transaction identifier bundle:
 one separately branded successor-refresh ID, issued-access ID, and security-event
 ID. The restricted Node identifiers subpath exposes only a zero-argument
@@ -227,7 +239,7 @@ those namespaces can emit bound digest arguments. That configuration gate is
 not implemented yet, so public credential ingress remains blocked. Pricing,
 inventory, Redis caching, and integration events remain separate later slices.
 
-**Overall project progress: 39%.** The fixed, deployment-inclusive scoring
+**Overall project progress: 40%.** The fixed, deployment-inclusive scoring
 model and evidence are maintained in [Project progress](docs/progress.md).
 
 ## Planned technology
@@ -280,6 +292,9 @@ The [Identity and session contract](docs/architecture/identity-and-session.md)
 defines account and session boundaries, opaque credential transport, database
 authority, Redis abuse controls, CSRF/CORS policy, and the gated authentication
 HTTP surface.
+The [Redis runtime contract](docs/architecture/redis-runtime.md) defines
+technical client ownership, registered script execution, bounded failure and
+shutdown semantics, and the authenticated local/CI topology.
 The [public Catalog read contract](docs/architecture/catalog-public-reads.md)
 defines application query boundaries, pagination, visibility, and the
 anonymous HTTP representation.
@@ -354,7 +369,7 @@ for this public repository. A no-card public showcase environment is approved
 but will not be provisioned until it has a meaningful, secure vertical slice.
 The AWS topology remains a future design, not a running environment.
 
-Create local-only password files and start MySQL:
+Create local-only password files and start MySQL and Redis:
 
 ```bash
 test -f .env || cp .env.example .env
@@ -362,15 +377,17 @@ mkdir -p .local/secrets
 umask 077
 openssl rand -hex 32 > .local/secrets/mysql-app-password
 openssl rand -hex 32 > .local/secrets/mysql-root-password
+openssl rand -hex 32 > .local/secrets/redis-app-password
 docker compose config --quiet
 pnpm infra:up
 pnpm infra:status
 ```
 
-MySQL listens only on `127.0.0.1:3306`. If that port is occupied, change
-`DATABASE_PORT` in `.env`. Local passwords and `.env` are ignored by Git.
+MySQL listens only on `127.0.0.1:3306`, and Redis listens only on
+`127.0.0.1:6379`. If either port is occupied, change `DATABASE_PORT` or
+`REDIS_PORT` in `.env`. Local passwords and `.env` are ignored by Git.
 
-Stop MySQL without deleting its data:
+Stop local dependencies without deleting MySQL data:
 
 ```bash
 pnpm infra:down
@@ -400,6 +417,7 @@ pnpm test:integration:identity-authority
 pnpm test:integration:identity-refresh-discovery
 pnpm test:integration:identity-refresh-locked-loader
 pnpm test:integration:catalog
+pnpm test:integration:redis
 ```
 
 The database package owns Prisma generation and one ordered forward-only
@@ -515,14 +533,24 @@ connection or settlement handle; it uses opaque static statements,
 server-prepared values, one monotonic absolute deadline, exact commit/rollback
 classification, and no automatic retry. Application and domain layers cannot
 import this subpath.
-Production and showcase configuration requires `DATABASE_TLS_MODE` to be
-`verify-identity`. The only supported TLS behavior verifies the server
+Showcase, staging, and production configuration requires
+`DATABASE_TLS_MODE` to be `verify-identity`. The only supported TLS behavior
+verifies the server
 certificate and hostname; there is no certificate-bypass option. The ownership
 and settlement rationale is recorded in
 [ADR-0018](docs/adr/0018-own-security-critical-mysql-connections.md) and
 [ADR-0019](docs/adr/0019-seal-exact-connection-mysql-transaction-programs.md),
 with causal writer-time placement refined by
 [ADR-0020](docs/adr/0020-bind-transaction-clocks-at-causal-boundaries.md).
+
+Runtime Redis settings use the `REDIS_*` namespace documented in
+`.env.example`. A runtime receives exactly one password value or password-file
+source; credentials are never embedded in a Redis URL. Showcase, staging, and
+production configuration requires verified TLS. The API and worker do not yet
+construct this runtime, so the local service and real-Redis gate prove only the
+technical substrate. Its ownership, canonical cache-miss fallback, and
+ambiguity rules are defined in the
+[Redis runtime contract](docs/architecture/redis-runtime.md).
 
 Create a migration only after adding and reviewing a module-owned schema
 change:
@@ -546,10 +574,11 @@ The API listens on port `3000` by default. Set `PORT` to a canonical integer
 from `1` through `65535` to override it. `NODE_ENV` accepts `development`,
 `test`, or `production` and defaults to `development`. `LOG_LEVEL` accepts
 `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`; its default is
-runtime-aware. A production runtime must explicitly label
-`DEPLOYMENT_ENVIRONMENT` as `local`, `test`, `showcase`, `staging`, or
-`production`. Invalid runtime configuration stops bootstrap before the API
-binds a socket and produces only a sanitized structured fatal record.
+runtime-aware. `DEPLOYMENT_ENVIRONMENT` must match the process class:
+`development` uses `local`, `test` uses `test`, and `production` explicitly
+uses `showcase`, `staging`, or `production`. Invalid runtime configuration
+stops bootstrap before the API binds a socket and produces only a sanitized
+structured fatal record.
 
 The API exposes operational endpoints independently of the versioned business
 API:
@@ -650,6 +679,7 @@ Useful repository commands:
 | `pnpm test:integration:identity-refresh-discovery` | Verify lifecycle-blind refresh-digest discovery and its production Prisma query in an isolated local MySQL database |
 | `pnpm test:integration:identity-refresh-locked-loader` | Verify the Prisma reference lock contract and production direct refresh transaction composition, including exact-connection locking, commit-gated completion, mutation-statement atomicity, cumulative rollback, lossless rehydration, and causal Account contention, in an isolated local MySQL database |
 | `pnpm test:integration:identity-refresh-lineage` | Verify the Identity lineage migration, invariants, and Prisma drift against isolated real MySQL databases |
+| `pnpm test:integration:redis` | Verify the bounded runtime, authenticated script execution, and atomic behavior against real Redis |
 | `pnpm format:check` | Verify formatting without modifying files |
 | `pnpm check` | Run every required quality gate in CI order |
 | `pnpm db:generate` | Generate the pinned Prisma client locally |

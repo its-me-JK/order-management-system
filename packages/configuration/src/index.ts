@@ -17,3 +17,14 @@ export {
   type ResolvedDatabaseRuntimeConfiguration,
   type ResolvedDatabaseTlsConfiguration,
 } from './database-runtime.configuration';
+export {
+  parseRedisRuntimeConfiguration,
+  resolveRedisRuntimeConfiguration,
+  type RedisCertificateAuthoritySource,
+  type RedisPasswordSource,
+  type RedisRuntimeConfiguration,
+  type RedisSecretResolutionOptions,
+  type RedisTlsConfiguration,
+  type ResolvedRedisRuntimeConfiguration,
+  type ResolvedRedisTlsConfiguration,
+} from './redis-runtime.configuration';

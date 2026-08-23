@@ -1,0 +1,28 @@
+{
+  "name": "@oms/redis",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "license": "MIT",
+  "sideEffects": false,
+  "main": "dist/index.js",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./lua-script": {
+      "types": "./src/lua-script.ts",
+      "default": "./dist/lua-script.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json",
+    "test:integration": "pnpm run build && tsc --project tsconfig.integration.json && node --env-file-if-exists=../../.env --test --test-concurrency=1 .integration-dist/test/redis-runtime.integration-test.js",
+    "typecheck": "tsc --noEmit --project tsconfig.json"
+  },
+  "dependencies": {
+    "@redis/client": "6.2.1"
+  }
+}
