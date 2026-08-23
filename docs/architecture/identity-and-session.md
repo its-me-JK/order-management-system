@@ -954,12 +954,144 @@ Access credentials have exact wire form
 `oms_rt_v1_<43-base64url-characters>`. The payload is 32 bytes from the
 operating-system CSPRNG, encoded as unpadded Base64url. Each serialized value
 therefore has 256 random bits and 53 ASCII characters. Parsers reject every
-other prefix, version, alphabet, padding, or length before a lookup.
+other prefix, version, alphabet, padding, or length before a lookup. Because
+32 bytes leave two unused bits in the final Base64url sextet, the forty-third
+payload character must be exactly one of `AEIMQUYcgkosw048`; accepting another
+alphabet character would accept a non-canonical spelling of the same bytes.
 
 SHA-256 of the complete ASCII wire value is stored as `BINARY(32)`. SHA-256 is
 appropriate here because the input is a high-entropy machine secret; it is not
 appropriate for passwords. Access and refresh credentials have separate
 tables and accepted prefixes, preventing cross-use.
+
+### Opaque session-credential application boundary
+
+The application owns four separate nominal values: access wire, refresh wire,
+access digest, and refresh digest. Each has a distinct package-internal runtime
+wrapper authenticated by a type-specific `WeakMap`. The wrapper is frozen,
+has no secret-bearing own property, and returns `[REDACTED]` from JSON, string,
+and primitive coercion. Parsing an authentic same-kind wrapper is idempotent;
+cross-kind wrappers, forged prototypes, proxies, structured clones, boxed
+strings, and raw values of another type are rejected. TypeScript brands reduce
+accidental interchange but the `WeakMap` identity, not `instanceof` or a cast,
+is the runtime trust check.
+
+Wire parsing is exact and non-coercing. It checks the 53-character bound before
+the exact prefix, the Base64url alphabet, and the canonical final sextet. It
+does not trim, normalize, percent-decode, or permissively decode and repair an
+input. The all-zero payload remains a syntactically valid value: parsing proves
+canonical representation, while the cryptographic generator is responsible
+for requesting independent bytes from the approved operating-system CSPRNG and
+never falling back to another source; software tests cannot prove entropy.
+Only deliberately named package-internal serializers expose the complete wire
+string. JavaScript strings cannot be zeroized, so rollback means dropping every
+reference promptly rather than claiming memory erasure.
+
+Digest wrappers accept exactly a 32-byte `Uint8Array` view backed by an ordinary
+fixed `ArrayBuffer`; a 32-byte Node `Buffer` view is compatible only when its
+backing store meets that same rule. Arrays, text encodings, other typed views,
+detached or resizable buffers, `SharedArrayBuffer`, and buffers backed by either
+excluded buffer kind are rejected. Construction copies the bytes into private
+storage. The only byte extractors return a fresh ordinary `Uint8Array`, so
+caller mutation cannot alter the stored digest. This representation maps
+directly to MySQL `BINARY(32)` and avoids making a mutable byte view or a
+log-friendly hex string part of the application contract.
+
+Digest validation first returns an authentic same-kind wrapper, then requires
+a genuine `Uint8Array` or compatible Buffer view, an ordinary fixed,
+non-shared, non-resizable backing store, and an exact 32-byte view. It takes the
+defensive copy, verifies that the result is still an ordinary 32-byte
+`Uint8Array`, stores it, and freezes the wrapper, in that order. Any exception,
+detachment, resize, incompatible view, copy anomaly, or cross-kind value
+collapses to the invoked access- or refresh-digest error.
+
+Generation returns one recursively frozen exact pair:
+
+```text
+{
+  access:  { wireValue: AccessWire,  digest: AccessDigest  },
+  refresh: { wireValue: RefreshWire, digest: RefreshDigest }
+}
+```
+
+The candidate factory accepts only authentic same-kind wrappers, copies the
+two nested records, and rejects missing or additional members. It also rejects
+equal 43-character access and refresh payloads: reusing entropy would let a
+leaked access value reveal the refresh value by prefix substitution. Equal
+access and refresh digest bytes likewise indicate a broken provider or an
+astronomically unlikely collision and fail closed. The factory cannot prove
+that each digest is SHA-256 of its corresponding wire value without owning
+cryptography; that relationship is a crypto-port guarantee proven with
+concrete-adapter vectors.
+
+The five fixed validation errors are
+`InvalidIdentityAccessCredentialWireValueError`,
+`InvalidIdentityRefreshCredentialWireValueError`,
+`InvalidIdentityAccessCredentialDigestError`,
+`InvalidIdentityRefreshCredentialDigestError`, and
+`InvalidIdentitySessionCredentialCandidatesError`. Each wire or digest
+operation owns its target-kind error, including cross-kind, forged, proxied,
+cloned, and otherwise invalid input. Candidate validation checks the exact
+outer pair, exact access record, exact refresh record, authentic access wire,
+authentic access digest, authentic refresh wire, authentic refresh digest,
+distinct payloads, then distinct digests, in that order. Every failure in that
+sequence collapses to the one candidate-pair error rather than leaking which
+secret-bearing member failed.
+
+The application-owned `IdentitySessionCredentialCrypto` port has exactly three
+asynchronous operations:
+
+```text
+generateSessionCredentialCandidates() -> complete access/refresh pair
+digestAccessCredential(validated access wire) -> access digest
+digestRefreshCredential(validated refresh wire) -> refresh digest
+```
+
+Pair-shaped generation reflects the domain invariant that login and successful
+refresh issue both credentials. Separate generation calls could partially
+return a candidate attempt or accidentally couple a raw value to the wrong
+digest; only the Unit of Work, not this port, makes durable issuance atomic.
+Each payload is an independent 32-byte operating-system CSPRNG draw; SHA-256
+covers all 53 ASCII bytes including the kind/version prefix. Entropy size,
+prefix, version, and digest algorithm are policy, not configuration. The port
+exposes no generic random-byte, hash, standalone-access, or standalone-refresh
+method, and promises no partial candidate result or fallback randomness after
+a provider error. Promises leave room for a future managed cryptographic
+provider without making the application depend on Node crypto.
+
+Generated raw wrappers stay in the outer application orchestration, which
+closes over them while invoking the future generic Unit of Work. Only a family
+creation or `rotated` scoped writer receives both applicable digests alongside
+the complete domain result; it derives record IDs from that result and receives
+no duplicate caller-supplied IDs, candidate pair, or raw wire value. A
+`reuse-detected` writer receives no candidate digest, and `rejected` invokes no
+writer. The transaction callback returns only non-secret issuance evidence.
+Only resolution of the Unit of Work after confirmed `COMMIT` permits a later
+Identity delivery capability to serialize the access value and set the refresh
+cookie. The callback cannot mark candidates committed or release them itself.
+
+A rejected transition, replay closure, known rollback, or definite credential
+collision discards the entire pair. Neither the Unit of Work nor infrastructure
+automatically retries. After a proven rollback, outer application orchestration
+may later be designed to discard every candidate credential and ID, generate
+fresh material, and start at most one new transaction. Deadlocks and
+conditional-write conflicts are not credential collisions and do not inherit
+that policy; refresh is replay-sensitive. An indeterminate commit is never
+retried and never reveals either value because the database may already
+contain that generation.
+
+All malformed wire, digest, or candidate inputs collapse to their fixed,
+cause-free target-kind or pair validation error listed above. Provider failure
+collapses to the fixed, cause-free
+`IdentitySessionCredentialCryptoUnavailableError`; a nested provider exception
+is not retained at this secret boundary. Metrics use a closed failure code,
+never an exception or credential fragment. No parser, serializer, wrapper,
+candidate, digest, error, or crypto port is added to the package root in this
+increment. They remain internal until a reviewed login/refresh use case and
+delivery result create a real consumer. That later delivery boundary may add a
+restricted `@oms/identity/delivery/session-credentials` subpath with only
+access-for-HTTP and refresh-for-cookie reveal functions; it will export no
+parser, constructor, candidate factory, or generic reveal capability.
 
 The transport bounds the submitted password to 256 Unicode code points and
 1,024 UTF-8 bytes before normalization, rejecting invalid Unicode without
@@ -1628,8 +1760,9 @@ The implementation increment is incomplete until tests prove:
 1. Accept this contract and ADR-0017 without runtime code.
 2. Scaffold `@oms/identity`; deliver Account values and lifecycle first, then
    PasswordAuthenticator, Role, SessionFamily with RefreshCredential and
-   AccessCredential issuance, the authenticated-principal contract,
-   application ports, outcomes, and tests in bounded commits; expose no route.
+   AccessCredential issuance, the authenticated-principal contract, opaque
+   session-credential values and paired crypto port, remaining application
+   ports, outcomes, and tests in bounded commits; expose no route.
 3. Add the Identity Prisma fragment, forward migration, Unit of Work,
    repositories, authority read model, bounded cleanup use case, and
    real-MySQL tests.
@@ -1659,6 +1792,10 @@ authentication surface becomes public.
   signing-key and claim-version operations in one deployable API.
 - Strict rotation detects replay while keeping raw refresh values
   unrecoverable from the database.
+- Pair-shaped opaque credential generation makes incomplete candidate
+  construction and access/refresh substitution explicit application-boundary
+  failures while keeping Node crypto out of policy code. The Unit of Work
+  separately makes durable issuance atomic.
 - An application-owned Unit of Work keeps security policy out of generic
   repositories and makes atomic event/state invariants testable.
 - Redis contains attack cost across replicas without becoming session state or
@@ -1680,6 +1817,14 @@ authentication surface becomes public.
   permission changes stale unless another version/cache check is added.
 - Returning refresh credentials in JSON makes CLI use easier but exposes the
   long-lived secret to browser JavaScript and accidental client persistence.
+- Separate access and refresh generators are superficially reusable, but permit
+  incomplete candidate attempts and caller-side raw/digest mismatches. A
+  pair-only port is narrower and means failure discards one complete candidate
+  attempt; it does not replace transactional write atomicity.
+- Lowercase digest hex would be immutable and easy to inspect, but doubles the
+  in-memory/persistence-bound representation and is dangerously convenient to
+  log. Copied opaque bytes map directly to `BINARY(32)` at the cost of explicit
+  copy helpers and stricter typed-array validation.
 - A refresh replay grace period improves concurrency UX but weakens theft
   detection or requires recoverable successor storage.
 - Fail-closed Redis protects credential issuance but deliberately reduces auth
@@ -1786,6 +1931,21 @@ authentication surface becomes public.
     state or depend on Identity aggregates. The package-internal factory
     validates authoritative data, while the type-only root export keeps the
     runtime construction boundary inside Identity.
+23. **Why generate access and refresh credentials as one pair?** Every login and
+    successful refresh persists and returns one generation containing both.
+    Separate generator calls permit incomplete output, entropy reuse, or
+    coupling one value to another value's digest. A pair makes complete
+    candidate construction the port contract; the Unit of Work still owns
+    all-or-nothing durable issuance.
+24. **Why are there 16 valid final characters in a 43-character Base64url
+    payload?** Thirty-two bytes contain 256 bits. Forty-three sextets provide
+    258 positions, so only the final two bits are unused and the last alphabet
+    index must be divisible by four. Requiring four zero bits would reject
+    twelve valid canonical encodings.
+25. **Why wrap a token digest if it is not itself a bearer credential?** Digests
+    are namespace-sensitive authentication material and should not drift into
+    logs, JSON, or the wrong persistence table. Separate opaque wrappers also
+    force copied byte ownership and make cross-kind mistakes fail at runtime.
 
 ## Future improvements
 
@@ -1806,6 +1966,10 @@ authentication surface becomes public.
   export.
 - Revisit signed, audience-bound access credentials or an Identity network
   service only when an extracted service needs independent validation.
+- Add the Node cryptographic adapter with deterministic SHA-256 vectors,
+  provider-failure injection, entropy-source assertions, and no-partial-pair
+  tests before composing a login or refresh use case; later evaluate an HSM or
+  managed provider without changing the application port.
 - Add risk signals only after privacy, false-positive, retention, and trusted
   network-source policies are reviewed.
 
