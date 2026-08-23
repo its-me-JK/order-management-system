@@ -63,12 +63,20 @@ export class IdentitySessionRefreshDiscoveryUnavailableError extends Error {
   }
 }
 
+/** Internal, cause-free failure for query or persisted-projection defects. */
+export class IdentitySessionRefreshDiscoveryPersistenceError extends Error {
+  public constructor() {
+    super('Identity session refresh discovery failed');
+    this.name = 'IdentitySessionRefreshDiscoveryPersistenceError';
+  }
+}
+
 /**
  * Non-locking lookup for every retained refresh digest.
  *
  * Implementations authenticate and copy the digest before issuing a query,
- * never filter lifecycle state, and collapse expected provider failures to
- * `IdentitySessionRefreshDiscoveryUnavailableError`.
+ * never filter lifecycle state, and collapse recognized availability failures
+ * to `IdentitySessionRefreshDiscoveryUnavailableError`.
  */
 export interface IdentitySessionRefreshDiscovery {
   findByRefreshCredentialDigest(

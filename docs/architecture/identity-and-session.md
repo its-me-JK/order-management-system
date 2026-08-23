@@ -1361,6 +1361,62 @@ handling. An expected discovery provider failure becomes the fixed,
 cause-free `IdentitySessionRefreshDiscoveryUnavailableError`; it exposes no
 vendor error, constraint, query detail, or digest.
 
+The delivered Prisma adapter is constructed only through
+`createPrismaIdentitySessionRefreshDiscovery` from the Identity Prisma
+infrastructure subpath. The factory captures the writer-client query capability
+and creates the discovery's ticket authority itself. That authority is retained
+in module-private, identity-keyed state; supported package consumers cannot
+inject, enumerate, or read it. Only a direct-file package-internal inspector can
+recover the same authority when the future locked store is constructed, and
+neither that inspector nor the authority is exported from an Identity barrel.
+This pairing prevents a structurally convincing caller object from minting a
+ticket that the store will trust.
+
+Each discovery performs one non-transactional equality lookup against the
+unique `BINARY(32)` refresh-digest index on the MySQL writer and limits the
+result to two rows. It copies the authenticated digest for the bind, then
+selects only the refresh ID and both sides of the refresh-to-family and
+family-to-Account relationships. `LEFT JOIN` makes an orphan observable as
+corrupt persistence evidence rather than silently converting it to not-found.
+There is no current-time expression, `FOR UPDATE`, Redis call, replica read, or
+predicate over consumption, active slot, credential expiry, family idle or
+absolute expiry, family revocation, or Account status. Consequently, retained
+consumed and expired credentials, revoked or expired families, and inactive
+Accounts remain discoverable. That lifecycle blindness is required: the later
+locked decision must see a consumed predecessor and classify replay from
+current authoritative state.
+
+Only an exact empty array maps to the shared `not-found` singleton. Exactly one
+strict, accessor-free projection with canonical identifiers and equal join
+relationships may mint a one-use ticket bound to the original digest wrapper
+and the factory-owned authority. Multiple rows, sparse or extra fields,
+invalid identifiers, or orphaned or mismatched relationships become the fixed,
+cause-free `IdentitySessionRefreshDiscoveryPersistenceError`. A forged or
+wrong-kind digest fails with `InvalidIdentityRefreshCredentialDigestError`
+before SQL. A recognized Prisma availability failure becomes the existing
+cause-free `IdentitySessionRefreshDiscoveryUnavailableError`; every other
+query, provider, projection, or ticket-construction failure is the persistence
+error. The adapter overwrites its temporary digest copy in `finally` before it
+maps or returns any outcome.
+
+This preliminary read costs one extra writer round trip and can race with the
+future transaction. It intentionally shortens the later lock window without
+pretending to authorize refresh: the ticket carries identifiers only, and the
+paired store must consume it, lock and reload all authoritative rows, and make
+the lifecycle decision inside the Unit of Work. Moving discovery into the
+transaction would remove that round trip but hold the connection and locks
+while resolving an untrusted digest; applying lifecycle filters here would be
+faster for ordinary rejection but would erase replay evidence.
+
+Focused adapter tests and the isolated
+`pnpm test:integration:identity-refresh-discovery` MySQL command prove strict
+projection and ticket pairing, temporary-copy cleanup, lifecycle-blind lookup
+of retained generations, relationship-integrity failure, unique-index use, and
+real connection-outage translation. CI runs this suite separately from access
+authority because discovery and authority deliberately have opposite lifecycle
+semantics. This adapter adds no route, Redis dependency, transaction, lock, or
+public refresh-credential ingress.
+
 Inside the callback, `IdentitySessionRefreshStore` exposes only three
 operations:
 
@@ -2444,8 +2500,9 @@ authentication surface becomes public.
 
 Step 3 is partially delivered. The constrained Identity records,
 deterministic baseline policy, digest-level authority port, bounded Prisma
-reader, real-MySQL authority/resolver tests, and root-exported
-framework-independent Bearer principal resolver exist. The Unit of Work, locked stores,
+reader, lifecycle-blind Prisma refresh-discovery adapter, isolated real-MySQL
+authority/discovery/resolver tests, and root-exported framework-independent
+Bearer principal resolver exist. The Unit of Work, paired locked refresh store,
 security-event writer, cleanup use case, NestJS composition, and complete
 delivery-gate tests remain. A trusted caller can now resolve an
 already-extracted canonical access-wire value, but there is still no
@@ -2471,6 +2528,10 @@ public authentication surface.
   target-kind hashing, and authoritative-principal admission, while HTTP owns
   header grammar and request association. Every trusted delivery path therefore
   shares the same credential policy without importing Identity internals.
+- Non-locking refresh discovery narrows the future transaction's lock window,
+  while lifecycle-blind lookup preserves consumed predecessors as replay
+  evidence. A factory-owned hidden authority binds its minimal ticket to the
+  future paired locked store without exposing credential constructors.
 - An application-owned Unit of Work keeps security policy out of generic
   repositories and makes atomic event/state invariants testable.
 - Redis contains attack cost across replicas without becoming session state or
@@ -2497,6 +2558,18 @@ public authentication surface.
   value is the narrower boundary; it costs one bounded SHA-256 operation before
   each authoritative read and requires the HTTP adapter to prove header
   uniqueness separately.
+- Filtering refresh discovery to active, unexpired, unconsumed rows would make
+  ordinary rejection cheaper, but it would turn a retained predecessor into
+  not-found and suppress family-wide replay handling. Performing lookup under
+  `FOR UPDATE` would remove the discovery-to-transaction race, but it would
+  hold a writer connection and locks before the workflow has resolved the
+  target. The selected two-stage design pays one bounded writer round trip and
+  requires authoritative locked revalidation.
+- A caller-supplied or exported ticket authority would simplify composition,
+  but would make trust a configuration value that tests or neighboring code
+  could leak or replace. Factory-owned private pairing adds a small internal
+  registry and construction constraint in exchange for a closed mint/consume
+  boundary.
 - Returning refresh credentials in JSON makes CLI use easier but exposes the
   long-lived secret to browser JavaScript and accidental client persistence.
 - Separate access and refresh generators are superficially reusable, but permit
@@ -2683,6 +2756,11 @@ public authentication surface.
     decision was possible; reporting it as rejection would turn dependency
     failure into a false security fact and prevent the future HTTP adapter from
     returning the required retryable `503`.
+34. **Why must refresh discovery ignore consumption, expiry, revocation, and
+    Account status?** Discovery locates retained evidence; it does not decide
+    whether refresh is allowed. A consumed predecessor must reach the locked
+    workflow so replay can revoke the family, while current lifecycle and
+    Account state may change between the preliminary read and transaction.
 
 ## Future improvements
 
@@ -2715,6 +2793,10 @@ public authentication surface.
   authenticator, and Role workflows only after the real-MySQL refresh adapter
   passes scope-escape, rollback-injection, competing-refresh, and ambiguous
   commit tests; do not generalize it into aggregate CRUD.
+- Implement the paired Prisma locked refresh store and Unit of Work, then prove
+  that every discovered ticket is consumed once, all rows are revalidated in
+  global lock order, and concurrent predecessor use produces one rotation and
+  one replay decision without trusting discovery-time lifecycle state.
 - Add risk signals only after privacy, false-positive, retention, and trusted
   network-source policies are reviewed.
 

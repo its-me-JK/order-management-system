@@ -123,6 +123,9 @@ jobs:
       - name: Test Identity access authority against MySQL
         run: pnpm test:integration:identity-authority
 
+      - name: Test Identity refresh discovery against MySQL
+        run: pnpm test:integration:identity-refresh-discovery
+
       - name: Test Catalog vertical read slice against MySQL
         run: pnpm test:integration:catalog
 

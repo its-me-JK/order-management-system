@@ -70,9 +70,17 @@ production Node factory, never credential constructors or its deterministic
 test seam. Its internal credential boundary also adds fixed-policy Node
 CSPRNG/SHA-256 generation, a pre-transaction one-shot attempt that re-verifies
 the exact wire-to-digest pair, a nominal SecurityEvent identifier, and
-digest-only refresh discovery with authentic one-use tickets. Its internal
-attempt-bound refresh workflow now produces scope- and decision-bound pending
-transaction evidence without claiming commit or credential-delivery authority.
+digest-only refresh discovery with authentic one-use tickets. A concrete
+Prisma discovery adapter now performs one non-locking writer-MySQL lookup over
+the binary refresh digest. It deliberately searches every retained generation
+without applying consumption, credential-expiry, family-expiry, revocation, or
+Account-status policy, so the future locked refresh workflow can still detect
+replay. Its factory privately owns the ticket authority that will pair it with
+that locked store, wipes the temporary digest copy, and keeps not-found,
+expected database unavailability, and persistence/integrity failure distinct.
+Its internal attempt-bound refresh workflow now produces scope- and
+decision-bound pending transaction evidence without claiming commit or
+credential-delivery authority.
 The uncomposed Identity Prisma slice and reviewed migrations persist Account,
 SessionFamily, retained refresh lineage, generation-bound access records, and
 the first authorization/security-evidence records. The versioned authorization
@@ -269,6 +277,7 @@ pnpm test:integration:database
 pnpm test:integration:identity-refresh-lineage
 pnpm test:integration:identity-authorization
 pnpm test:integration:identity-authority
+pnpm test:integration:identity-refresh-discovery
 pnpm test:integration:catalog
 ```
 
@@ -293,6 +302,15 @@ one-statement writer time, current permission visibility, indistinguishable
 lifecycle rejection, internal corruption handling, exact cardinality bounds,
 digest cleanup, and real connection-outage classification before dropping its
 database and grant.
+The dedicated Identity refresh-discovery command creates its own isolated
+database, deploys the migration history twice, and runs the production Prisma
+adapter through the same DML-only application-principal boundary. Its focused
+and real-MySQL checks prove the binary digest lookup, lifecycle-blind discovery
+of retained consumed, expired, revoked, and inactive-Account credentials,
+strict relationship mapping, exact not-found behavior, temporary-copy cleanup,
+index use, and outage classification. CI runs this command separately because
+its lifecycle-blind replay semantics are intentionally different from the
+access-authority reader's lifecycle-gated semantics.
 The Catalog integration command verifies an initial-schema
 upgrade with legacy rows, rejects ambiguous terminal history before DDL, and
 also creates, migrates twice, and removes an exact fresh
@@ -451,6 +469,7 @@ Useful repository commands:
 | `pnpm test:integration:catalog` | Verify Catalog persistence and the production HTTP composition in an isolated local MySQL database |
 | `pnpm test:integration:identity-authority` | Verify the bounded Identity access-authority reader in an isolated local MySQL database |
 | `pnpm test:integration:identity-authorization` | Verify the Identity authorization registry, Role mappings, security-event schema, and Prisma drift against isolated real MySQL databases |
+| `pnpm test:integration:identity-refresh-discovery` | Verify lifecycle-blind refresh-digest discovery and its production Prisma query in an isolated local MySQL database |
 | `pnpm test:integration:identity-refresh-lineage` | Verify the Identity lineage migration, invariants, and Prisma drift against isolated real MySQL databases |
 | `pnpm format:check` | Verify formatting without modifying files |
 | `pnpm check` | Run every required quality gate in CI order |

@@ -15,14 +15,14 @@ accepted outcomes, not lines of code, generated files, commits, or activity.
 | --- | ---: | ---: | --- |
 | Architecture and contracts | 6% | 6% | Architecture overview, seventeen ADRs, platform contracts, delivered Catalog public reads, accepted Catalog administration contracts, and an exact Identity/session contract now fixing Account, authenticator, Role/Permission, generation-proven AccessCredential and RefreshCredential issuance, the cross-module authenticated-principal boundary, opaque wire/digest/candidate ownership, paired cryptography, the refresh transaction capability/evidence model, confirmed-commit disclosure, atomic rotation/replay, authoritative permission, browser security, and fail-closed abuse boundaries |
 | Platform and persistence | 9% | 8.95% | Workspace, runtime shells, versioned routing, health, validated configuration, structured logging, strict transport boundaries, deterministic OpenAPI, one runtime-owned Prisma client, MySQL, an ordered forward-only migration history, guarded Catalog lifecycle expansion/backfill/contraction, an uncomposed four-table Identity refresh-lineage schema with checked lifecycle, generation-witness, and one-active-refresh invariants, plus authorization records with exact policy seeds, Role mappings, Account assignments, and typed retention-independent security evidence |
-| Backend business capabilities | 35% | 8.55% | Catalog public reads and Product/SKU aggregates exist. Identity now has separate immutable Account, PasswordAuthenticator, Role, and SessionFamily boundaries plus versionless RefreshCredential and AccessCredential children. Creation and rotation return complete generation-matched issuance bundles; application code owns canonical redacting access/refresh wire values, copied-byte digest values, one exact frozen candidate pair, the narrow cryptography port, a fixed-policy internal Node CSPRNG/SHA-256 adapter, a pre-transaction one-shot credential-attempt verifier, digest-only refresh discovery with authentic one-use tickets, a nominal SecurityEvent identifier, the nominal authenticated-principal contract, a runtime-authentic attempt-bound refresh workflow with locked load, one decision, kind-matched persistence actions, and explicitly pending transaction evidence, a bounded writer-MySQL access-authority reader, and the root-exported framework-independent resolver that turns an already-extracted canonical access-wire value into one runtime-authenticated current principal or uniform rejection. Identity still has no locked refresh store adapter, concrete Unit of Work, committed completion, login/refresh use case, HTTP authentication adapter, or route |
+| Backend business capabilities | 35% | 8.65% | Catalog public reads and Product/SKU aggregates exist. Identity now has separate immutable Account, PasswordAuthenticator, Role, and SessionFamily boundaries plus versionless RefreshCredential and AccessCredential children. Creation and rotation return complete generation-matched issuance bundles; application code owns canonical redacting access/refresh wire values, copied-byte digest values, one exact frozen candidate pair, the narrow cryptography port, a fixed-policy internal Node CSPRNG/SHA-256 adapter, a pre-transaction one-shot credential-attempt verifier, digest-only refresh discovery with authentic one-use tickets, a concrete non-locking lifecycle-blind writer-MySQL discovery adapter with privately paired ticket authority, a nominal SecurityEvent identifier, the nominal authenticated-principal contract, a runtime-authentic attempt-bound refresh workflow with locked load, one decision, kind-matched persistence actions, and explicitly pending transaction evidence, a bounded writer-MySQL access-authority reader, and the root-exported framework-independent resolver that turns an already-extracted canonical access-wire value into one runtime-authenticated current principal or uniform rejection. Identity still has no locked refresh store adapter, concrete Unit of Work, committed completion, login/refresh use case, HTTP authentication adapter, or route |
 | Redis, RabbitMQ, and workers | 9% | 0% | Architecture only |
-| Testing, security, and resilience | 11% | 7.4% | Strict quality gates, secret-safe configuration/TLS and adversarial HTTP tests, Catalog lifecycle/Unicode tests, exhaustive Identity Account/authenticator/Role tests, adversarial session chronology/generation/expiry/replay tests, authenticated-principal tests, 137 opaque-credential/Node-adapter tests, hardened attempt/discovery/event tests, 45 refresh-workflow tests, 35 authority-adapter tests, and adversarial Bearer-resolver tests covering canonical wire-to-digest ordering, exact frozen outcomes, uniform malformed/ordinary rejection, runtime digest/principal authenticity, dependency failure classification, secret-safe errors, and package-surface isolation; executable architecture boundaries, real-MySQL Catalog lifecycle/contract suites, dedicated Identity lineage and authorization suites, plus an isolated authority runtime suite proving canonical production wire-to-principal composition, current Role/Permission visibility, consumed-refresh and idle-expiry semantics, indistinguishable rejection, cross-row corruption, clipped access lifetime, the exact 2,048-row ceiling, and real outage translation |
+| Testing, security, and resilience | 11% | 7.5% | Strict quality gates, secret-safe configuration/TLS and adversarial HTTP tests, Catalog lifecycle/Unicode tests, exhaustive Identity Account/authenticator/Role tests, adversarial session chronology/generation/expiry/replay tests, authenticated-principal tests, 137 opaque-credential/Node-adapter tests, hardened attempt/discovery/event tests, 45 refresh-workflow tests, 35 authority-adapter tests, adversarial Bearer-resolver tests, and focused Prisma refresh-discovery tests covering strict projections, private ticket pairing, digest cleanup, failure classification, and package-surface isolation; executable architecture boundaries, real-MySQL Catalog lifecycle/contract suites, dedicated Identity lineage and authorization suites, an isolated authority runtime suite proving canonical production wire-to-principal composition and current lifecycle authority, plus an isolated refresh-discovery suite proving lifecycle-blind retained-generation lookup, exact binary-index use, relationship integrity, not-found behavior, and real outage translation |
 | Frontend showcase | 12% | 0% | Not started |
 | Observability and operations | 5% | 1% | Sanitized liveness, bounded MySQL readiness, server-owned request identity, structured HTTP/Nest logs, redaction, and safe fatal bootstrap reporting exist; metrics and traces remain |
-| CI/CD and public deployment | 8% | 1.75% | CI replays migrations idempotently and validates database, Identity-lineage, Identity-authorization, Identity-authority runtime, Catalog, and API contracts against real MySQL; no release pipeline or live environment |
+| CI/CD and public deployment | 8% | 1.75% | CI replays migrations idempotently and validates database, Identity-lineage, Identity-authorization, Identity-authority runtime, Identity refresh-discovery, Catalog, and API contracts against real MySQL; no release pipeline or live environment |
 | Documentation and demo polish | 5% | 2.8% | README, architecture contracts including the exact authorization registry and security-evidence matrix, ADR history, deterministic OpenAPI JSON, and a public read-only local Swagger UI exist; examples and demo guides remain |
-| **Total** | **100%** | **36.45%** | Displayed overall is rounded down |
+| **Total** | **100%** | **36.65%** | Displayed overall is rounded down |
 
 The weights are fixed unless the project scope is formally re-baselined. A
 workstream may use fractional earned points internally, but the displayed
@@ -41,12 +41,13 @@ overall percentage is rounded down so progress is never overstated.
 
 ## Current status line
 
-> Overall: 36% · Backend business capabilities: 8.55/35 · Frontend: 0/12 ·
+> Overall: 36% · Backend business capabilities: 8.65/35 · Frontend: 0/12 ·
 > Deployment: 1.75/8 · Public demo: not deployable
 
-The current Bearer-resolver increment earns 0.15 backend-capability points and
-0.15 testing/security points. It earns no deployment points because no HTTP
-authentication composition, protected route, or live environment consumes it.
+The current Prisma refresh-discovery increment earns 0.10 backend-capability
+points and 0.10 testing/security points. It earns no deployment points because
+it adds no HTTP composition, protected route, release pipeline, or live
+environment.
 Catalog reads are not an externally usable showcase: the endpoint is
 production-composed locally, but there is still no release pipeline, provider
 resource, live URL, synthetic showcase data, distributed abuse control, or
@@ -70,13 +71,20 @@ entropy and full-wire SHA-256 with
 strict provider validation and bounded cleanup. A second pre-transaction check
 binds the exact candidate pair to a one-shot attempt before database work, and
 digest-only discovery now returns a runtime-authentic ticket consumable once by
-its matching locked loader boundary. The refresh kernel now binds that exact
-attempt to a private transaction scope, one locked load, one opaque decision,
-kind-matched terminal persistence actions, and one exact pending-evidence value
-across rotation, reuse, and rejection. Consuming that evidence is only the
-one-shot handoff to future commit handling; it is neither commit proof nor
-credential-delivery authority. The workflow remains internal and uncomposed
-before a real use case exists. The ordered Prisma history now contains
+its matching locked loader boundary. Its concrete Prisma adapter performs one
+writer-MySQL equality lookup over the copied binary digest and deliberately
+applies no consumption, credential-expiry, family-expiry, revocation, or
+Account-status filter. An exact empty result alone is not-found; duplicate,
+orphaned, mismatched, or malformed persistence evidence fails internally. The
+factory owns a hidden ticket authority for the future paired locked store, and
+expected database availability failures remain distinct from persistence and
+integrity defects. The refresh kernel now binds that exact attempt to a private
+transaction scope, one locked load, one opaque decision, kind-matched terminal
+persistence actions, and one exact pending-evidence value across rotation,
+reuse, and rejection. Consuming that evidence is only the one-shot handoff to
+future commit handling; it is neither commit proof nor credential-delivery
+authority. The workflow remains internal and uncomposed before a real use case
+exists. The ordered Prisma history now contains
 uncomposed Identity persistence for Account, SessionFamily, retained refresh
 generations, generation-bound access, the exact permission registry and system
 role, Role permission mappings, Account role assignments, and typed security

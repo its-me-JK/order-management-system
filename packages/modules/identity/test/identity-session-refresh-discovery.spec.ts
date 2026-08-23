@@ -482,6 +482,7 @@ describe('Identity refresh discovery port and errors', (): void => {
   it('does not widen the Identity package root', (): void => {
     for (const exportName of [
       'IdentitySessionRefreshDiscoveryUnavailableError',
+      'IdentitySessionRefreshDiscoveryPersistenceError',
       'InvalidIdentitySessionRefreshDiscoveryTicketError',
       'IDENTITY_SESSION_REFRESH_DISCOVERY_NOT_FOUND',
       'createIdentitySessionRefreshDiscoveryBoundaryAuthority',
