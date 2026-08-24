@@ -6,6 +6,6 @@
     "rootDir": ".",
     "types": ["jest", "node"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "include": ["src/**/*.ts", "test/**/*.ts", "test-support/**/*.ts"],
   "exclude": [".integration-dist", "dist", "node_modules"]
 }

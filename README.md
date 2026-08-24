@@ -1,716 +1,161 @@
-# Distributed Order Management System
+# Order Management System
 
-A production-oriented Order Management System for studying and demonstrating
-reliable commerce workflows: inventory reservation, order orchestration,
-payments, fulfillment, and asynchronous processing.
+A portfolio-grade commerce backend that demonstrates the parts of order management that are harder than CRUD: atomic stock reservation, idempotent order creation, explicit state transitions, asynchronous payment processing, transactional event publication, and duplicate-safe consumers.
 
-The system starts as a modular monolith. Notification and Payment may be
-extracted into independent services only when operational evidence justifies
-the additional distributed-systems cost.
+The project is a pragmatic modular monolith. Business features live together in one NestJS API and one MySQL schema while asynchronous work runs in a separate worker process. The Next.js frontend is maintained in the same pnpm workspace and is exported as static assets for same-origin production delivery.
 
-## Project status
+## Status
 
-**Milestone 3 — identity, catalog, pricing, and inventory (in progress).** The API
-now has a versioned public HTTP surface, unversioned operational health
-endpoints, validated database configuration, one runtime-owned Prisma client
-with an infrastructure-only access boundary, bounded readiness probes,
-application-owned database shutdown, server-owned request identities,
-sanitized structured JSON logging, and a secret-safe RFC 9457 HTTP error
-boundary that includes parser failures. It publishes a deterministic OpenAPI
-3.0.3 contract and local read-only Swagger UI, and rejects malformed DTOs
-through one strict non-coercive validation policy. The first Catalog read
-slice now owns separate Product and SKU records, lifecycle and integrity
-constraints, lossless seek pagination, UUIDv7 binary mapping, an active-only
-Prisma adapter, bounded application inputs, and framework-independent public
-query use cases. Its anonymous list and detail endpoints publish an exact
-active-only representation, opaque cursor pagination, fixed Problem Details,
-and `no-store` responses. A real vertical integration suite exercises the
-production NestJS composition through Prisma and isolated MySQL. Catalog still
-has no write path, but its internal Product and SKU aggregates now enforce the
-accepted reversible lifecycles, Unicode names, lossless timestamps, optimistic
-versions, immutable transitions, and domain events. SKU ownership and code are
-immutable, while cross-aggregate Product policy remains reserved for the later
-transactional application service. Both aggregates remain deliberately
-unwired until the required administrative security and transactional
-foundations exist. Persistence now supports those lifecycle shapes through a
-guarded forward-only migration with deterministic legacy backfill and a real
-prior-schema upgrade test. The Identity/session architecture fixes the account
-and database boundaries, split opaque credentials, strict same-site browser
-policy, durable refresh rotation, and fail-closed Redis abuse controls. Its
-first framework-independent package slice now enforces canonical Account
-identity, lossless microsecond time, optimistic versions, immutable lifecycle
-transitions, strict rehydration, retention tombstones, and PII-free domain
-facts. Its separate PasswordAuthenticator aggregate now adds a strictly
-bounded, redacting Argon2id PHC value, immutable failure/cooldown state,
-attempt-100 disablement, pre-hash verification-basis race protection,
-conditional verifier upgrade, and offline rebind transition. The package
-now also owns a terminal Role aggregate with immutable authorization codes,
-strict Unicode display labels, canonical bounded Permission sets, explicit
-grant/revoke deltas, and auditable initial mappings. SessionFamily now owns
-lossless idle/absolute deadlines, version-derived rotation reachability,
-derived authentication state, first-cause terminal revocation, and a
-versionless RefreshCredential child. A separate immutable AccessCredential now
-records the exact refresh generation that issued it. Family creation and
-successful rotation return one frozen, generation-matched refresh/access
-bundle; replay still closes the family without inspecting or issuing access
-state, and the six-field conditional-write basis remains credential-secret
-free. The package's first public application contract is now a nominal,
-immutable authenticated principal containing only opaque actor/session IDs and
-the bounded current permission set. Its authority factory remains internal and
-validates role-count evidence, so the package root exports no principal
-constructor. The root now exposes `ResolveIdentityBearerPrincipal` as its first
-runtime use case: it accepts only an already-extracted primitive token value,
-validates the canonical access-wire namespace, authenticates the resulting
-digest and principal at runtime, and returns one exact frozen resolved or
-rejected outcome. Malformed input and ordinary authority rejection are
-indistinguishable; known cryptography or authority outages become one fixed
-unavailable failure, while every other failure remains internal. The explicit
-Identity cryptography infrastructure subpath exposes only the zero-argument
-production Node factory, never credential constructors or its deterministic
-test seam. Its internal credential boundary also adds fixed-policy Node
-CSPRNG/SHA-256 generation, a pre-transaction one-shot attempt that re-verifies
-the exact wire-to-digest pair, a nominal SecurityEvent identifier, and
-digest-only refresh discovery with authentic one-use tickets. A concrete
-Prisma discovery adapter now performs one non-locking writer-MySQL lookup over
-the binary refresh digest. It deliberately searches every retained generation
-without applying consumption, credential-expiry, family-expiry, revocation, or
-Account-status policy, so the locked refresh workflow can still detect replay.
-Its factory privately owns the ticket authority and binds it to the exact root
-writer client. The package-internal Prisma locked loader consumes that
-one-use ticket over an already-active transaction, then issues three separate
-primary-key `FOR UPDATE` reads in the fixed Account, SessionFamily, presented
-RefreshCredential order. Each statement forces `PRIMARY`; the final read also
-revalidates the discovered family, credential ID, and copied digest. Timestamp
-projections remain canonical six-digit UTC strings rather than lossy
-JavaScript `Date` values. The discovery and loader both wipe their temporary
-digest copies and keep exact not-found, expected database unavailability, and
-persistence/integrity failure distinct. That Prisma loader remains a reference
-mapping and lock-invariant proof. A second private loader now executes the same
-three locks plus one post-lock database clock read as opaque static prepared
-statements on the database executor's
-exact one-use connection. It strictly recognizes the pinned MariaDB result
-envelope without reading connector metadata, maps domain evidence only after
-statement settlement, and independently wipes its copied digest. No direct
-loader, statement, SQL, or transaction capability is added to an Identity
-package export.
-An isolated real-MySQL gate proves the DML-only application grant, exact
-three-lock-plus-clock trace and `PRIMARY`/`const` plans, retained consumed and expired
-lifecycle loads, six-digit projections, digest-drift not-found, and
-causal shared-Account first-lock contention on separate `READ-COMMITTED`
-transaction connections. The same guarded gate now runs the direct loader
-through the fixed executor and proves the real connector's numeric/result
-shape, six-digit rehydration, and digest-drift not-found. It also invokes the
-production package-internal refresh Unit of Work for reuse and rotation:
-acknowledged commits return runtime-authentic committed completions only after
-program close, while representative event, credential, and generation
-collisions return their closed non-commit reasons and roll back the earlier
-mutation graph.
-Its loopback TCP listener accepts a connection but deliberately never performs
-the MySQL handshake; that loopback TCP accept/handshake stall proves fixed,
-cause-free unavailability only. That handshake-stall case does not prove
-cancellation or quarantine of an established connection or in-flight query.
-Its internal attempt-bound refresh workflow now produces scope- and
-decision-bound pending transaction evidence without claiming commit or
-credential-delivery authority.
-An opaque, one-shot package-internal refresh command now binds the authentic
-discovery ticket, verified credential attempt, generated credential IDs,
-lifetimes, and SecurityEvent ID before transaction work. Its fixed
-orchestration performs one locked load and decision, reaches only the matching
-rejected, rotated, or reuse branch, and authenticates the pending-evidence
-handoff. It accepts no caller callback and still grants no commit or credential
-delivery authority.
-The package-internal Identity persistence slice and reviewed migrations
-persist Account, SessionFamily, retained refresh lineage, generation-bound
-access records, and the first authorization/security-evidence records. The
-versioned authorization registry seeds exactly seven permissions and one
-explicitly mapped `SYSTEM_ADMINISTRATOR`; no role is a wildcard and future
-permissions are not granted implicitly. Role state, permission mappings, and
-Account assignments have constrained keys and `RESTRICT` references. Typed
-security events normalize 19 action types against compatible
-`SUCCEEDED`/`REJECTED` outcomes and reasons, distinguish UUIDv4 request context
-from UUIDv7 Identity objects, and contain neither arbitrary JSON nor
-retention-coupling foreign keys. Seed rows are configuration rather than
-fabricated runtime events, and append-only behavior remains logical under the
-current shared database role. The future Unit of Work must enforce at most 16
-total role assignments per Account.
-Identity now has its first real Prisma read adapter: a package-internal,
-digest-level authority port resolves current Account, SessionFamily, Role, and
-Permission state in one bounded writer-MySQL statement. It distinguishes
-ordinary credential rejection from corrupt issuance evidence, wipes the
-temporary digest copy, deduplicates shared permissions, and fails closed above
-16 active roles, 128 permissions, or 2,048 mapping rows. An isolated MySQL
-suite proves immediate Role/Permission changes, lifecycle rejection, clipped
-access lifetimes, exact bounds, canonical wire through production SHA-256 to
-real MySQL authority, and public resolver outage classification. Identity
-still has no `Authorization` extraction, request association, authentication
-route, or public credential ingress. The locked loader remains deliberately
-load-only; a private direct reuse writer now conditionally revokes the family
-and appends its rejected refresh event on the same transaction connection.
-An adjacent private rotation writer now consumes the authenticated rotated
-action and executes predecessor consumption, successor refresh/access
-insertion, predecessor linkage, conditional family advance, bounded
-same-connection authority projection, and the successful refresh event. It
-exposes neither SQL nor credential material and mints only pending workflow
-evidence after all seven operations succeed. The database executor now captures
-an optional receiver-free synchronous `observeProgramSettlement(input)` and
-invokes it exactly once after the actual fixed program Promise settles, its
-statement session is sealed, and its tracked statement operation has drained,
-even when `execute` already returned
-`indeterminate`. The observer receives only the original input and no result,
-error, transaction outcome, connection, SQL, or settlement authority.
-A concrete package-internal direct-MySQL refresh Unit of Work now captures one
-closed 13-statement program, requires the discovery adapter paired with the
-exact runtime-owned Prisma client, synchronously admits the opaque command, and
-composes the locked loader and both writers on the executor's one connection.
-The loader binds one authoritative database time only after its last awaited
-row lock, so lock contention cannot make a stale transaction-start time fail
-chronology or extend credential validity. Its module-owned start marker and the settlement observer form
-a two-sided rendezvous with the independently returned database outcome. Only
-an acknowledged `COMMIT`, the exact returned evidence identity, and successful
-post-seal command close can promote the dormant completion. Proven non-commit
-maps only the three allowed caller reasons after revocation; malformed,
-ambiguous, or otherwise unsafe settlement becomes `indeterminate`. If the
-deadline returns `indeterminate` first, the later observer closes and revokes
-the exact attempt without changing that already-returned result. The guarded
-real-MySQL composition now holds the production program on its first prepared
-Account lock through that deadline: the caller retains the exact
-`indeterminate` outcome, the deadline fixture's refresh graph remains unchanged
-before and after lock release, delivery authority stays unavailable, and a
-separate rotation commits through the recovered single-slot transaction
-reserve. The adapter accepts no callback, exposes no transaction or SQL
-capability, performs no retry, grants no credential-delivery authority, and
-remains outside every Identity package export. A package-internal one-shot
-delivery gate now exchanges only an authentic committed rotation and its exact
-original candidate pair for one opaque capability. The handoff consumes the
-completion, its retained
-committed attempt, and their exact pair binding by runtime identity; a committed
-rejection or reuse decision, foreign or equivalent pair, structural value,
-Proxy, or replay receives one fresh cause-free delivery error without exposing
-a credential. Each candidate pair's attempt admission is one-shot: the first
-admission synchronously takes ownership before digest verification, so a
-concurrent or failed admission burns that pair and a retry must generate fresh
-credentials.
-The complementary non-delivery settlement now consumes an authentic committed
-rejection or reuse-detected completion exactly once and returns only its frozen
-terminal classification. It refuses rotations, forgeries, Proxies, and replay
-without consuming a rightful completion, so rejected flows cannot retain a
-live private registration and successful rotations keep their sole delivery
-path.
-The next package-internal boundary now owns a copied binary abuse-network
-capability and a refresh-specific abuse-control port. IPv4 remains individual,
-native IPv6 is grouped by `/64`, and IPv4-mapped IPv6 shares the IPv4 namespace.
-The capability shell is redacting; its extracted version/family-tagged
-key-material copies are visible but isolated. Exact registered results expose
-only `allowed` or `denied` with a bounded 1-through-180-second retry. This slice
-establishes no proxy trust by itself and adds no route or public root export.
-The restricted `@oms/identity/infrastructure/redis` subpath now implements the
-port with one reviewed static four-key/seven-argument script. It atomically
-checks deployment, canonical-network, and presented-credential token buckets
-using one Redis `TIME`, fixed-point refill, all-or-none consumption, and
-time-to-full expiry. Keys use a same-slot deployment/epoch namespace plus full
-HMAC-SHA-256 dimension digests; a secret-bound policy marker rejects replica
-drift, and a poisoned marker keeps any partial provider write fail-closed.
-The adapter validates only configuration and executes no network operation at
-construction. It is not composed into an API or worker, so it still makes no
-runtime admission decision. The separate
-framework-independent `@oms/redis` technical substrate now owns the exact
-official client dependency, one bounded RESP2 client, authentication and TLS,
-bounded queue/deadline behavior, probe and shutdown lifecycle, and fixed safe
-failures. Its package root exposes lifecycle/probe only; its restricted
-registered-script subpath uses `EVALSHA` followed by exactly one `EVAL` only
-for Redis's exact canonical script-cache-miss reply. Registered scripts are
-reviewed static code and must never emit that reserved error themselves. It
-disables offline queuing, automatic in-operation reconnect, and ambiguous
-retries. Authenticated ephemeral Redis 7.2.16 now runs in local Compose and CI
-with a least-privilege user, persistence disabled, 64 MiB `noeviction`, and
-loopback-only publication. Real-Redis tests exercise the adapter through two
-independent runtimes, cache-cold execution, exact capacity, refill/TTL,
-corruption, policy/secret drift, clock regression, and ambiguous no-retry
-failure.
-Identity now also owns the refresh-specific pre-transaction identifier bundle:
-one separately branded successor-refresh ID, issued-access ID, and security-event
-ID. The restricted Node identifiers subpath exposes only a zero-argument
-production issuer backed by the pinned runtime's CSPRNG UUIDv7 primitive. Each
-value is validated immediately. A partial provider failure throws a fresh,
-fixed, cause-free unavailable error, and no generic UUID generator reaches the
-package root. UUID timestamps are index-locality metadata only; they neither
-order business events nor replace the post-lock MySQL clock.
-The frozen capability keeps both correlated wire wrappers, the principal, and
-the committed instants only in private state and redacts string coercion and
-JSON. It exposes no raw serializer, is absent from the package root and every
-public subpath, and has no HTTP response or cookie operation. The future public
-refresh use case and channel-specific access-response and refresh-cookie sinks,
-remaining security-event adapters, NestJS composition, Argon2 adapter, password
-input policy, and composition of the delivered Redis abuse control still do not
-complete the runtime path.
-The invariant-failure quarantine also needs bounded observability and an
-explicit unhealthy-process recycle policy before public refresh traffic. Before
-credential ingress becomes public, production
-configuration must disable Prisma driver-adapter debug/query logging because
-those namespaces can emit bound digest arguments. That configuration gate is
-not implemented yet, so public credential ingress remains blocked. Pricing,
-inventory, Redis caching, and integration events remain separate later slices.
+The product workflow is implemented and verified locally through the production container topology. The repository-wide gate, database/API integration suites, dependency audit, and complete customer-to-delivery smoke workflow pass. The remaining release work is public zero-cost provisioning plus hosted verification and deeper automated failure/load scenarios.
 
-**Overall project progress: 40%.** The fixed, deployment-inclusive scoring
-model and evidence are maintained in [Project progress](docs/progress.md).
+See [project progress](docs/progress.md) for the weighted completion score, remaining release gates, and deployment status.
 
-## Planned technology
+## What the system does
 
-- Node.js, NestJS, and TypeScript
-- Prisma and MySQL
-- Redis
-- RabbitMQ
-- Docker and Docker Compose
-- GitHub Actions
-- Next.js, Tailwind CSS, shadcn/ui, React Query, and Zustand for the later web
-  application
-- Kubernetes and AWS after the backend and its operational model are mature
+- Registers and authenticates customers with opaque access and refresh credentials.
+- Rotates refresh credentials and protects cookie-backed refresh/logout requests with CSRF tokens.
+- Throttles login attempts in Redis without storing raw email addresses in keys.
+- Exposes active Products and SKUs publicly and versioned Catalog administration to operators.
+- Tracks on-hand, reserved, and available inventory per SKU and warehouse.
+- Creates orders idempotently and reserves every requested SKU from one warehouse in a serializable transaction.
+- Simulates asynchronous payment authorization and deterministic failure for demonstration.
+- Releases reservations on failed payment or cancellation and commits stock when an order ships.
+- Publishes business events through a MySQL transactional outbox and RabbitMQ.
+- Creates duplicate-safe in-app notifications from order and payment events.
+- Provides a responsive Next.js UI for catalog, cart, checkout, orders, notifications, and administration.
+- Publishes versioned HTTP APIs, RFC 9457 Problem Details, Swagger/OpenAPI, structured logs, and health endpoints.
 
-Technology choices do not override domain boundaries: framework, persistence,
-cache, and messaging details stay behind application ports.
+## Runtime architecture
 
-## Architecture at a glance
+```mermaid
+flowchart LR
+  Browser[Next.js static web] -->|HTTPS /api/v1| API[NestJS API]
+  API -->|source of truth| DB[(MySQL)]
+  API -->|login throttling| Redis[(Redis)]
+  API -->|writes event in same transaction| Outbox[(outbox_events)]
+  Worker[Node.js worker] -->|polls| Outbox
+  Worker -->|publisher confirms| Rabbit[(RabbitMQ)]
+  Rabbit -->|order.created| Payment[Payment consumer]
+  Rabbit -->|order.* / payment.*| Notification[Notification consumer]
+  Payment --> DB
+  Notification --> DB
+```
 
-The initial repository will contain two deployable processes backed by one
-modular codebase:
+MySQL is authoritative. Redis is disposable throttling state. RabbitMQ is an at-least-once delivery mechanism, not a database. The `processed_messages` table makes worker side effects idempotent when RabbitMQ redelivers.
 
-- **API:** synchronous REST endpoints, authentication, and verified webhooks.
-- **Worker:** outbox publishing, message consumption, scheduled reservation
-  expiry, retries, and notification delivery.
+Read the [architecture overview](docs/architecture/overview.md), [database design](docs/architecture/database.md), [API contracts](docs/architecture/api-contracts.md), and [event model](docs/architecture/events-and-consistency.md) before changing a business invariant.
 
-MySQL is the source of truth. Redis is optional acceleration for safe read
-paths but is a mandatory fail-closed abuse-decision dependency for future login
-and refresh issuance; it never becomes session authority. RabbitMQ carries
-durable integration events using at-least-once delivery, and consumers are
-idempotent.
+## Repository structure
 
-The initial business modules are Identity and Access, Customers, Catalog,
-Pricing, Inventory, Orders, Payments, Fulfillment, Notifications,
-Integrations, and Audit.
+```text
+apps/
+  api/          NestJS HTTP runtime and feature modules
+  web/          Next.js static frontend
+  worker/       outbox publisher, payment consumer, notification consumer
+packages/
+  configuration/ validated runtime configuration
+  database/      Prisma schema, migrations, and database lifecycle
+  messaging/     RabbitMQ topology and event envelope
+  redis/         bounded Redis runtime
+docs/            living architecture, contracts, ADRs, and operations
+infrastructure/ local container configuration
+```
 
-See the [architecture overview](docs/architecture/overview.md) for system
-boundaries, runtime topology, consistency rules, and delivery sequence.
-The [operational health contract](docs/architecture/operational-health.md)
-documents probe behavior, failure semantics, alternatives, and trade-offs.
-The [request identity and structured logging contract](docs/architecture/request-identity-and-logging.md)
-defines header trust, log fields, redaction, and propagation boundaries.
-The [HTTP error contract](docs/architecture/http-error-contract.md) defines RFC
-9457 responses, safe exception mapping, parser limits, and the operational
-health exception.
-The [OpenAPI and transport validation contract](docs/architecture/openapi-and-transport-validation.md)
-defines contract ownership, public documentation posture, operation IDs, and
-strict DTO boundary rules.
-The [Identity and session contract](docs/architecture/identity-and-session.md)
-defines account and session boundaries, opaque credential transport, database
-authority, Redis abuse controls, CSRF/CORS policy, and the gated authentication
-HTTP surface.
-The [Redis runtime contract](docs/architecture/redis-runtime.md) defines
-technical client ownership, registered script execution, bounded failure and
-shutdown semantics, and the authenticated local/CI topology.
-The [public Catalog read contract](docs/architecture/catalog-public-reads.md)
-defines application query boundaries, pagination, visibility, and the
-anonymous HTTP representation.
-The [Catalog administration contract](docs/architecture/catalog-administration.md)
-defines the gated write-side lifecycle, permissions, idempotency, optimistic
-concurrency, audit, and transaction semantics.
+Feature code stays close to the feature that owns it. Shared packages exist only for genuine runtime capabilities used by more than one application; there is no package-per-entity abstraction layer.
 
-## Architecture decisions
-
-Significant decisions are recorded as Architecture Decision Records (ADRs):
-
-- [ADR-0001: Start with a modular monolith](docs/adr/0001-modular-monolith.md)
-- [ADR-0002: Separate API and worker runtimes](docs/adr/0002-api-and-worker-runtimes.md)
-- [ADR-0003: Keep inventory correctness in MySQL](docs/adr/0003-inventory-consistency.md)
-- [ADR-0004: Use a transactional outbox for integration events](docs/adr/0004-transactional-outbox.md)
-- [ADR-0005: Use a native pnpm workspace](docs/adr/0005-pnpm-workspace.md)
-- [ADR-0006: Centralize persistence infrastructure without surrendering module ownership](docs/adr/0006-persistence-boundaries.md)
-- [ADR-0007: Keep development and demonstration infrastructure at zero cost (superseded)](docs/adr/0007-zero-cost-development.md)
-- [ADR-0008: Operate a zero-cost public showcase environment](docs/adr/0008-zero-cost-public-showcase.md)
-- [ADR-0009: Validate runtime configuration at process boundaries](docs/adr/0009-validate-runtime-configuration-at-boundaries.md)
-- [ADR-0010: Standardize public HTTP errors with RFC 9457](docs/adr/0010-standardize-http-errors-with-rfc-9457.md)
-- [ADR-0011: Publish explicit OpenAPI and enforce strict transport validation](docs/adr/0011-publish-explicit-openapi-and-enforce-strict-transport-validation.md)
-- [ADR-0012: Expose Prisma only as a runtime-owned infrastructure capability](docs/adr/0012-expose-prisma-only-as-an-infrastructure-capability.md)
-- [ADR-0013: Model Catalog Products and SKUs separately](docs/adr/0013-model-catalog-products-and-skus-separately.md)
-- [ADR-0014: Support staged and reversible Catalog publication](docs/adr/0014-support-staged-and-reversible-catalog-publication.md)
-- [ADR-0015: Authenticate and authorize administrative APIs](docs/adr/0015-authenticate-and-authorize-administrative-apis.md)
-- [ADR-0016: Make retryable commands durably idempotent](docs/adr/0016-make-retryable-commands-durably-idempotent.md)
-- [ADR-0017: Use split browser session credentials](docs/adr/0017-use-split-browser-session-credentials.md)
-- [ADR-0018: Own connections for security-critical MySQL transactions](docs/adr/0018-own-security-critical-mysql-connections.md)
-- [ADR-0019: Seal exact-connection MySQL transaction programs](docs/adr/0019-seal-exact-connection-mysql-transaction-programs.md)
-- [ADR-0020: Bind transaction clocks at causal boundaries](docs/adr/0020-bind-transaction-clocks-at-causal-boundaries.md)
-
-The [ADR index](docs/adr/README.md) explains the lifecycle and format of these
-records.
-
-## Engineering principles
-
-- Business invariants are enforced in the domain and application layers, not
-  in controllers.
-- Modules own their data and do not read another module's tables directly.
-- External side effects never occur inside a database transaction.
-- Public commands that may be retried are idempotent.
-- Inventory, payment, and fulfillment use explicit state transitions.
-- Observability, security, migrations, and failure recovery are part of a
-  feature's definition of done.
-- The `master` branch remains releasable.
-
-## Delivery sequence
-
-1. Architecture and engineering foundation
-2. Platform and persistence foundation
-3. Identity, catalog, pricing, and inventory
-4. Order placement and cancellation
-5. Payments and reliable messaging
-6. Fulfillment and notifications
-7. Operational hardening and portfolio-quality release
-
-Detailed milestones and exit criteria are maintained in the
-[architecture overview](docs/architecture/overview.md#delivery-roadmap).
-
-## Local development
+## Local setup
 
 Prerequisites:
 
-- Node.js `24.18.1`, as pinned in `.node-version`.
-- pnpm `11.18.0`, as pinned in the root `packageManager` field.
-- Docker Engine and Docker Compose `2.20` or newer.
+- Node.js `24.18.1` (see `.node-version`)
+- pnpm `11.18.x`
+- Docker with Compose v2
+- OpenSSL for generating local secrets
 
-This repository currently provisions no cloud resources. Local dependencies
-use open-source containers, and standard GitHub-hosted Actions runners are free
-for this public repository. A no-card public showcase environment is approved
-but will not be provisioned until it has a meaningful, secure vertical slice.
-The AWS topology remains a future design, not a running environment.
-
-Create local-only password files and start MySQL and Redis:
+Install dependencies and create local configuration:
 
 ```bash
-test -f .env || cp .env.example .env
+corepack enable
+pnpm install --frozen-lockfile
+cp .env.example .env
 mkdir -p .local/secrets
 umask 077
 openssl rand -hex 32 > .local/secrets/mysql-app-password
 openssl rand -hex 32 > .local/secrets/mysql-root-password
 openssl rand -hex 32 > .local/secrets/redis-app-password
-docker compose config --quiet
+openssl rand -hex 32 > .local/secrets/rabbitmq-password
+```
+
+Start the complete local stack:
+
+```bash
 pnpm infra:up
-pnpm infra:status
 ```
 
-MySQL listens only on `127.0.0.1:3306`, and Redis listens only on
-`127.0.0.1:6379`. If either port is occupied, change `DATABASE_PORT` or
-`REDIS_PORT` in `.env`. Local passwords and `.env` are ignored by Git.
+Compose builds the web/API/worker image, starts MySQL, Redis, and RabbitMQ, applies committed migrations through a one-shot migration container, then starts the API and worker. `DEMO_SEED=true` is the local default. Seeding is idempotent and does not reset existing order data. Local demo accounts are:
 
-Stop local dependencies without deleting MySQL data:
+- `customer@oms.local` / `Customer123!`
+- `admin@oms.local` / `Admin123!`
+
+Local endpoints:
+
+- Web: `http://localhost:3000`
+- API: `http://localhost:3000/api/v1`
+- Swagger UI: `http://localhost:3000/docs`
+- OpenAPI JSON: `http://localhost:3000/docs/openapi.json`
+- Liveness: `http://localhost:3000/health/live`
+- Readiness: `http://localhost:3000/health/ready`
+- RabbitMQ management: `http://localhost:15672`
+
+For source-level hot reload, start only the dependency containers, apply the migration, configure the local RabbitMQ credential from `.local/secrets/rabbitmq-password`, then use `pnpm dev:api`, `pnpm dev:worker`, and `pnpm dev:web`. The web dev server runs on port 3001 and uses the exact configured `WEB_ORIGIN`.
+
+For detailed local/deployment instructions, troubleshooting, secret handling, and shutdown commands, use the [deployment runbook](docs/runbooks/deployment.md) and [operations guide](docs/operations.md).
+
+## Quality gates
+
+Run the same aggregate gate expected by CI:
 
 ```bash
-pnpm infra:down
-```
-
-The `mysql_data` volume survives ordinary shutdowns. Changing the configured
-database name, user, or password does not reinitialize an existing volume.
-`docker compose down --volumes` permanently deletes local database data and is
-therefore intentionally not wrapped in a convenience script.
-
-Install dependencies and run the complete local quality gate:
-
-```bash
-pnpm install --frozen-lockfile
 pnpm check
 ```
 
-Validate the persistence toolchain against local MySQL:
+It checks formatting, validates and generates Prisma, lints, type-checks, tests, and builds every workspace package. Dependency auditing is separate so registry availability does not hide code failures:
 
 ```bash
-pnpm db:schema:validate
-pnpm db:migrate:deploy
-pnpm test:integration:database
-pnpm test:integration:identity-refresh-lineage
-pnpm test:integration:identity-authorization
-pnpm test:integration:identity-authority
-pnpm test:integration:identity-refresh-discovery
-pnpm test:integration:identity-refresh-locked-loader
-pnpm test:integration:catalog
-pnpm test:integration:redis
+pnpm audit:dependencies
 ```
 
-The database package owns Prisma generation and one ordered forward-only
-migration history. Module-owned Prisma models compose into that schema; the
-reviewed migrations create Catalog Product and SKU records, then safely expand
-their lifecycle invariants, and add Identity refresh lineage, authorization
-registry, Role mappings, Account assignments, and security evidence. Generated
-Prisma code is local build output and is not
-committed. The dedicated Identity verifiers apply the complete migration
-history twice in isolated main and shadow databases, prove Prisma has no
-representable schema drift, and adversarially check byte-exact codes, exact
-seed policy, microseconds, UUID versions, foreign keys, event compatibility,
-issuance witness, and the one-active-refresh invariant against pinned MySQL.
-The dedicated Identity authority command creates another exact disposable
-database, deploys migrations twice, and exercises the production Prisma reader
-through the DML-only application principal. It also composes one canonical wire
-value through the production Node SHA-256 adapter, public resolver, and real
-MySQL authority query, including fixed resolver unavailability during a
-loopback TCP accept/handshake stall. Together with the focused adapter tests,
-it proves one-statement writer time, current permission visibility,
-indistinguishable lifecycle rejection, internal corruption handling, exact
-cardinality bounds, digest cleanup, and loopback TCP accept/handshake stall
-classification before dropping its database and grant. That fault does not
-simulate an established connection or in-flight query.
-The dedicated Identity refresh-discovery command creates its own isolated
-database, deploys the migration history twice, and runs the production Prisma
-adapter through the same DML-only application-principal boundary. Its focused
-and real-MySQL checks prove the binary digest lookup, lifecycle-blind discovery
-of retained consumed, expired, revoked, and inactive-Account credentials,
-strict relationship mapping, exact not-found behavior, temporary-copy cleanup,
-index use, and loopback TCP accept/handshake stall classification. CI runs this
-command separately because its lifecycle-blind replay semantics are
-intentionally different from the access-authority reader's lifecycle-gated
-semantics.
-The dedicated locked-loader command reuses one guarded disposable database for
-several sequential proofs. The Prisma reference suite establishes the global
-lock order, query plans, retained-lifecycle mapping, and causal Account contention;
-the direct read suite executes the same three locks plus one post-lock clock read
-as prepared statement tokens
-on the sealed executor's exact connection and proves the pinned connector
-result shape, numeric mapping, six-digit instants, and digest-drift not-found.
-The same runner invokes the production Unit of Work for the two-token reuse and
-seven-token rotation branches, proving acknowledged-commit completion, the
-exact rotated credential graph, authority-derived principal, successful event,
-and rollback with the three closed external reasons for representative
-credential, generation, and final-event collisions. Separate writer-level
-probes cover every mapped duplicate constraint. A causal Account-row blocker
-now drives the production program past its configured deadline on a runtime
-with one reserved direct connection. A bounded same-user process-list poll
-first observes the exact active production Account-lock query; the returned
-outcome then remains `indeterminate`, the original graph stays unchanged, its
-credential pair cannot mint delivery, and an independent rotation proves
-recovered execution capacity. A separate two-runtime case starts two authentic
-commands from the same predecessor, positively observes both production Account
-locks, and proves one winner-agnostic rotation followed by one committed reuse
-closure. Only the winner's generation persists, the family ends revoked, and
-only the exact winner completion/candidate pair can mint the opaque delivery
-capability. The runner also root-installs fixture-scoped `AFTER` triggers that
-make each rotation mutation statement fail in turn: predecessor consumption,
-successor insertion, access insertion, predecessor linkage, family advancement,
-and successful-event append. Each target statement leaves no row effect, each
-later case cumulatively rolls back all earlier successful mutations, the exact
-pre-transaction graph is preserved, and credential delivery stays denied. A
-separate over-bound authority projection fails after the five graph writes and
-proves their rollback, while a final clean rotation proves capacity recovery.
-These are statement-atomicity, cumulative transaction-rollback, completion,
-and delivery-authority proofs; they do not inject lock-acquisition, clock-read,
-or post-event/pre-`COMMIT` faults, prove physical-session identity, or simulate
-protocol-level ambiguous `COMMIT` acknowledgement loss. The runner drops and
-independently verifies both its database and temporary DML grant.
-The Catalog integration command verifies an initial-schema
-upgrade with legacy rows, rejects ambiguous terminal history before DDL, and
-also creates, migrates twice, and removes an exact fresh
-`oms_catalog_integration` database. It verifies the repository contract and
-production HTTP composition against real MySQL. It grants the application
-principal only DML access while the suite runs and refuses an externally
-supplied migration URL, so normal development and showcase data are never test
-fixtures. The
-[Catalog lifecycle recovery runbook](docs/runbooks/catalog-lifecycle-migration-recovery.md)
-defines the fail-closed partial-DDL decision path.
-
-Catalog UUIDv7 values use natural byte order, so operational SQL must keep the
-MySQL swap flag disabled:
-
-```sql
-SELECT BIN_TO_UUID(id, 0) AS id FROM catalog_skus;
-SELECT * FROM catalog_skus WHERE id = UUID_TO_BIN('01890f3a-8bcd-7def-8abc-0123456789ab', 0);
-```
-
-Using a swap flag of `1` would apply the legacy UUIDv1 byte rearrangement and
-produce identifiers that do not match the application's UUIDv7 codec.
-
-For local migration commands, Prisma reads the root password from the ignored
-secret file. Runtime integration uses the restricted `oms_app` principal.
-Shared deployment environments must inject `DATABASE_MIGRATION_URL` through
-their secret mechanism and use a separate DDL-capable migration principal.
-Applications never apply migrations during startup.
-
-Runtime database settings use the `DATABASE_*` namespace documented in
-`.env.example`. A runtime receives exactly one of `DATABASE_PASSWORD` or
-`DATABASE_PASSWORD_FILE`; migration URLs are never part of its configuration.
-`DATABASE_CONNECTION_LIMIT` is one total per-runtime budget. The reserved
-`DATABASE_TRANSACTION_CONNECTION_LIMIT` is assigned to security-critical
-exact-connection work and Prisma receives the remainder; the two values are
-never applied as independent full-size connection limits. The direct reserve
-uses bounded one-use connections rather than MariaDB's unobservable pool
-lifecycle. Its wait queue is capped at one requester per reserved connection,
-and a slot remains consumed until the exact socket is closed and every issued
-driver operation has settled.
-Module infrastructure can compose a fixed reviewed transaction program through
-`@oms/database/mysql-transaction`. The returned frozen executor exposes no
-connection or settlement handle; it uses opaque static statements,
-server-prepared values, one monotonic absolute deadline, exact commit/rollback
-classification, and no automatic retry. Application and domain layers cannot
-import this subpath.
-Showcase, staging, and production configuration requires
-`DATABASE_TLS_MODE` to be `verify-identity`. The only supported TLS behavior
-verifies the server
-certificate and hostname; there is no certificate-bypass option. The ownership
-and settlement rationale is recorded in
-[ADR-0018](docs/adr/0018-own-security-critical-mysql-connections.md) and
-[ADR-0019](docs/adr/0019-seal-exact-connection-mysql-transaction-programs.md),
-with causal writer-time placement refined by
-[ADR-0020](docs/adr/0020-bind-transaction-clocks-at-causal-boundaries.md).
-
-Runtime Redis settings use the `REDIS_*` namespace documented in
-`.env.example`. A runtime receives exactly one password value or password-file
-source; credentials are never embedded in a Redis URL. Showcase, staging, and
-production configuration requires verified TLS. The API and worker do not yet
-construct this runtime, so the local service and real-Redis gates prove the
-technical substrate and the non-routed Identity adapter, not process
-composition or availability. Identity abuse configuration uses a separate
-exact 32-byte HMAC secret, stable deployment scope, coordinated key epoch, and
-bounded refresh policies under `IDENTITY_*`; replicas sharing a scope and
-epoch must share the same secret and policy. Its ownership, canonical
-cache-miss fallback, and ambiguity rules are defined in the
-[Redis runtime contract](docs/architecture/redis-runtime.md).
-
-Create a migration only after adding and reviewing a module-owned schema
-change:
+With the Compose stack running, verify the complete showcase workflow:
 
 ```bash
-pnpm db:migrate:create --name <migration_name>
-pnpm db:migrate:dev
+pnpm smoke:showcase
 ```
 
-`db:migrate:create` generates SQL without applying it. Review that SQL before
-running `db:migrate:dev` or committing it. `prisma db push` is deliberately not
-exposed because it bypasses the reviewed migration history.
+Use `OMS_BASE_URL=https://your-host.example pnpm smoke:showcase` for the eventual public deployment.
 
-Start the API in watch mode:
+Schema changes must be committed as migrations. Never use `prisma db push` against a shared or deployed database.
 
-```bash
-pnpm dev:api
-```
+## Principal design choices
 
-The API listens on port `3000` by default. Set `PORT` to a canonical integer
-from `1` through `65535` to override it. `NODE_ENV` accepts `development`,
-`test`, or `production` and defaults to `development`. `LOG_LEVEL` accepts
-`fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent`; its default is
-runtime-aware. `DEPLOYMENT_ENVIRONMENT` must match the process class:
-`development` uses `local`, `test` uses `test`, and `production` explicitly
-uses `showcase`, `staging`, or `production`. Invalid runtime configuration
-stops bootstrap before the API binds a socket and produces only a sanitized
-structured fatal record.
+- **Modular monolith first:** transactions and refactoring remain cheap while domain boundaries mature. Payment and Notification are candidates for extraction only after scale or team ownership requires it.
+- **Prisma over TypeORM:** the generated client and schema-first migrations provide a smaller, more explicit persistence surface. SQL constraints and conditional updates still enforce invariants that an ORM cannot guarantee alone.
+- **Transactional outbox:** order state and the intent to publish an event commit together. Direct publishing inside the HTTP transaction would create an unrecoverable dual-write failure.
+- **At-least-once messaging:** RabbitMQ may redeliver; consumers claim `(message_id, consumer)` in MySQL before applying side effects.
+- **Opaque sessions:** access credentials are short-lived bearer tokens; refresh credentials are rotated in an HttpOnly, SameSite cookie and bound to a CSRF token.
+- **Inventory as a ledger-backed balance:** the current balance supports efficient availability checks, while movement records provide an audit trail.
+- **Static frontend export:** the showcase requires no always-on Next.js server and can be served by the API under one origin.
 
-The API exposes operational endpoints independently of the versioned business
-API:
+Alternatives and their costs are recorded in [architecture decisions](docs/adr/README.md). Common system-design questions and concise answers are in the [interview guide](docs/interview-guide.md).
 
-| Endpoint | Meaning | Dependency behavior |
-| --- | --- | --- |
-| `GET /health/live` | The API process can handle HTTP requests | Does not probe MySQL or optional infrastructure |
-| `GET /health/ready` | The API can safely receive application traffic | Performs a bounded MySQL connectivity probe |
+## Important limitations
 
-Successful probes return HTTP `200`; failed or timed-out readiness probes
-return HTTP `503`. Responses disable caching and disclose only dependency
-status, never connection details or underlying errors. Business endpoints use
-`/api/v1`; health endpoints deliberately remain unversioned.
+- The payment provider is a deterministic simulator. It must never be presented as real payment processing.
+- The current deployment target is a zero-cost showcase, so cold starts, provider quotas, and lack of an SLA are accepted presentation constraints, not production operating standards.
+- Reservation expiry reclamation, carrier integration, email delivery, multi-currency pricing, tax, promotions, returns, and reconciliation remain future work.
+- A live public URL is not considered complete until migrations, secrets, health checks, the worker, and an end-to-end order have all been verified in the hosted environment.
 
-The first versioned business endpoints expose anonymous, active-only Catalog
-reads:
+## Contributing workflow
 
-| Endpoint | Meaning | Contract |
-| --- | --- | --- |
-| `GET /api/v1/catalog/skus` | List public SKUs | Optional canonical `limit` and opaque `cursor`; maximum page size 100 |
-| `GET /api/v1/catalog/skus/{skuId}` | Get one public SKU | Lowercase UUIDv7; missing and non-public resources are indistinguishable |
+Use short-lived branches named `feature/<scope>`, `fix/<scope>`, or `docs/<scope>`. Rebase or merge the latest `master`, run `pnpm check`, open a pull request, and merge only with green required checks. `master` must remain releasable; do not maintain long-lived environment branches.
 
-Catalog responses use `Cache-Control: no-store` and never expose lifecycle,
-persistence, price, inventory, or orderability fields. The list uses
-forward-only keyset pagination; clients must treat `nextCursor` as opaque.
-
-The same API process exposes its environment-neutral contract without a paid
-documentation service:
-
-| Endpoint | Meaning | Runtime behavior |
-| --- | --- | --- |
-| `GET /docs` | Read-only Swagger UI | Uses required local assets only; browser submission and remote validation are disabled |
-| `GET /docs/openapi.json` | OpenAPI 3.0.3 JSON | Generated once at startup; does not probe MySQL or publish deployment hosts |
-
-Documentation paths are unversioned and case-sensitive. Every representation
-uses `Cache-Control: no-store` and the normal server-owned request identity.
-Framework-default JSON/YAML aliases, package metadata, source maps, and OAuth
-UI helpers are not public.
-
-```bash
-curl --fail http://localhost:3000/health/live
-curl --fail http://localhost:3000/health/ready
-curl --fail 'http://localhost:3000/api/v1/catalog/skus?limit=20'
-curl --fail http://localhost:3000/docs/openapi.json
-```
-
-During database outages the process remains live while readiness returns
-`503`, allowing an orchestrator to remove it from traffic without creating a
-restart loop.
-
-Every admitted API and health response includes a fresh server-owned
-`X-Request-Id` and a validated `X-Correlation-Id`. Clients may supply one
-canonical UUIDv4 or UUIDv7 correlation ID; invalid values safely fall back to
-the request ID. Inbound request IDs are always ignored.
-
-The API writes newline-delimited JSON logs to standard output. Access logs use
-route templates and never include raw URLs, queries, bodies, credentials,
-cookies, IP addresses, or raw exceptions. Successful health polls are silent;
-failed readiness is a sanitized warning. See the
-[logging contract](docs/architecture/request-identity-and-logging.md) before
-adding diagnostic events.
-
-Public API failures use RFC 9457 Problem Details with fixed messages, opaque
-occurrence IDs, matching request/correlation headers, and `Cache-Control:
-no-store`. JSON request bodies are limited to 100 KiB; URL-encoded parsing is
-disabled until a real endpoint requires it, and compressed request bodies are
-rejected with `415`. The
-[HTTP error contract](docs/architecture/http-error-contract.md) is the source of
-truth for supported statuses and disclosure rules.
-
-Feature request bodies must use concrete decorated DTO classes. Unknown
-ordinary fields, missing required values, invalid nested shapes, and wrong
-primitive types receive the same fixed RFC 9457 `400` response without field
-names, rejected values, or constraint messages. The global boundary does not
-implicitly convert client values; business invariants remain the responsibility
-of application use cases and domain models.
-
-The worker is buildable and its composition root is tested, but it has no run
-script yet. An empty worker has no legitimate long-lived workload; a RabbitMQ
-consumer, scheduler, or fake heartbeat will not be introduced merely to keep a
-process alive.
-
-Useful repository commands:
-
-| Command | Purpose |
-| --- | --- |
-| `pnpm audit:dependencies` | Fail on known high or critical production dependency vulnerabilities |
-| `pnpm build` | Build every workspace project |
-| `pnpm build:api` | Build the API and its workspace dependencies |
-| `pnpm typecheck` | Run strict TypeScript checks |
-| `pnpm lint` | Run type-aware ESLint with zero warnings allowed |
-| `pnpm test` | Run the Jest test suite |
-| `pnpm test:coverage` | Generate local coverage output |
-| `pnpm test:integration:api` | Verify API health and database-backed readiness against real MySQL |
-| `pnpm test:integration:catalog` | Verify Catalog persistence and the production HTTP composition in an isolated local MySQL database |
-| `pnpm test:integration:identity-authority` | Verify the bounded Identity access-authority reader in an isolated local MySQL database |
-| `pnpm test:integration:identity-authorization` | Verify the Identity authorization registry, Role mappings, security-event schema, and Prisma drift against isolated real MySQL databases |
-| `pnpm test:integration:identity-refresh-discovery` | Verify lifecycle-blind refresh-digest discovery and its production Prisma query in an isolated local MySQL database |
-| `pnpm test:integration:identity-refresh-locked-loader` | Verify the Prisma reference lock contract and production direct refresh transaction composition, including exact-connection locking, commit-gated completion, mutation-statement atomicity, cumulative rollback, lossless rehydration, and causal Account contention, in an isolated local MySQL database |
-| `pnpm test:integration:identity-refresh-lineage` | Verify the Identity lineage migration, invariants, and Prisma drift against isolated real MySQL databases |
-| `pnpm test:integration:identity-refresh-abuse` | Verify atomic refresh abuse admission, isolated dimension limits, refill/TTL, corruption, policy/secret drift, clock regression, and ambiguous no-retry behavior against authenticated real Redis |
-| `pnpm test:integration:redis` | Verify the bounded runtime, authenticated script execution, and atomic behavior against real Redis |
-| `pnpm format:check` | Verify formatting without modifying files |
-| `pnpm check` | Run every required quality gate in CI order |
-| `pnpm db:generate` | Generate the pinned Prisma client locally |
-| `pnpm db:schema:validate` | Validate the complete multi-file Prisma schema |
-| `pnpm db:migrate:create --name <name>` | Generate a reviewable migration without applying it |
-| `pnpm db:migrate:dev` | Apply local development migrations |
-| `pnpm db:migrate:deploy` | Apply committed migrations without creating new ones |
-| `pnpm db:migrate:status` | Compare committed migrations with the database |
-| `pnpm test:integration:database` | Verify Prisma and the database contract against real MySQL |
-| `pnpm infra:up` | Start local dependencies and wait for health checks |
-| `pnpm infra:down` | Stop local dependencies while preserving their data |
-| `pnpm infra:status` | Show local dependency status |
-| `pnpm infra:logs` | Follow local dependency logs |
-
-## License
-
-This project is available under the [MIT License](LICENSE).
+See [LICENSE](LICENSE).

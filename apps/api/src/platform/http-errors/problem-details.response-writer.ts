@@ -109,6 +109,11 @@ export class ProblemDetailsResponseWriter {
     setRequestIdentityResponseHeaders(response, identity);
     adapter.setHeader(response, 'Cache-Control', PROBLEM_DETAILS_CACHE_CONTROL);
     adapter.setHeader(response, 'Content-Type', PROBLEM_DETAILS_CONTENT_TYPE);
+
+    if (mapping.descriptor.status === 401) {
+      adapter.setHeader(response, 'WWW-Authenticate', 'Bearer');
+    }
+
     adapter.reply(response, body, mapping.descriptor.status);
   }
 

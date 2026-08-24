@@ -10,9 +10,6 @@ import { type DeploymentEnvironment, InvalidConfigurationError } from './api-run
 const DEFAULT_REDIS_PORT = 6379;
 const DEFAULT_CONNECT_TIMEOUT_MILLISECONDS = 500;
 const DEFAULT_COMMAND_TIMEOUT_MILLISECONDS = 100;
-const DEFAULT_PROBE_TIMEOUT_MILLISECONDS = 500;
-const DEFAULT_SHUTDOWN_TIMEOUT_MILLISECONDS = 1_000;
-const DEFAULT_COMMAND_QUEUE_LIMIT = 256;
 const MAX_REDIS_USERNAME_BYTES = 128;
 const MAX_REDIS_PASSWORD_BYTES = 8_192;
 const MAX_REDIS_CERTIFICATE_AUTHORITY_BYTES = 1_048_576;
@@ -89,9 +86,6 @@ const redisEnvironmentSchema = z.object({
   REDIS_PASSWORD_FILE: secretFileSchema.optional(),
   REDIS_CONNECT_TIMEOUT_MS: boundedDecimalSchema(100, 5_000),
   REDIS_COMMAND_TIMEOUT_MS: boundedDecimalSchema(25, 500),
-  REDIS_PROBE_TIMEOUT_MS: boundedDecimalSchema(25, 5_000),
-  REDIS_SHUTDOWN_TIMEOUT_MS: boundedDecimalSchema(100, 10_000),
-  REDIS_COMMAND_QUEUE_LIMIT: boundedDecimalSchema(1, 10_000),
   REDIS_TLS_MODE: z.enum(['disabled', 'verify-identity']),
   REDIS_TLS_CA: redisCertificateAuthorityValueSchema.optional(),
   REDIS_TLS_CA_FILE: secretFileSchema.optional(),
@@ -138,9 +132,6 @@ export interface RedisRuntimeConfiguration {
   readonly password: RedisPasswordSource;
   readonly connectTimeoutMilliseconds: number;
   readonly commandTimeoutMilliseconds: number;
-  readonly probeTimeoutMilliseconds: number;
-  readonly shutdownTimeoutMilliseconds: number;
-  readonly commandQueueLimit: number;
   readonly tls: RedisTlsConfiguration;
 }
 
@@ -158,9 +149,6 @@ export interface ResolvedRedisRuntimeConfiguration {
   readonly password: string;
   readonly connectTimeoutMilliseconds: number;
   readonly commandTimeoutMilliseconds: number;
-  readonly probeTimeoutMilliseconds: number;
-  readonly shutdownTimeoutMilliseconds: number;
-  readonly commandQueueLimit: number;
   readonly tls: ResolvedRedisTlsConfiguration;
 }
 
@@ -186,12 +174,6 @@ function withDefaults(
       environment['REDIS_CONNECT_TIMEOUT_MS'] ?? String(DEFAULT_CONNECT_TIMEOUT_MILLISECONDS),
     REDIS_COMMAND_TIMEOUT_MS:
       environment['REDIS_COMMAND_TIMEOUT_MS'] ?? String(DEFAULT_COMMAND_TIMEOUT_MILLISECONDS),
-    REDIS_PROBE_TIMEOUT_MS:
-      environment['REDIS_PROBE_TIMEOUT_MS'] ?? String(DEFAULT_PROBE_TIMEOUT_MILLISECONDS),
-    REDIS_SHUTDOWN_TIMEOUT_MS:
-      environment['REDIS_SHUTDOWN_TIMEOUT_MS'] ?? String(DEFAULT_SHUTDOWN_TIMEOUT_MILLISECONDS),
-    REDIS_COMMAND_QUEUE_LIMIT:
-      environment['REDIS_COMMAND_QUEUE_LIMIT'] ?? String(DEFAULT_COMMAND_QUEUE_LIMIT),
     REDIS_TLS_MODE: environment['REDIS_TLS_MODE'] ?? (useLocalDefaults ? 'disabled' : undefined),
     REDIS_TLS_CA: environment['REDIS_TLS_CA'],
     REDIS_TLS_CA_FILE: environment['REDIS_TLS_CA_FILE'],
@@ -332,9 +314,6 @@ export function parseRedisRuntimeConfiguration(
     password: passwordSource(result.data),
     connectTimeoutMilliseconds: result.data.REDIS_CONNECT_TIMEOUT_MS,
     commandTimeoutMilliseconds: result.data.REDIS_COMMAND_TIMEOUT_MS,
-    probeTimeoutMilliseconds: result.data.REDIS_PROBE_TIMEOUT_MS,
-    shutdownTimeoutMilliseconds: result.data.REDIS_SHUTDOWN_TIMEOUT_MS,
-    commandQueueLimit: result.data.REDIS_COMMAND_QUEUE_LIMIT,
     tls: tlsConfiguration(result.data),
   });
 }
@@ -489,9 +468,6 @@ export function resolveRedisRuntimeConfiguration(
     password: resolvedPassword.value,
     connectTimeoutMilliseconds: configuration.connectTimeoutMilliseconds,
     commandTimeoutMilliseconds: configuration.commandTimeoutMilliseconds,
-    probeTimeoutMilliseconds: configuration.probeTimeoutMilliseconds,
-    shutdownTimeoutMilliseconds: configuration.shutdownTimeoutMilliseconds,
-    commandQueueLimit: configuration.commandQueueLimit,
     tls,
   });
 }

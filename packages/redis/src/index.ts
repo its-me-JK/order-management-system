@@ -1,8 +1,7 @@
-export { createRedisRuntime } from './redis.factory';
+export { createRedisRuntime } from './redis-runtime';
 export {
   RedisRuntimeUnavailableError,
-  type RedisConnection,
-  type RedisConnectionOptions,
   type RedisRuntime,
+  type RedisRuntimeOptions,
   type RedisTlsOptions,
 } from './redis.contract';

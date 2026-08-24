@@ -22,7 +22,6 @@ function deferred(): {
 
 function databaseDriver(overrides: Partial<DatabaseDriver> = {}): DatabaseDriver {
   return {
-    beginClose: jest.fn((): void => undefined),
     close: jest.fn((): Promise<void> => Promise.resolve()),
     probe: jest.fn((): Promise<void> => Promise.resolve()),
     ...overrides,
@@ -114,9 +113,8 @@ describe('ManagedDatabaseConnection', (): void => {
   });
 
   it('closes the driver exactly once', async (): Promise<void> => {
-    const beginClose = jest.fn((): void => undefined);
     const close = jest.fn((): Promise<void> => Promise.resolve());
-    const driver = databaseDriver({ beginClose, close });
+    const driver = databaseDriver({ close });
     const database = new ManagedDatabaseConnection(driver);
 
     const firstClose = database.close();
@@ -124,23 +122,20 @@ describe('ManagedDatabaseConnection', (): void => {
 
     expect(firstClose).toBe(secondClose);
     await expect(Promise.all([firstClose, secondClose])).resolves.toEqual([undefined, undefined]);
-    expect(beginClose).toHaveBeenCalledTimes(1);
     expect(close).toHaveBeenCalledTimes(1);
   });
 
   it('waits for an active probe to settle before closing the driver', async (): Promise<void> => {
     const pendingProbe = deferred();
-    const beginClose = jest.fn((): void => undefined);
     const probe = jest.fn((): Promise<void> => pendingProbe.promise);
     const close = jest.fn((): Promise<void> => Promise.resolve());
-    const database = new ManagedDatabaseConnection(databaseDriver({ beginClose, close, probe }));
+    const database = new ManagedDatabaseConnection(databaseDriver({ close, probe }));
 
     const probeOperation = database.probe();
     const closeOperation = database.close();
 
     await Promise.resolve();
     expect(probe).toHaveBeenCalledTimes(1);
-    expect(beginClose).toHaveBeenCalledTimes(1);
     expect(close).not.toHaveBeenCalled();
 
     pendingProbe.resolve();

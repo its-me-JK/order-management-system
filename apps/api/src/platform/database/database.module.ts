@@ -1,4 +1,4 @@
-import { type DynamicModule, Module } from '@nestjs/common';
+import { type DynamicModule, Global, Module } from '@nestjs/common';
 
 import type { DatabaseRuntime } from '@oms/database';
 import { getPrismaClient } from '@oms/database/prisma';
@@ -8,6 +8,7 @@ import { DATABASE_CLIENT, DATABASE_CONNECTION, DATABASE_RUNTIME } from './databa
 
 export type DatabaseRuntimeFactory = () => DatabaseRuntime;
 
+@Global()
 @Module({})
 export class DatabaseModule {
   public static register(createRuntime: DatabaseRuntimeFactory): DynamicModule {

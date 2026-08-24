@@ -1,64 +1,28 @@
-# ADR-0004: Use a transactional outbox for integration events
+# ADR 0004: Publish events through a transactional outbox
 
-- **Status:** Accepted
-- **Date:** 2026-08-02
+Status: accepted
 
 ## Context
 
-Many committed changes must trigger asynchronous work. For example, a
-confirmed order may start fulfillment and notification workflows. Publishing
-to RabbitMQ before a database commit can expose an event for state that later
-rolls back. Publishing after commit can lose the event if the process crashes
-between the two operations.
-
-MySQL and RabbitMQ do not share a practical atomic transaction.
+Order/payment state and RabbitMQ cannot participate in one reliable ordinary transaction. Direct publication creates lost or phantom events.
 
 ## Decision
 
-Write each integration event to an outbox table in the same MySQL transaction
-as its aggregate change. A worker claims unpublished records, publishes
-persistent messages to RabbitMQ with publisher confirms, and marks publication
-progress idempotently.
+Write one `outbox_events` row in the same MySQL transaction as each event-producing mutation. A worker polls due rows, publishes canonical envelopes with RabbitMQ confirms, and marks them published. Consumers manually acknowledge and claim `(message_id, consumer)` in the same transaction as their side effect.
 
-RabbitMQ delivery is at least once. Every event has a globally unique event ID,
-schema version, aggregate version, correlation and causation metadata. Every
-consumer handles duplicates using a durable inbox record or an equally strong
-business uniqueness constraint.
-
-Consumers use manual acknowledgements, bounded retries with backoff, and a
-dead-letter queue. Operators can inspect and replay failed messages through a
-controlled procedure.
+The delivery contract is at least once.
 
 ## Consequences
 
-### Positive
+- Broker downtime does not lose committed event intent.
+- Publication is asynchronous and introduces measurable lag.
+- Duplicate publication/redelivery is expected and safe for current database consumers.
+- Polling creates database load and one-worker throughput limits.
+- Exhausted retries and dead-letter queues require operator visibility.
 
-- A committed business change cannot silently miss its integration event.
-- Publishing recovers after worker or broker outages.
-- Producers and consumers are independently retryable and observable.
-- The approach creates a reliable seam for future service extraction.
+## Alternatives
 
-### Negative
-
-- Consumers may observe events after a delay and must handle duplicates or
-  reordering.
-- The outbox needs retention, lag monitoring, claim coordination, and recovery
-  procedures.
-- Event contracts require compatibility discipline.
-
-## Alternatives considered
-
-- **Publish directly after commit:** leaves an unavoidable crash window.
-- **Publish before commit:** can advertise state that never commits.
-- **Distributed transactions:** unsupported or operationally disproportionate
-  for MySQL and RabbitMQ.
-- **RabbitMQ as the source of truth:** does not replace queryable domain state,
-  transactional constraints, or the audit model.
-- **Change-data capture:** viable later, but adds infrastructure and still
-  requires deliberate event contract design.
-
-## Revisit when
-
-Consider change-data capture when outbox polling or publication volume becomes
-a measured bottleneck. The atomic write, idempotent consumption, and versioned
-contract guarantees must remain.
+- Publish inside the request transaction was rejected because database and broker outcomes can diverge.
+- XA/distributed transactions were rejected as operationally brittle and poorly aligned with the stack.
+- Kafka/CDC was deferred until event volume or replay requirements justify additional infrastructure.
+- Redis-based deduplication was rejected because it cannot commit atomically with MySQL side effects.

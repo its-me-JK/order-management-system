@@ -1,7 +1,6 @@
 packages:
   - apps/*
   - packages/*
-  - packages/modules/*
 autoInstallPeers: false
 allowBuilds:
   '@prisma/engines@7.9.1': true

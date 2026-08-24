@@ -10,6 +10,10 @@ const EXPECTED_DESCRIPTORS: Readonly<Record<SupportedProblemStatus, ExpectedDesc
     title: 'Bad Request',
     detail: 'The request is invalid.',
   },
+  401: {
+    title: 'Unauthorized',
+    detail: 'Authentication is required.',
+  },
   403: {
     title: 'Forbidden',
     detail: 'You are not allowed to perform this operation.',

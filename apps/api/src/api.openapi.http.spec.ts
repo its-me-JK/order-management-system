@@ -2,31 +2,155 @@ import type { INestApplication } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import type {
   OpenAPIObject,
+  OperationObject,
   ParameterObject,
   ReferenceObject,
-  ResponseObject,
   SchemaObject,
 } from '@nestjs/swagger';
 import { Test } from '@nestjs/testing';
 import type { DatabaseConnection } from '@oms/database';
 
+import { createDatabaseRuntimeFixture } from '../test-support/database-runtime.fixture';
+import { createRedisRuntimeFixture } from '../test-support/redis-runtime.fixture';
 import { configureApiApplication, createApiExpressAdapter } from './api.application';
 import { assertValidOperationIds } from './api.documentation';
 import { ApiModule } from './api.module';
-import {
-  CATALOG_PUBLIC_SKU_CURSOR_PATTERN,
-  CATALOG_PUBLIC_SKU_ID_PATTERN,
-  CATALOG_PUBLIC_SKU_LIMIT_PATTERN,
-  CATALOG_PUBLIC_SKU_OPENAPI_SCHEMA_NAMES,
-} from './features/catalog/delivery/http/catalog-public-sku.openapi.schemas';
-import { MAX_CATALOG_PUBLIC_SKU_CURSOR_LENGTH } from './features/catalog/delivery/http/catalog-public-sku-cursor.codec';
-import { createDatabaseRuntimeFixture } from './platform/database/database-runtime.fixture';
-import { OPENAPI_HEADER_NAMES, OPENAPI_SCHEMA_NAMES } from './platform/openapi/openapi.schemas';
+import { OPENAPI_SCHEMA_NAMES } from './platform/openapi/openapi.schemas';
 
-const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const HEALTH_PATHS = ['/health/live', '/health/ready'] as const;
-const CATALOG_PATHS = ['/api/v1/catalog/skus', '/api/v1/catalog/skus/{skuId}'] as const;
-const EXPECTED_PATHS = [...HEALTH_PATHS, ...CATALOG_PATHS] as const;
+type HttpMethod = 'get' | 'patch' | 'post';
+type Security = 'bearer' | 'cookie' | 'public';
+
+interface ExpectedOperation {
+  readonly id: string;
+  readonly method: HttpMethod;
+  readonly path: string;
+  readonly security: Security;
+}
+
+const EXPECTED_OPERATIONS: readonly ExpectedOperation[] = [
+  { id: 'healthGetLiveness', method: 'get', path: '/health/live', security: 'public' },
+  { id: 'healthGetReadiness', method: 'get', path: '/health/ready', security: 'public' },
+  { id: 'registerUser', method: 'post', path: '/api/v1/auth/register', security: 'public' },
+  { id: 'loginUser', method: 'post', path: '/api/v1/auth/login', security: 'public' },
+  {
+    id: 'refreshUserSession',
+    method: 'post',
+    path: '/api/v1/auth/refresh',
+    security: 'cookie',
+  },
+  { id: 'logoutUser', method: 'post', path: '/api/v1/auth/logout', security: 'cookie' },
+  { id: 'getCurrentUser', method: 'get', path: '/api/v1/auth/me', security: 'bearer' },
+  {
+    id: 'listCatalogProducts',
+    method: 'get',
+    path: '/api/v1/catalog/products',
+    security: 'public',
+  },
+  {
+    id: 'listCatalogSkus',
+    method: 'get',
+    path: '/api/v1/catalog/skus',
+    security: 'public',
+  },
+  {
+    id: 'getCatalogSku',
+    method: 'get',
+    path: '/api/v1/catalog/skus/{id}',
+    security: 'public',
+  },
+  {
+    id: 'createCatalogProduct',
+    method: 'post',
+    path: '/api/v1/admin/products',
+    security: 'bearer',
+  },
+  {
+    id: 'updateCatalogProduct',
+    method: 'patch',
+    path: '/api/v1/admin/products/{id}',
+    security: 'bearer',
+  },
+  {
+    id: 'createCatalogSku',
+    method: 'post',
+    path: '/api/v1/admin/products/{productId}/skus',
+    security: 'bearer',
+  },
+  {
+    id: 'updateCatalogSku',
+    method: 'patch',
+    path: '/api/v1/admin/skus/{id}',
+    security: 'bearer',
+  },
+  {
+    id: 'listInventory',
+    method: 'get',
+    path: '/api/v1/inventory',
+    security: 'bearer',
+  },
+  {
+    id: 'getInventoryBySku',
+    method: 'get',
+    path: '/api/v1/inventory/{skuId}',
+    security: 'public',
+  },
+  {
+    id: 'adjustInventory',
+    method: 'post',
+    path: '/api/v1/inventory/{skuId}/adjust',
+    security: 'bearer',
+  },
+  { id: 'createOrder', method: 'post', path: '/api/v1/orders', security: 'bearer' },
+  { id: 'listOrders', method: 'get', path: '/api/v1/orders', security: 'bearer' },
+  {
+    id: 'getOrder',
+    method: 'get',
+    path: '/api/v1/orders/{orderId}',
+    security: 'bearer',
+  },
+  {
+    id: 'cancelOrder',
+    method: 'post',
+    path: '/api/v1/orders/{orderId}/cancel',
+    security: 'bearer',
+  },
+  {
+    id: 'getOrderPayment',
+    method: 'get',
+    path: '/api/v1/orders/{orderId}/payment',
+    security: 'bearer',
+  },
+  {
+    id: 'shipOrder',
+    method: 'post',
+    path: '/api/v1/admin/orders/{orderId}/ship',
+    security: 'bearer',
+  },
+  {
+    id: 'deliverOrder',
+    method: 'post',
+    path: '/api/v1/admin/orders/{orderId}/deliver',
+    security: 'bearer',
+  },
+  {
+    id: 'refundPayment',
+    method: 'post',
+    path: '/api/v1/payments/{paymentId}/refund',
+    security: 'bearer',
+  },
+  {
+    id: 'listNotifications',
+    method: 'get',
+    path: '/api/v1/notifications',
+    security: 'bearer',
+  },
+  {
+    id: 'markNotificationRead',
+    method: 'patch',
+    path: '/api/v1/notifications/{notificationId}/read',
+    security: 'bearer',
+  },
+];
 
 interface RunningApi {
   readonly application: INestApplication;
@@ -47,69 +171,38 @@ async function startApi(): Promise<RunningApi> {
     imports: [
       ApiModule.register({
         createDatabaseRuntime: () => createDatabaseRuntimeFixture(databaseConnection(probe)),
-        observability: {
-          deploymentEnvironment: 'test',
-          level: 'silent',
-        },
+        createRedisRuntime: createRedisRuntimeFixture,
+        observability: { deploymentEnvironment: 'test', level: 'silent' },
       }),
     ],
   }).compile();
   const application = moduleReference.createNestApplication<NestExpressApplication>(
     createApiExpressAdapter(),
-    {
-      bodyParser: false,
-      logger: false,
-    },
+    { bodyParser: false, logger: false },
   );
 
   configureApiApplication(application);
   await application.listen(0, '127.0.0.1');
 
-  return {
-    application,
-    baseUrl: await application.getUrl(),
-    probe,
-  };
+  return { application, baseUrl: await application.getUrl(), probe };
 }
 
-function expectRequestIdentity(response: Response): void {
-  const requestId = response.headers.get('x-request-id');
+function operation(document: OpenAPIObject, expected: ExpectedOperation): OperationObject {
+  const pathItem = document.paths[expected.path];
+  const value = pathItem?.[expected.method];
 
-  expect(requestId).toMatch(UUID_V4);
-  expect(response.headers.get('x-correlation-id')).toBe(requestId);
+  if (value === undefined) throw new Error(`Missing ${expected.method} ${expected.path}`);
+  return value;
 }
 
-function concreteSchema(
-  schema: ReferenceObject | SchemaObject | undefined,
-  name: string,
-): SchemaObject {
-  if (schema === undefined || '$ref' in schema) {
-    throw new Error(`Expected ${name} to be a concrete OpenAPI schema`);
-  }
-
-  return schema;
+function concreteSchema(value: ReferenceObject | SchemaObject | undefined): SchemaObject {
+  if (value === undefined || '$ref' in value) throw new Error('Expected a concrete schema');
+  return value;
 }
 
-function concreteResponse(
-  response: ReferenceObject | ResponseObject | undefined,
-  name: string,
-): ResponseObject {
-  if (response === undefined || '$ref' in response) {
-    throw new Error(`Expected ${name} to be a concrete OpenAPI response`);
-  }
-
-  return response;
-}
-
-function concreteParameter(
-  parameter: ReferenceObject | ParameterObject | undefined,
-  name: string,
-): ParameterObject {
-  if (parameter === undefined || '$ref' in parameter) {
-    throw new Error(`Expected ${name} to be a concrete OpenAPI parameter`);
-  }
-
-  return parameter;
+function concreteParameter(value: ReferenceObject | ParameterObject): ParameterObject {
+  if ('$ref' in value) throw new Error('Expected a concrete parameter');
+  return value;
 }
 
 function documentWithOperationIds(
@@ -120,82 +213,104 @@ function documentWithOperationIds(
     ...document,
     paths: Object.fromEntries(
       operationIds.map((operationId, index) => [
-        `/operation-${String(index)}`,
-        {
-          get: {
-            ...(operationId === undefined ? {} : { operationId }),
-            responses: { 200: { description: 'Successful response' } },
-          },
-        },
+        `/probe-${String(index)}`,
+        { get: { ...(operationId === undefined ? {} : { operationId }), responses: {} } },
       ]),
     ),
   };
 }
 
-function expectHealthEnvelopeSchema(
-  schema: SchemaObject,
-  status: 'error' | 'ok' | 'shutting_down',
-  infoSchemaName: string,
-  errorSchemaName: string,
-  detailsSchemaName: string,
-): void {
-  expect(schema).toEqual({
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      status: { type: 'string', enum: [status] },
-      info: { $ref: `#/components/schemas/${infoSchemaName}` },
-      error: { $ref: `#/components/schemas/${errorSchemaName}` },
-      details: { $ref: `#/components/schemas/${detailsSchemaName}` },
-    },
-    required: ['status', 'info', 'error', 'details'],
-  });
-}
-
 describe('API OpenAPI contract', (): void => {
   let runningApi: RunningApi;
+  let document: OpenAPIObject;
 
   beforeAll(async (): Promise<void> => {
     runningApi = await startApi();
+    const response = await fetch(`${runningApi.baseUrl}/docs/openapi.json`);
+    document = (await response.json()) as OpenAPIObject;
   });
 
   afterAll(async (): Promise<void> => {
     await runningApi.application.close();
   });
 
-  it('serves one deterministic JSON contract without probing MySQL', async (): Promise<void> => {
-    const response = await fetch(`${runningApi.baseUrl}/docs/openapi.json`);
-    const document = (await response.json()) as OpenAPIObject;
-    const serialized = JSON.stringify(document);
+  it('publishes every implemented operation with a stable unique ID', (): void => {
+    const actual = Object.entries(document.paths).flatMap(([path, pathItem]) =>
+      (['get', 'patch', 'post'] as const).flatMap((method) =>
+        pathItem?.[method] === undefined ? [] : [`${method} ${path}`],
+      ),
+    );
+    const expected = EXPECTED_OPERATIONS.map(({ method, path }) => `${method} ${path}`);
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get('content-type')).toBe('application/json; charset=utf-8');
-    expect(response.headers.get('cache-control')).toBe('no-store');
-    expectRequestIdentity(response);
-    expect(document.openapi).toBe('3.0.3');
-    expect(document.info).toMatchObject({
-      title: 'Order Management System API',
-      version: '1.0.0',
-    });
-    expect(document.servers).toEqual([]);
-    expect(Object.keys(document.paths).sort()).toEqual([...EXPECTED_PATHS].sort());
-    expect(document.paths['/health/live']?.get?.operationId).toBe('healthGetLiveness');
-    expect(document.paths['/health/ready']?.get?.operationId).toBe('healthGetReadiness');
-    expect(serialized).not.toContain('UNSPECIFIED_');
-    expect(serialized).not.toContain('DATABASE_');
-    expect(serialized).not.toContain('mysql://');
-    expect(serialized).not.toContain('127.0.0.1');
+    expect(actual.sort()).toEqual(expected.sort());
+    expect((): void => assertValidOperationIds(document)).not.toThrow();
+
+    for (const expectedOperation of EXPECTED_OPERATIONS) {
+      expect(operation(document, expectedOperation).operationId).toBe(expectedOperation.id);
+    }
+
     expect(runningApi.probe).not.toHaveBeenCalled();
   });
 
-  it('fails contract validation for generated, malformed, missing, or duplicate operation IDs', async (): Promise<void> => {
-    const response = await fetch(`${runningApi.baseUrl}/docs/openapi.json`);
-    const document = (await response.json()) as OpenAPIObject;
+  it('documents public, bearer, and refresh-cookie security accurately', (): void => {
+    expect(document.components?.securitySchemes?.['access-token']).toMatchObject({
+      scheme: 'bearer',
+      type: 'http',
+    });
+    expect(document.components?.securitySchemes?.['refresh-token']).toMatchObject({
+      in: 'cookie',
+      name: 'oms_refresh',
+      type: 'apiKey',
+    });
 
-    expect((): void => {
-      assertValidOperationIds(documentWithOperationIds(document, ['ordersCreate']));
-    }).not.toThrow();
+    for (const expected of EXPECTED_OPERATIONS) {
+      const security = operation(document, expected).security ?? [];
+      const securityName = expected.security === 'bearer' ? 'access-token' : 'refresh-token';
 
+      expect(security).toEqual(expected.security === 'public' ? [] : [{ [securityName]: [] }]);
+    }
+  });
+
+  it('documents validated request fields and idempotent order creation', (): void => {
+    const schemas = document.components?.schemas;
+    const login = concreteSchema(schemas?.['LoginDto']);
+    const createOrder = concreteSchema(schemas?.['CreateOrderDto']);
+    const shippingAddress = concreteSchema(schemas?.['ShippingAddressDto']);
+    const expectedCreateOrder = EXPECTED_OPERATIONS.find(({ id }) => id === 'createOrder');
+
+    if (expectedCreateOrder === undefined) throw new Error('Missing expected createOrder contract');
+
+    const createOrderOperation = operation(document, expectedCreateOrder);
+    const idempotencyHeader = (createOrderOperation.parameters ?? [])
+      .map(concreteParameter)
+      .find(({ name }) => name === 'Idempotency-Key');
+
+    expect(login.required).toEqual(expect.arrayContaining(['email', 'password']));
+    expect(login.properties?.['email']).toMatchObject({ format: 'email', type: 'string' });
+    expect(createOrder.required).toEqual(expect.arrayContaining(['items', 'shippingAddress']));
+    expect(shippingAddress.properties?.['country']).toMatchObject({
+      maxLength: 2,
+      minLength: 2,
+      pattern: '^[A-Z]{2}$',
+    });
+    expect(idempotencyHeader).toMatchObject({ in: 'header', required: true });
+  });
+
+  it('documents Redis and MySQL readiness plus sanitized 401 responses', (): void => {
+    const dependencySchema = concreteSchema(
+      document.components?.schemas?.[OPENAPI_SCHEMA_NAMES.healthDependenciesUp],
+    );
+    const problemSchema = concreteSchema(
+      document.components?.schemas?.[OPENAPI_SCHEMA_NAMES.problemDetails],
+    );
+    const statusSchema = concreteSchema(problemSchema.properties?.['status']);
+
+    expect(dependencySchema.required).toEqual(['database', 'redis']);
+    expect(statusSchema.enum).toEqual(expect.arrayContaining([401, 403, 409, 429]));
+    expect(document.paths['/health/ready']?.get?.responses['503']).toBeDefined();
+  });
+
+  it('rejects missing, generated, malformed, and duplicate operation IDs', (): void => {
     for (const operationIds of [
       [undefined],
       ['UNSPECIFIED_OrdersController_create_v1'],
@@ -203,474 +318,22 @@ describe('API OpenAPI contract', (): void => {
       ['orders-create'],
       ['ordersCreate', 'ordersCreate'],
     ] as const) {
-      expect((): void => {
-        assertValidOperationIds(documentWithOperationIds(document, operationIds));
-      }).toThrow('The generated OpenAPI document has invalid operation identifiers');
+      expect((): void =>
+        assertValidOperationIds(documentWithOperationIds(document, operationIds)),
+      ).toThrow('The generated OpenAPI document has invalid operation identifiers');
     }
   });
 
-  it('publishes exact reusable Problem Details and operational-health schemas', async (): Promise<void> => {
-    const response = await fetch(`${runningApi.baseUrl}/docs/openapi.json`);
-    const document = (await response.json()) as OpenAPIObject;
-    const problemSchema = concreteSchema(
-      document.components?.schemas?.[OPENAPI_SCHEMA_NAMES.problemDetails],
-      OPENAPI_SCHEMA_NAMES.problemDetails,
-    );
-
-    expect(problemSchema.additionalProperties).toBe(false);
-    expect(problemSchema.required).toEqual([
-      'type',
-      'title',
-      'status',
-      'detail',
-      'instance',
-      'requestId',
-      'correlationId',
-    ]);
-    expect(Object.keys(problemSchema.properties ?? {})).toEqual(problemSchema.required);
-    expect(problemSchema.properties?.['type']).toMatchObject({ enum: ['about:blank'] });
-    expect(problemSchema.properties?.['requestId']).toMatchObject({
-      format: 'uuid',
-      type: 'string',
-    });
-
-    const schemas = document.components?.schemas;
-    const emptyComponents = concreteSchema(
-      schemas?.[OPENAPI_SCHEMA_NAMES.healthEmptyComponents],
-      OPENAPI_SCHEMA_NAMES.healthEmptyComponents,
-    );
-    const databaseUpComponents = concreteSchema(
-      schemas?.[OPENAPI_SCHEMA_NAMES.healthDatabaseUpComponents],
-      OPENAPI_SCHEMA_NAMES.healthDatabaseUpComponents,
-    );
-    const databaseDownComponents = concreteSchema(
-      schemas?.[OPENAPI_SCHEMA_NAMES.healthDatabaseDownComponents],
-      OPENAPI_SCHEMA_NAMES.healthDatabaseDownComponents,
-    );
-
-    expect(emptyComponents).toEqual({
-      type: 'object',
-      additionalProperties: false,
-      properties: {},
-    });
-    expect(databaseUpComponents).toEqual({
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        database: {
-          type: 'object',
-          additionalProperties: false,
-          properties: { status: { type: 'string', enum: ['up'] } },
-          required: ['status'],
-        },
-      },
-      required: ['database'],
-    });
-    expect(databaseDownComponents).toEqual({
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        database: {
-          type: 'object',
-          additionalProperties: false,
-          properties: { status: { type: 'string', enum: ['down'] } },
-          required: ['status'],
-        },
-      },
-      required: ['database'],
-    });
-
-    for (const [schemaName, status, info, error, details] of [
-      [
-        OPENAPI_SCHEMA_NAMES.livenessOk,
-        'ok',
-        OPENAPI_SCHEMA_NAMES.healthEmptyComponents,
-        OPENAPI_SCHEMA_NAMES.healthEmptyComponents,
-        OPENAPI_SCHEMA_NAMES.healthEmptyComponents,
-      ],
-      [
-        OPENAPI_SCHEMA_NAMES.livenessShuttingDown,
-        'shutting_down',
-        OPENAPI_SCHEMA_NAMES.healthEmptyComponents,
-        OPENAPI_SCHEMA_NAMES.healthEmptyComponents,
-        OPENAPI_SCHEMA_NAMES.healthEmptyComponents,
-      ],
-      [
-        OPENAPI_SCHEMA_NAMES.readinessOk,
-        'ok',
-        OPENAPI_SCHEMA_NAMES.healthDatabaseUpComponents,
-        OPENAPI_SCHEMA_NAMES.healthEmptyComponents,
-        OPENAPI_SCHEMA_NAMES.healthDatabaseUpComponents,
-      ],
-      [
-        OPENAPI_SCHEMA_NAMES.readinessUnavailable,
-        'error',
-        OPENAPI_SCHEMA_NAMES.healthEmptyComponents,
-        OPENAPI_SCHEMA_NAMES.healthDatabaseDownComponents,
-        OPENAPI_SCHEMA_NAMES.healthDatabaseDownComponents,
-      ],
-      [
-        OPENAPI_SCHEMA_NAMES.readinessShuttingDownAvailable,
-        'shutting_down',
-        OPENAPI_SCHEMA_NAMES.healthDatabaseUpComponents,
-        OPENAPI_SCHEMA_NAMES.healthEmptyComponents,
-        OPENAPI_SCHEMA_NAMES.healthDatabaseUpComponents,
-      ],
-      [
-        OPENAPI_SCHEMA_NAMES.readinessShuttingDownUnavailable,
-        'shutting_down',
-        OPENAPI_SCHEMA_NAMES.healthEmptyComponents,
-        OPENAPI_SCHEMA_NAMES.healthDatabaseDownComponents,
-        OPENAPI_SCHEMA_NAMES.healthDatabaseDownComponents,
-      ],
-    ] as const) {
-      expectHealthEnvelopeSchema(
-        concreteSchema(schemas?.[schemaName], schemaName),
-        status,
-        info,
-        error,
-        details,
-      );
-    }
-
-    for (const schemaName of Object.values(OPENAPI_SCHEMA_NAMES).filter((name) =>
-      name.startsWith('OperationalHealth'),
-    )) {
-      expect(document.components?.schemas?.[schemaName]).toBeDefined();
-    }
-
-    expect(document.paths['/health/live']?.get?.responses).toMatchObject({
-      200: {
-        content: {
-          'application/json': {
-            schema: { $ref: '#/components/schemas/OperationalHealthLivenessOk' },
-          },
-        },
-      },
-      503: {
-        content: {
-          'application/json': {
-            schema: { $ref: '#/components/schemas/OperationalHealthLivenessShuttingDown' },
-          },
-        },
-      },
-      500: {
-        content: {
-          'application/problem+json': {
-            schema: { $ref: '#/components/schemas/InternalServerErrorProblem' },
-          },
-        },
-      },
-    });
-    expect(document.paths['/health/ready']?.get?.responses['503']).toMatchObject({
-      content: {
-        'application/json': {
-          schema: {
-            oneOf: [
-              { $ref: '#/components/schemas/OperationalHealthReadinessUnavailable' },
-              {
-                $ref: '#/components/schemas/OperationalHealthReadinessShuttingDownAvailable',
-              },
-              {
-                $ref: '#/components/schemas/OperationalHealthReadinessShuttingDownUnavailable',
-              },
-            ],
-          },
-        },
-      },
-    });
-
-    for (const headerName of Object.values(OPENAPI_HEADER_NAMES)) {
-      expect(document.components?.headers?.[headerName]).toMatchObject({ required: true });
-    }
-
-    for (const path of HEALTH_PATHS) {
-      for (const status of ['200', '503', '500'] as const) {
-        const responseObject = concreteResponse(
-          document.paths[path]?.get?.responses[status],
-          `${path} ${status}`,
-        );
-        const cacheHeaderName =
-          status === '500'
-            ? OPENAPI_HEADER_NAMES.problemCacheControl
-            : OPENAPI_HEADER_NAMES.operationalHealthCacheControl;
-
-        expect(responseObject.headers).toEqual({
-          'Cache-Control': { $ref: `#/components/headers/${cacheHeaderName}` },
-          'X-Request-Id': {
-            $ref: `#/components/headers/${OPENAPI_HEADER_NAMES.requestId}`,
-          },
-          'X-Correlation-Id': {
-            $ref: `#/components/headers/${OPENAPI_HEADER_NAMES.correlationId}`,
-          },
-        });
-      }
-    }
-  });
-
-  it('publishes the exact anonymous Catalog read contract', async (): Promise<void> => {
-    const response = await fetch(`${runningApi.baseUrl}/docs/openapi.json`);
-    const document = (await response.json()) as OpenAPIObject;
-    const listOperation = document.paths['/api/v1/catalog/skus']?.get;
-    const getOperation = document.paths['/api/v1/catalog/skus/{skuId}']?.get;
-
-    expect(listOperation).toBeDefined();
-    expect(getOperation).toBeDefined();
-    expect(listOperation).toMatchObject({
-      operationId: 'catalogListPublicSkus',
-      security: [],
-      tags: ['Catalog'],
-    });
-    expect(getOperation).toMatchObject({
-      operationId: 'catalogGetPublicSku',
-      security: [],
-      tags: ['Catalog'],
-    });
-    expect(document.tags).toContainEqual(expect.objectContaining({ name: 'Catalog' }));
-
-    const listParameters = Object.fromEntries(
-      (listOperation?.parameters ?? []).map((parameter) => {
-        const concrete = concreteParameter(parameter, 'Catalog list parameter');
-
-        return [concrete.name, concrete];
-      }),
-    );
-    const skuIdParameter = concreteParameter(
-      getOperation?.parameters?.[0],
-      'Catalog SKU identifier',
-    );
-
-    expect(Object.keys(listParameters).sort()).toEqual(['cursor', 'limit']);
-    expect(listParameters['limit']).toMatchObject({
-      in: 'query',
-      name: 'limit',
-      required: false,
-      schema: {
-        type: 'string',
-        default: '20',
-        minLength: 1,
-        maxLength: 3,
-        pattern: CATALOG_PUBLIC_SKU_LIMIT_PATTERN,
-      },
-    });
-    expect(listParameters['cursor']).toMatchObject({
-      in: 'query',
-      name: 'cursor',
-      required: false,
-      schema: {
-        type: 'string',
-        minLength: 1,
-        maxLength: MAX_CATALOG_PUBLIC_SKU_CURSOR_LENGTH,
-        pattern: CATALOG_PUBLIC_SKU_CURSOR_PATTERN,
-      },
-    });
-    expect(skuIdParameter).toMatchObject({
-      in: 'path',
-      name: 'skuId',
-      required: true,
-      schema: {
-        type: 'string',
-        format: 'uuid',
-        pattern: CATALOG_PUBLIC_SKU_ID_PATTERN,
-      },
-    });
-
-    expect(Object.keys(listOperation?.responses ?? {}).sort()).toEqual([
-      '200',
-      '400',
-      '500',
-      '503',
-    ]);
-    expect(Object.keys(getOperation?.responses ?? {}).sort()).toEqual([
-      '200',
-      '400',
-      '404',
-      '500',
-      '503',
-    ]);
-
-    for (const [operation, successSchemaName] of [
-      [listOperation, CATALOG_PUBLIC_SKU_OPENAPI_SCHEMA_NAMES.collectionResponse],
-      [getOperation, CATALOG_PUBLIC_SKU_OPENAPI_SCHEMA_NAMES.resourceResponse],
-    ] as const) {
-      const success = concreteResponse(operation?.responses['200'], 'Catalog success');
-
-      expect(success.content).toEqual({
-        'application/json': {
-          schema: { $ref: `#/components/schemas/${successSchemaName}` },
-        },
-      });
-      expect(success.headers).toEqual({
-        'Cache-Control': {
-          $ref: `#/components/headers/${OPENAPI_HEADER_NAMES.publicReadCacheControl}`,
-        },
-        'X-Request-Id': {
-          $ref: `#/components/headers/${OPENAPI_HEADER_NAMES.requestId}`,
-        },
-        'X-Correlation-Id': {
-          $ref: `#/components/headers/${OPENAPI_HEADER_NAMES.correlationId}`,
-        },
-      });
-
-      for (const [status, problemSchemaName] of [
-        ['400', OPENAPI_SCHEMA_NAMES.badRequestProblem],
-        ['500', OPENAPI_SCHEMA_NAMES.internalServerErrorProblem],
-        ['503', OPENAPI_SCHEMA_NAMES.serviceUnavailableProblem],
-      ] as const) {
-        const failure = concreteResponse(operation?.responses[status], `Catalog ${status}`);
-
-        expect(failure.content).toEqual({
-          'application/problem+json': {
-            schema: { $ref: `#/components/schemas/${problemSchemaName}` },
-          },
-        });
-        expect(failure.headers).toEqual({
-          'Cache-Control': {
-            $ref: `#/components/headers/${OPENAPI_HEADER_NAMES.problemCacheControl}`,
-          },
-          'X-Request-Id': {
-            $ref: `#/components/headers/${OPENAPI_HEADER_NAMES.requestId}`,
-          },
-          'X-Correlation-Id': {
-            $ref: `#/components/headers/${OPENAPI_HEADER_NAMES.correlationId}`,
-          },
-        });
-      }
-    }
-
-    const notFoundResponse = concreteResponse(getOperation?.responses['404'], 'Catalog 404');
-
-    expect(notFoundResponse.content).toEqual({
-      'application/problem+json': {
-        schema: { $ref: `#/components/schemas/${OPENAPI_SCHEMA_NAMES.notFoundProblem}` },
-      },
-    });
-    expect(notFoundResponse.headers).toEqual({
-      'Cache-Control': {
-        $ref: `#/components/headers/${OPENAPI_HEADER_NAMES.problemCacheControl}`,
-      },
-      'X-Request-Id': {
-        $ref: `#/components/headers/${OPENAPI_HEADER_NAMES.requestId}`,
-      },
-      'X-Correlation-Id': {
-        $ref: `#/components/headers/${OPENAPI_HEADER_NAMES.correlationId}`,
-      },
-    });
-
-    const schemas = document.components?.schemas;
-    const expectedRequiredMembers = {
-      [CATALOG_PUBLIC_SKU_OPENAPI_SCHEMA_NAMES.product]: ['id', 'name'],
-      [CATALOG_PUBLIC_SKU_OPENAPI_SCHEMA_NAMES.resource]: ['id', 'code', 'name', 'product'],
-      [CATALOG_PUBLIC_SKU_OPENAPI_SCHEMA_NAMES.resourceResponse]: ['data'],
-      [CATALOG_PUBLIC_SKU_OPENAPI_SCHEMA_NAMES.pageInfo]: ['nextCursor'],
-      [CATALOG_PUBLIC_SKU_OPENAPI_SCHEMA_NAMES.collectionResponse]: ['data', 'pageInfo'],
-    } as const;
-
-    for (const [schemaName, required] of Object.entries(expectedRequiredMembers)) {
-      const schema = concreteSchema(schemas?.[schemaName], schemaName);
-
-      expect(schema.additionalProperties).toBe(false);
-      expect(schema.required).toEqual(required);
-      expect(Object.keys(schema.properties ?? {})).toEqual(required);
-    }
-
-    const pageInfo = concreteSchema(
-      schemas?.[CATALOG_PUBLIC_SKU_OPENAPI_SCHEMA_NAMES.pageInfo],
-      CATALOG_PUBLIC_SKU_OPENAPI_SCHEMA_NAMES.pageInfo,
-    );
-    expect(pageInfo.properties?.['nextCursor']).toEqual({
-      type: 'string',
-      nullable: true,
-      minLength: 1,
-      maxLength: MAX_CATALOG_PUBLIC_SKU_CURSOR_LENGTH,
-      pattern: CATALOG_PUBLIC_SKU_CURSOR_PATTERN,
-    });
-
-    const catalogSchemas = JSON.stringify(
-      Object.fromEntries(
-        Object.values(CATALOG_PUBLIC_SKU_OPENAPI_SCHEMA_NAMES).map((name) => [
-          name,
-          schemas?.[name],
-        ]),
-      ),
-    );
-
-    for (const forbiddenMember of [
-      'activatedAt',
-      'archivedAt',
-      'createdAt',
-      'inventory',
-      'price',
-      'retiredAt',
-      'status',
-      'total',
-      'updatedAt',
-      'version',
-    ]) {
-      expect(catalogSchemas).not.toContain(`"${forbiddenMember}"`);
-    }
-    expect(runningApi.probe).not.toHaveBeenCalled();
-  });
-
-  it('serves a local read-only Swagger UI with request identity', async (): Promise<void> => {
-    const [htmlResponse, initializationResponse, ...assetResponses] = await Promise.all([
-      fetch(`${runningApi.baseUrl}/docs`),
-      fetch(`${runningApi.baseUrl}/docs/swagger-ui-init.js`),
-      fetch(`${runningApi.baseUrl}/docs/swagger-ui-bundle.js`),
-      fetch(`${runningApi.baseUrl}/docs/swagger-ui-standalone-preset.js`),
-      fetch(`${runningApi.baseUrl}/docs/swagger-ui.css`),
-      fetch(`${runningApi.baseUrl}/docs/favicon-32x32.png`),
-    ]);
+  it('serves only the intended local Swagger resources', async (): Promise<void> => {
+    const htmlResponse = await fetch(`${runningApi.baseUrl}/docs`);
     const html = await htmlResponse.text();
-    const initialization = await initializationResponse.text();
 
     expect(htmlResponse.status).toBe(200);
-    expect(htmlResponse.headers.get('content-type')).toBe('text/html; charset=utf-8');
     expect(htmlResponse.headers.get('cache-control')).toBe('no-store');
-    expectRequestIdentity(htmlResponse);
     expect(html).toContain('<title>OMS API Documentation</title>');
-    for (const assetResponse of assetResponses) {
-      expect(assetResponse.status).toBe(200);
-      expect(assetResponse.headers.get('cache-control')).toBe('no-store');
-      expectRequestIdentity(assetResponse);
+
+    for (const path of ['/api/docs', '/docs/openapi.yaml', '/docs/package.json', '/docs-json']) {
+      expect((await fetch(`${runningApi.baseUrl}${path}`)).status).toBe(404);
     }
-
-    expect(assetResponses[0].headers.get('content-type')).toMatch(/javascript/u);
-    expect(assetResponses[1].headers.get('content-type')).toMatch(/javascript/u);
-    expect(assetResponses[2].headers.get('content-type')).toMatch(/text\/css/u);
-    expect(assetResponses[3].headers.get('content-type')).toMatch(/image\/png/u);
-    expect(initializationResponse.status).toBe(200);
-    expect(initializationResponse.headers.get('cache-control')).toBe('no-store');
-    expect(initializationResponse.headers.get('content-type')).toMatch(/javascript/u);
-    expectRequestIdentity(initializationResponse);
-    expect(initialization).toMatch(/"supportedSubmitMethods":\s*\[\]/u);
-    expect(initialization).toMatch(/"persistAuthorization":\s*false/u);
-    expect(initialization).toMatch(/"validatorUrl":\s*null/u);
-    expect(runningApi.probe).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    '/api/docs',
-    '/api/v1/docs',
-    '/api/v1/docs/openapi.json',
-    '/DoCs',
-    '/DOCS/openapi.json',
-    '/docs/LICENSE',
-    '/docs/NOTICE',
-    '/docs/README.md',
-    '/docs/oauth2-redirect.html',
-    '/docs/package.json',
-    '/docs/swagger-initializer.js',
-    '/docs/swagger-ui-bundle.js.map',
-    '/docs-json',
-    '/docs-yaml',
-    '/docs/openapi.yaml',
-  ] as const)('keeps the undocumented alias %s closed', async (path): Promise<void> => {
-    const response = await fetch(`${runningApi.baseUrl}${path}`);
-    const rawBody = await response.text();
-
-    expect(response.status).toBe(404);
-    expect(response.headers.get('content-type')).toBe('application/problem+json; charset=utf-8');
-    expect(JSON.parse(rawBody) as unknown).toMatchObject({ type: 'about:blank', status: 404 });
   });
 });

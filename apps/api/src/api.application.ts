@@ -1,4 +1,5 @@
 import { RequestMethod, VersioningType } from '@nestjs/common';
+import { existsSync } from 'node:fs';
 
 import { ExpressAdapter, type NestExpressApplication } from '@nestjs/platform-express';
 import express from 'express';
@@ -15,6 +16,11 @@ const OPERATIONAL_HEALTH_ROUTES: Readonly<{ path: string; method: RequestMethod 
 ];
 export const API_REQUEST_BODY_LIMIT_BYTES = 100 * 1_024;
 
+export interface ApiApplicationOptions {
+  readonly corsOrigin?: string | null;
+  readonly staticDirectory?: string;
+}
+
 export function createApiExpressAdapter(): ExpressAdapter {
   const expressApplication = express();
 
@@ -23,7 +29,10 @@ export function createApiExpressAdapter(): ExpressAdapter {
   return new ExpressAdapter(expressApplication);
 }
 
-export function configureApiApplication(application: NestExpressApplication): void {
+export function configureApiApplication(
+  application: NestExpressApplication,
+  options: ApiApplicationOptions = {},
+): void {
   application.use(application.get<ApiHttpLoggingMiddleware>(API_HTTP_LOGGING_MIDDLEWARE));
   application.useBodyParser('json', {
     inflate: false,
@@ -31,6 +40,21 @@ export function configureApiApplication(application: NestExpressApplication): vo
   });
   application.disable('etag');
   application.disable('x-powered-by');
+
+  if (options.corsOrigin !== undefined && options.corsOrigin !== null) {
+    application.enableCors({
+      allowedHeaders: [
+        'Authorization',
+        'Content-Type',
+        'Idempotency-Key',
+        'X-Correlation-Id',
+        'X-CSRF-Token',
+      ],
+      credentials: true,
+      methods: ['GET', 'POST', 'PATCH'],
+      origin: options.corsOrigin,
+    });
+  }
   application.setGlobalPrefix('api', {
     exclude: OPERATIONAL_HEALTH_ROUTES,
   });
@@ -40,4 +64,8 @@ export function configureApiApplication(application: NestExpressApplication): vo
     prefix: 'v',
   });
   configureApiDocumentation(application);
+
+  if (options.staticDirectory !== undefined && existsSync(options.staticDirectory)) {
+    application.useStaticAssets(options.staticDirectory, { index: 'index.html' });
+  }
 }

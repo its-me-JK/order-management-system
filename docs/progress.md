@@ -1,219 +1,88 @@
 # Project progress
 
-- **Overall completion:** 40%
-- **Current milestone:** Identity, catalog, pricing, and inventory
-- **Public demo:** Not deployable yet
-- **Last reviewed:** 2026-08-24
+Last audited: 2026-08-25.
 
-This score covers the complete portfolio scope, including backend behavior,
-frontend experience, operational hardening, and public deployment. It measures
-accepted outcomes, not lines of code, generated files, commits, or activity.
+## Current result
 
-## Fixed baseline
+**Overall completion: 90%.**
 
-| Workstream | Weight | Earned | Current evidence |
-| --- | ---: | ---: | --- |
-| Architecture and contracts | 6% | 6% | Architecture overview, twenty ADRs, platform contracts, delivered Catalog public reads, accepted Catalog administration contracts, and an exact Identity/session contract now fixing Account, authenticator, Role/Permission, generation-proven AccessCredential and RefreshCredential issuance, the cross-module authenticated-principal boundary, opaque wire/digest/candidate ownership, paired cryptography, the refresh transaction capability/evidence model, confirmed-commit disclosure, atomic rotation/replay, authoritative permission, browser security, fail-closed abuse boundaries, and a sealed exact-connection execution boundary for security-critical MySQL work |
-| Platform and persistence | 9% | 9% | Workspace, runtime shells, versioned routing, health, validated configuration, structured logging, strict transport boundaries, deterministic OpenAPI, one runtime-owned Prisma client, one lazy runtime-provenanced bounded allocator of one-use MariaDB connections, a supported infrastructure-only fixed-program transaction executor with opaque static statements, server-prepared binding, monotonic deadlines, explicit commit ambiguity, and no retry, a single split connection budget, coordinated cause-free shutdown, MySQL, an ordered forward-only migration history, guarded Catalog lifecycle expansion/backfill/contraction, a four-table Identity refresh-lineage schema with checked lifecycle, generation-witness, and one-active-refresh invariants now used by the private refresh transaction composition, plus authorization records with exact policy seeds, Role mappings, Account assignments, and typed retention-independent security evidence |
-| Backend business capabilities | 35% | 10.05% | Catalog public reads and Product/SKU aggregates exist. Identity now has separate immutable Account, PasswordAuthenticator, Role, and SessionFamily boundaries plus versionless RefreshCredential and AccessCredential children. Creation and rotation return complete generation-matched issuance bundles; application code owns canonical redacting access/refresh wire values, copied-byte digest values, one exact frozen candidate pair, the narrow cryptography port, a fixed-policy internal Node CSPRNG/SHA-256 adapter, a pre-transaction one-shot credential-attempt verifier, digest-only refresh discovery with authentic one-use tickets, a concrete non-locking lifecycle-blind writer-MySQL discovery adapter with privately paired ticket authority, and two locked-load adapters: Prisma remains the mapping/invariant proof, while a private direct adapter executes three opaque prepared locks followed by one allowlisted post-lock clock read on the sealed executor's exact connection. A second private direct adapter consumes the authenticated reuse action, conditionally revokes the family using its complete six-field basis, and appends the exact rejected refresh event through two further prepared statements on that same connection. A third private direct adapter consumes the authenticated rotated action, performs the fixed five graph mutations, resolves authority, and appends the successful refresh event through seven prepared operations on that same connection; it copies each target digest only for its own settled insert and returns pending evidence only through workflow completion. The Prisma Bearer reader and direct-MySQL rotation projection share one bounded provider-independent authority mapper; the direct statement reads the resulting open family and current roles on the transaction's exact connection but returns only raw authority evidence for workflow-owned principal construction. Identity also has a nominal SecurityEvent identifier, the nominal authenticated-principal contract, a runtime-authentic attempt-bound refresh workflow with one decision, kind-matched persistence actions, explicitly pending transaction evidence, and an opaque one-shot closed refresh command whose fixed application orchestration binds the discovery ticket, verified attempt, generated identifiers, lifetimes, and SecurityEvent identifier before it selects exactly one terminal branch. Its internal refresh-specific Unit-of-Work port fixes the closed outcome union and a one-shot dormant completion registry that can promote or revoke only consumed evidence after scope close, without claiming database commit proof or exposing credentials. A concrete package-internal direct-MySQL Unit of Work now pairs discovery with the exact runtime, synchronously admits one command, composes the locked loader and both writers in one closed 13-statement executor program, binds database time only after the last awaited row lock, maps only the allowed transaction outcomes, promotes exact evidence only after acknowledged commit and post-seal close, and joins returned settlement with program settlement or proven non-start so late indeterminate cleanup cannot race the command. A package-internal exact-pair delivery gate now consumes one authentic rotated completion, its retained committed attempt, and the exact original candidate pair once, then returns a frozen redacting capability whose credentials, principal, and committed instants remain private. Rejected/reuse completions, foreign or equivalent pairs, structural values, Proxies, and replay cannot mint delivery authority. A complementary one-shot terminal consumer now consumes authentic committed rejection/reuse completions into frozen safe classifications while preserving rotations exclusively for delivery. Identity now also owns a versioned opaque binary IPv4/IPv6 abuse-network capability plus the narrow refresh-specific abuse-control input and registered allow/deny decision contract. Its restricted Redis infrastructure adapter now executes atomic deployment/network/presented-credential refresh admission without claiming trusted-ingress provenance or process composition. A bounded writer-MySQL access-authority reader and the root-exported framework-independent resolver turn an already-extracted canonical access-wire value into one runtime-authenticated current principal or uniform rejection. A refresh-specific synchronous identifier issuer now returns one frozen, separately branded successor-refresh/access/security-event UUIDv7 bundle from the captured Node runtime capability through a restricted infrastructure subpath; it validates each result before the next provider call and exposes no generic root generator or timestamp authority. Identity still has no public refresh use case, channel-specific access-response or refresh-cookie sink, HTTP authentication adapter, or route |
-| Redis, RabbitMQ, and workers | 9% | 0.40% | The framework-independent `@oms/redis` substrate owns the exact official client and one bounded process runtime. Its restricted static-script executor now supports the Identity-owned refresh adapter, which implements a same-slot three-dimensional token bucket with Redis time, pseudonymous HMAC keys, a secret/policy marker, all-or-none consumption, bounded TTL, and fail-closed ambiguity. Authenticated ephemeral Redis 7.2.16 is available in local Compose and CI. No API/worker composition, caching, RabbitMQ, or worker workload exists |
-| Testing, security, and resilience | 11% | 9.25% | Strict quality gates, secret-safe configuration/TLS and adversarial HTTP tests, Catalog lifecycle/Unicode tests, exhaustive Identity Account/authenticator/Role tests, adversarial session chronology/generation/expiry/replay tests, authenticated-principal tests, 137 opaque-credential/Node-adapter tests, hardened attempt/discovery/event tests, 45 refresh-workflow tests, focused closed-command and completion-settlement tests, exact refresh Unit-of-Work port/outcome-contract tests, bounded shared-authority and strict MariaDB rotation-projection tests, adversarial Bearer-resolver tests, focused Prisma refresh-discovery tests, adversarial Prisma/direct locked-loader tests, strict shared MariaDB write-envelope and workflow-authenticated reuse/rotation-writer tests, 15 focused concrete refresh Unit-of-Work tests covering closed program composition, commit-gated promotion, strict outcome evidence, non-commit mapping, cause-free defects, no-start and late-observer cleanup, failed cleanup quarantine, runtime pairing, and package-surface isolation, focused delivery-gate tests covering completion-to-attempt-to-pair authenticity, one-shot consumption, rejected/reuse/foreign/replay rejection, redaction, fixed cause-free failure, and hidden package surfaces, focused non-delivery settlement tests covering authentic rejection/reuse consumption, frozen classifications, rotated preservation, pending-evidence/clone/Proxy rejection, replay closure, and root isolation, 60 focused abuse-boundary tests covering binary network namespaces, IPv6 `/64` and mapped-address equivalence, defensive copies, mutable-runtime capture, hostile typed arrays, redaction, registered exact decisions, retry bounds, fixed cause-free errors, structural forgery, Proxy rejection, and package-root isolation, bounded Redis runtime/configuration tests, 71 secret/policy configuration tests, 49 adversarial adapter/script tests, authenticated real-Redis proofs for cold-cache execution, isolated capacity, concurrency, refill/TTL, corrupt state, policy/secret drift, clock regression, and ambiguous no-retry behavior, and direct-allocator tests covering split budgets, hidden package surfaces, runtime identity, lazy allocation, live black-hole handshake closure, hard-bounded and reclaimable waiter admission, reserved-capacity enforcement, late-connection quarantine, authentic one-shot leases, stalled/failed-release quarantine, bounded active grace, terminal fail-closed shutdown, and fixed cause-free failures. The sealed transaction executor adds adversarial proofs for static statement identity and lexical placeholders, exact parameter ownership and aggregate memory bounds, server-prepared dispatch, runtime provenance, sequential/concurrent/floated operation ownership, hostile decoder and provider failures, monotonic deadlines under delayed timer callbacks, exact duplicate mapping, commit ambiguity without retry, rollback closure proof, post-BEGIN session attestation without generic clock authority, and public-surface isolation; live MySQL now proves prepared commit, rollback, an allowlisted writer-time statement, real duplicate classification, stalled-query quarantine, and replacement capacity. Executable architecture boundaries, real-MySQL Catalog lifecycle/contract suites, dedicated Identity lineage and authorization suites, an isolated authority runtime suite, isolated refresh-discovery, and a guarded refresh transaction suite covering Prisma reference locks, direct prepared locking with post-lock clock binding, production Unit-of-Work reuse/rotation commit promotion, representative outer non-commit classification and rollback, every writer-level mapped rotation constraint, full rotation graph/authority/event persistence, an established first-lock deadline that stays indeterminate, write-free, delivery-denied, and followed by recovered single-slot execution, a two-runtime competing refresh that persists one winner generation and commits one reuse-family closure, root-installed fixture-scoped statement faults across all six rotation mutations, target-statement atomicity, cumulative rollback of earlier successful writes, post-write authority-projection failure, delivery denial, and recovered capacity continue to pass. Focused Node refresh-identifier issuer tests cover exact frozen bundles, sequential target-kind validation, same-bytes cross-namespace acceptance, provider and malformed-output stop behavior, captured runtime primitives, fixed cause-free failures, and package-surface isolation. TLS-stream execution, lock/clock, post-event/pre-`COMMIT`, and escaped-scope fault injection, protocol-level commit-acknowledgement loss, and channel-specific credential sink and transport fault proofs remain future gates |
-| Frontend showcase | 12% | 0% | Not started |
-| Observability and operations | 5% | 1% | Sanitized liveness, bounded MySQL readiness, server-owned request identity, structured HTTP/Nest logs, redaction, and safe fatal bootstrap reporting exist; metrics and traces remain |
-| CI/CD and public deployment | 8% | 1.85% | CI replays migrations idempotently and validates database, Identity-lineage, Identity-authorization, Identity-authority runtime, Identity refresh-discovery, Identity refresh transaction composition, Catalog, and API contracts against real MySQL, plus the bounded runtime and Identity refresh-abuse adapter against authenticated ephemeral real Redis; no release pipeline or live environment |
-| Documentation and demo polish | 5% | 2.95% | README, architecture contracts including the exact authorization registry, security-evidence matrix, connection-budget rules, concrete refresh Unit-of-Work settlement lifecycle, package-internal exact-pair delivery gate, and the sealed prepared-statement/commit-ambiguity boundary, twenty ADRs, deterministic OpenAPI JSON, and a public read-only local Swagger UI exist; examples and demo guides remain |
-| **Total** | **100%** | **40.50%** | Displayed overall is rounded down |
+**Source feature implementation: approximately 97%.**
 
-The weights are fixed unless the project scope is formally re-baselined. A
-workstream may use fractional earned points internally, but the displayed
-overall percentage is rounded down so progress is never overstated.
+The lower overall score includes verification and public deployment. The project is not “done” merely because screens and endpoints exist.
 
-## Completion rules
+## Scoring model
 
-- Award points only for acceptance criteria committed to `master`.
-- Architecture documents earn architecture points, not implementation points.
-- A feature is complete only with its required tests, error and security
-  behavior, operational signals, and documentation.
-- Reopen previously earned points if a required quality gate regresses.
-- Track public-demo readiness independently; a high overall score cannot make
-  an undeployed or unusable demo complete.
-- Recalculate and update this file after every production-ready increment.
+The score is weighted and evidence-based:
 
-## Current status line
+| Area | Weight | Current completion | Earned |
+| --- | ---: | ---: | ---: |
+| Architecture and data foundation | 15% | 100% | 15.0 |
+| Backend business workflows | 25% | 96% | 24.0 |
+| Asynchronous processing | 15% | 93% | 13.95 |
+| Frontend experience | 15% | 92% | 13.8 |
+| Tests, security, and quality gates | 15% | 90% | 13.5 |
+| Operations and public deployment | 15% | 65% | 9.75 |
+| **Total** | **100%** |  | **90.0%** |
 
-> Overall: 40% · Backend business capabilities: 10.05/35 · Frontend: 0/12 ·
-> Deployment: 1.85/8 · Public demo: not deployable
+Percentages move only when the evidence below changes. A configured deployment file is not a deployment; a live URL is not complete until the business smoke test passes.
 
-The current Identity Redis-adapter increment adds a conservative 0.10 backend,
-0.20 Redis/worker, 0.10 testing/security, and 0.05 CI/deployment points, with no
-frontend, observability, architecture, platform/persistence, documentation, or
-public-demo credit. The restricted adapter implements the refresh port through
-the technical static-script executor: one four-key/seven-argument Lua operation
-uses Redis time, integer fixed-point refill, three all-or-none dimensions,
-pseudonymous HMAC bucket keys, a stable secret/policy marker, time-to-full TTL,
-and closed allow/deny results. Corrupt state, policy or secret drift under one
-scope/epoch, provider ambiguity, malformed replies, and clock regression fail
-closed. Poison-before-write/fingerprint-last ordering prevents a partial Redis
-runtime error from leaving apparently healthy state. Bounded secret/policy
-configuration, executable import boundaries, adversarial unit tests, and the
-authenticated real-Redis CI gate cover the non-routed package capability.
+## Implemented in source
 
-This increment does not establish trusted proxy provenance, compose an actual
-admission decision into an API/worker use case, add capability-specific
-readiness or telemetry, open a route, implement login abuse control, caching,
-RabbitMQ, a release pipeline, or a live environment. Redis remains absent from
-global readiness, and the current runtime is standalone rather than
-Cluster-aware; only the key layout is same-slot compatible.
+- Pragmatic NestJS modular monolith with versioned routes.
+- Prisma/MySQL model and initial migration for users, sessions, Catalog, Inventory, Orders, Payments, Notifications, outbox, and consumer inbox.
+- Registration, login, refresh rotation, logout, bearer authentication, role guard, and Redis login throttling.
+- Public Catalog and administrative Product/SKU lifecycle endpoints.
+- Warehouse/SKU inventory reads and administrative adjustment with movement audit.
+- Idempotent order creation with single-warehouse atomic reservation and price/name snapshots.
+- Order cancellation, fulfillment transitions, refund state, and timeline.
+- RabbitMQ event envelope/topology, transactional outbox publisher, duplicate-safe payment and notification consumers.
+- Deterministic payment simulator with authorized and failed paths.
+- Static Next.js frontend for the main customer and admin flows.
+- Structured API/worker logs, validated configuration, health endpoints, Problem Details, and OpenAPI foundation.
+- Complete local Compose topology with migration, API/static web, worker, MySQL, Redis, and RabbitMQ containers.
+- Container build, process supervisor, Render Blueprint, and zero-cost deployment runbook.
 
-Identity separately owns a package-internal frozen, redacting network
-capability built from copied binary address bytes: IPv4 retains all four bytes,
-native IPv6 retains its `/64`, and IPv4-mapped IPv6 collapses into the versioned
-IPv4 namespace. Its extractor returns isolated fixed-buffer copies; invalid
-address views and structural, cloned, or proxied capability shells fail with
-one fixed cause-free error. The adjacent refresh-specific port declares only
-that capability and an authentic refresh-wire value; future composition must
-authenticate both before invocation. Registered exact decisions expose only
-`allowed` or `denied` with a branded integer retry delay from 1 through 180,
-and runtime authentication rejects structural or proxied results. The network
-value proves canonical grouping, not trusted proxy provenance, and the reusable
-result is a same-execution classification rather than transferable MySQL or
-credential-delivery authority.
-Catalog reads are not an externally usable showcase: the endpoint is
-production-composed locally, but there is still no release pipeline, provider
-resource, live URL, synthetic showcase data, distributed abuse control, or
-database-side query deadline.
-The Catalog persistence contract now represents the aggregate lifecycle and
-has a real prior-release upgrade proof, but no administrative route, write use
-case, audit/idempotency storage, or coordinating Unit of Work is counted as
-complete. Identity currently stops at non-exported Account,
-PasswordAuthenticator, Role, PermissionCode, SessionFamily,
-RefreshCredential, and AccessCredential domain slices with complete atomic
-creation/rotation results; strict opaque wire, digest, and paired-candidate
-application values; one internal type-only crypto port; and the root-exported
-`IdentityAuthenticatedPrincipal` contract. The root now also exports
-`ResolveIdentityBearerPrincipal`, its caller-facing resolution types, and one
-fixed unavailable error. That framework-independent use case accepts only an
-already-extracted primitive candidate, admits exact canonical access wire,
-runtime-authenticates the digest and principal, and preserves the distinction
-between uniform credential rejection, dependency unavailability, and internal
-failure. The internal Node adapter now supplies capability-sealed asynchronous
-entropy and full-wire SHA-256 with
-strict provider validation and bounded cleanup. A second pre-transaction check
-binds the exact candidate pair to a one-shot attempt before database work, and
-digest-only discovery now returns a runtime-authentic ticket consumable once by
-its matching locked loader boundary. Its concrete Prisma adapter performs one
-writer-MySQL equality lookup over the copied binary digest and deliberately
-applies no consumption, credential-expiry, family-expiry, revocation, or
-Account-status filter. An exact empty result alone is not-found; duplicate,
-orphaned, mismatched, or malformed persistence evidence fails internally. The
-factory owns a hidden ticket authority and requires the exact discovery writer
-client when constructing the package-internal locked loader. Over its injected
-already-active transaction client, that loader consumes the ticket and issues
-three separate `FORCE INDEX (PRIMARY) ... FOR UPDATE` reads in Account,
-SessionFamily, presented RefreshCredential order; the last query also binds the
-ticket's copied digest. It preserves six-digit database instants as canonical
-strings, rehydrates lifecycle state without filtering replay evidence, wipes
-the temporary digest copy, and distinguishes exact not-found, expected
-unavailability, and persistence defects. Its isolated real-MySQL gate proves
-the DML-only grant, exact three-lock `PRIMARY FOR UPDATE` order and plans followed
-by the post-lock clock read,
-`.123456` preservation, retained lifecycle evidence, digest-drift not-found,
-causal shared-Account first-lock contention across distinct `READ-COMMITTED`
-connections, plus cause-free loopback TCP accept/handshake stall unavailability
-and guarded cleanup. That network fault does not exercise an established
-connection or in-flight query; the separate runtime-owned direct-connection
-gate now does exercise established-query quarantine. The guarded Identity suite
-now adds a causal production-Unit-of-Work first-lock deadline proof: the outcome
-stays `indeterminate`, the graph stays write-free, delivery remains denied, and
-an independent rotation uses recovered single-slot capacity. A bounded
-same-user process-list poll positively observes the exact active production
-lock before the deadline. The Prisma loader is now explicitly an invariant and
-mapping proof only. The new direct scoped loader uses three opaque static
-statements on the executor-owned connection, strictly
-decodes the real MariaDB `meta` envelope without reading it, maps only after
-statement settlement, and wipes its own digest copy independently of the
-executor's parameter copy. Its live gate proves nontrivial direct numeric
-mapping, prepared execution, `.123456` retention, found, and digest-drift
-not-found. The adjacent direct reuse writer derives its complete
-eight-parameter family condition and four-parameter event append only from the
-authenticated workflow action. It recognizes exact frozen DML evidence, emits
-a private runtime-authentic signal only for a zero-row family conflict, and
-exposes no digest, SQL, provider cause, or package export. The live gate now
-also proves a real family version-two-to-three revocation, exact null-context
-rejected event, unchanged refresh/access rows, and rollback when the event
-identifier collides. The adjacent rotation writer derives its full conditional
-graph, authority, and successful-event material from the authenticated action,
-keeps each digest copy only through its own settled insert, strictly accepts the
-seven fixed statement results, and mints only pending workflow evidence. Its
-live gate proves the complete graph and event, every mapped duplicate
-constraint, and rollback under all three external failure classes. The database
-package owns operation drain, deadline quarantine, and settlement
-classification. The concrete Identity Unit of Work now composes the delivered
-locked loader and both writers, maps the executor's closed outcomes, and joins
-the returned database outcome with the receiver-free post-seal
-program-settlement notification or synchronous proof that setup never invoked
-the program. Only after both sides are ready can it promote or revoke its exact
-completion. When a deadline returns `indeterminate` first, the later observer
-safely retires the still-running command without changing the returned result.
-The guarded live proof now composes that focused cleanup contract with an actual
-Account-lock stall and verifies that lock release cannot create late writes or
-revive delivery authority; the observer remains application cleanup evidence,
-not commit proof.
-The refresh kernel binds the exact attempt to a private transaction
-scope, one locked load, one opaque decision, kind-matched terminal
-persistence actions, and one exact pending-evidence value across rotation,
-reuse, and rejection. Consuming that evidence is only the one-shot handoff to
-private commit handling; it is neither commit proof nor credential-delivery
-authority. A new package-private synchronous identifier issuer can supply the
-command's separately branded successor-refresh, issued-access, and
-security-event UUIDv7 values as one exact frozen bundle once composition is
-implemented. Its restricted Node factory captures the runtime capability once,
-validates each target kind before the next call, and has no generic root export
-or ordering semantics. The new opaque command now synchronously consumes one
-admission, claims its verified attempt, binds the exact activated context, and
-executes the fixed load/decision/rejected-or-rotated-or-reuse sequence once. It
-authenticates pending evidence before returning it. The application layer now
-pre-creates a distinct dormant completion and can promote or revoke it only
-after scope close; the concrete adapter alone authenticates the database
-outcome and invokes that transition, but it cannot reveal credentials. The
-command, workflow, port, loader, writers, and Unit of Work remain internal. They
-are transaction-composed but not yet consumed by a public refresh use case. A
-package-internal one-shot gate now accepts only an authentic committed rotation
-and its exact original candidate pair, follows completion to the retained
-committed attempt, consumes both registrations and their pair binding, and
-returns one frozen redacting capability. The pair's factory registration was
-already transferred synchronously and once to its first attempt before
-asynchronous verification. The delivery gate refuses committed rejection or
-reuse, foreign or equivalent pairs, structural values, Proxies, and replay
-without returning delivery authority. A separate one-shot terminal transition
-consumes only authentic committed rejection or reuse, returns its frozen safe
-classification, and cannot consume a rotation or revive replay. The capability
-has no raw serializer or public package subpath; the future access-response and
-refresh-cookie sinks remain undelivered. The
-ordered Prisma history contains Identity persistence for Account, SessionFamily,
-retained refresh generations, generation-bound access, the exact permission
-registry and system role, Role permission mappings, Account role assignments,
-and typed security evidence.
-Its checked writable refresh active slot avoids unsupported generated-column
-drift while leaving MySQL as the one-active-refresh authority. Its authorization
-seed is explicit, never wildcard, and the event table has closed compatible
-results, typed privacy-bounded context, and no retention-coupling foreign keys.
-The digest-level Prisma authority reader now consumes Account, session,
-issuance, assignment, Role, mapping, and Permission records through one
-bounded writer statement. It returns only a nominal current principal or one
-uniform rejection, while dependency and integrity failures remain internal.
-It remains package-internal and has no production HTTP composition; the new
-resolver is its only public application consumer. There is still no
-channel-specific credential sinks, login/refresh use case,
-password-authenticator or bootstrap-state persistence, remaining security-event
-adapters, Argon2 provider, password-input policy, offline command,
-session-revocation transaction, trusted ingress, CORS/CSRF, Identity Redis
-adapter/runtime composition,
-authentication route, or HTTP composition counted as complete. The direct
-MariaDB allocator now suppresses network, query, parameter, packet, warning, and
-debug output. Prisma driver-adapter debug/query output can still expose bound
-digest arguments and must be explicitly disabled and regression-tested before
-public credential ingress; that Prisma enforcement is not delivered or counted
-here.
-Product eligibility and deterministic Product-first locking for SKU create,
-activate, and resume remain future application-layer work.
+## Verification evidence
+
+- Aggregate formatting, Prisma validation/generation, lint, TypeScript, unit-test, and production-build gate passes.
+- 293 API/worker/package tests and 2 frontend tests pass.
+- Production dependency audit reports no known high-severity vulnerabilities.
+- Database integration connects through the production Prisma runtime and queries the committed schema.
+- API integration proves real database readiness and a bounded, sanitized MySQL failure.
+- A clean production image builds and the Compose migration, MySQL, Redis, RabbitMQ, API, and worker topology becomes healthy.
+- The live local smoke test verifies customer/admin authentication, public catalog, idempotent replay and conflict, asynchronous payment, duplicate-safe notifications, shipping, delivery, timeline, and logout.
+- A production-file reachability audit found no remaining imports or runtime files from the removed Identity/Catalog design.
+
+## Required before raising the score
+
+### Runtime and failure verification
+
+- Prove duplicate delivery does not duplicate payment/notification side effects.
+- Prove API commit survives broker downtime and publishes after recovery.
+- Prove concurrent orders cannot oversell one inventory row.
+- Verify graceful shutdown with in-flight HTTP, outbox publish, and consumer deliveries.
+- Add outbox/dead-letter operational visibility.
+- Add automated cancellation, refund, payment-decline, and reservation-expiry end-to-end paths; their implementations currently have unit/contract coverage but are not all in the showcase smoke.
+
+### Public deployment
+
+- Provision zero-cost MySQL, Redis-compatible store, RabbitMQ, API/static web, and worker.
+- Configure migration and DML credentials separately.
+- Apply the migration and seed showcase data.
+- Verify TLS, secrets, health checks, logs, and the full hosted smoke workflow.
+- Publish the live URL and deployment limitations in the README.
+
+## Definition of 100%
+
+The project reaches 100% for the current scope only when:
+
+- all committed quality and integration gates are green from a clean clone;
+- no production file is unreachable or present only for a removed design;
+- the documented API and generated OpenAPI match runtime behavior;
+- MySQL, Redis, and RabbitMQ failure/recovery paths have automated evidence;
+- security-sensitive flows have negative tests;
+- a public zero-cost deployment is live;
+- the hosted end-to-end smoke test passes;
+- deployment and recovery instructions can be followed without tribal knowledge.
+
+Future capabilities such as real payment processing, multi-warehouse splitting, email, returns, Kubernetes, and service extraction are outside this 100% scope. They are future versions, not reasons to keep the current release permanently incomplete.

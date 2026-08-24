@@ -1,67 +1,31 @@
-# ADR-0001: Start with a modular monolith
+# ADR 0001: Use a modular monolith with separate runtimes
 
-- **Status:** Accepted
-- **Date:** 2026-08-02
+Status: accepted
 
 ## Context
 
-Orders, inventory, payments, and fulfillment have distinct business
-responsibilities, but their detailed invariants and operating characteristics
-will evolve during the first production-quality implementation. Deploying them
-as independent services immediately would introduce network failure,
-distributed tracing, contract evolution, duplicated infrastructure, and
-cross-service consistency problems before those costs provide measurable
-value.
-
-The project must nevertheless avoid becoming a tightly coupled monolith that
-cannot be separated later.
+The order workflow needs strong consistency across inventory, order, payment intent, and event intent. Domain boundaries are still changing, the project has one owner, and the showcase must run at minimal cost.
 
 ## Decision
 
-Build the backend as a modular monolith with explicit business-module
-boundaries and Clean Architecture inside each module.
+Keep Auth, Catalog, Inventory, Orders, Payments, and Notifications in one NestJS modular monolith and one MySQL schema. Run HTTP and asynchronous work as separate processes. Keep the Next.js application in the same repository but export it as static assets.
 
-Modules own their application interface and persistence. They may collaborate
-synchronously through application ports or asynchronously through versioned
-integration events. They may not access another module's repository or tables
-directly.
-
-The initial modules are Identity and Access, Customers, Catalog, Pricing,
-Inventory, Orders, Payments, Fulfillment, Notifications, Integrations, and
-Audit.
-
-Notification and Payment remain extraction candidates, not pre-approved
-microservices.
+Feature modules own their controllers, use cases, and persistence logic. Shared packages are reserved for cross-runtime technical capabilities, not created for every entity.
 
 ## Consequences
 
-### Positive
+- Cross-module business changes can commit atomically and refactor locally.
+- One migration history and one deployment version simplify operation.
+- Module isolation relies on code review/linting rather than network boundaries.
+- API and worker can scale/restart separately.
+- A hosting platform may co-locate processes for a showcase, but that is a deployment compromise.
 
-- Strong local transactions protect early order and inventory invariants.
-- Local development, debugging, testing, and deployment remain manageable.
-- Business boundaries can mature without versioning every internal call.
-- A single team can change coordinated workflows safely.
+## Alternatives
 
-### Negative
-
-- Modules share a deployment cadence and physical database at first.
-- Boundary discipline must be enforced through reviews and automated import
-  tests rather than network isolation.
-- A memory or CPU problem can affect both business capabilities in the same
-  runtime unless API and worker isolation mitigates it.
-
-## Alternatives considered
-
-- **Microservices from the beginning:** rejected because operational and
-  consistency costs precede demonstrated scaling or ownership needs.
-- **Traditional layered monolith:** rejected because global controller,
-  service, and repository layers encourage cross-domain coupling.
-- **Serverless functions per operation:** rejected because workflow state,
-  local transactions, cold-start behavior, and operational fragmentation are
-  poor initial trade-offs for this domain.
+- Immediate microservices were rejected because they add sagas, network failure, versioned contracts, tracing, and separate stores without an independent scale/team requirement.
+- A single API-plus-consumer process was rejected as the logical design because it couples failure and shutdown domains.
+- A multi-repository design was rejected because atomic changes across contracts and clients would be slower at this stage.
 
 ## Revisit when
 
-Reconsider a module's deployment boundary when independent ownership, scaling,
-compliance isolation, release cadence, or failure containment provides
-measurable value and the module already has isolated contracts and data.
+Notification or Payment has separate ownership, compliance, release cadence, or scaling needs that outweigh distributed-systems cost.

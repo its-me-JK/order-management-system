@@ -1,0 +1,59 @@
+services:
+  - type: web
+    name: oms-showcase
+    runtime: docker
+    plan: free
+    region: singapore
+    branch: master
+    autoDeployTrigger: checksPass
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health/ready
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DEPLOYMENT_ENVIRONMENT
+        value: showcase
+      - key: LOG_LEVEL
+        value: info
+      - key: WEB_ORIGIN
+        value: same-origin
+      - key: WEB_STATIC_DIR
+        value: /app/apps/web/out
+      - key: DEMO_SEED
+        value: 'true'
+      - key: DATABASE_CONNECTION_LIMIT
+        value: '5'
+      - key: DATABASE_TLS_MODE
+        value: verify-identity
+      - key: REDIS_TLS_MODE
+        value: verify-identity
+      - key: RABBITMQ_PREFETCH
+        value: '10'
+      - key: DATABASE_HOST
+        sync: false
+      - key: DATABASE_PORT
+        sync: false
+      - key: DATABASE_NAME
+        sync: false
+      - key: DATABASE_USER
+        sync: false
+      - key: DATABASE_PASSWORD
+        sync: false
+      - key: DATABASE_TLS_CA
+        sync: false
+      - key: DATABASE_MIGRATION_URL
+        sync: false
+      - key: REDIS_HOST
+        sync: false
+      - key: REDIS_PORT
+        sync: false
+      - key: REDIS_USERNAME
+        sync: false
+      - key: REDIS_PASSWORD
+        sync: false
+      - key: REDIS_TLS_CA
+        sync: false
+      - key: RABBITMQ_URL
+        sync: false

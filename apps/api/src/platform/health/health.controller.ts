@@ -5,6 +5,7 @@ import { ApiTags } from '@nestjs/swagger';
 import { DatabaseHealthIndicator } from './database-health.indicator';
 import { OperationalHealthExceptionFilter } from './operational-health-exception.filter';
 import { ApiLivenessOperation, ApiReadinessOperation } from './operational-health.openapi';
+import { RedisHealthIndicator } from './redis-health.indicator';
 
 @ApiTags('Operational Health')
 @Controller({
@@ -15,6 +16,7 @@ export class HealthController {
   public constructor(
     private readonly health: HealthCheckService,
     private readonly database: DatabaseHealthIndicator,
+    private readonly redis: RedisHealthIndicator,
   ) {}
 
   @Get('live')
@@ -32,6 +34,7 @@ export class HealthController {
   public ready(): Promise<HealthCheckResult> {
     return this.health.check([
       (): ReturnType<DatabaseHealthIndicator['check']> => this.database.check(),
+      (): ReturnType<RedisHealthIndicator['check']> => this.redis.check(),
     ]);
   }
 }

@@ -5,9 +5,12 @@ import { loadEnvFile } from 'node:process';
 import {
   parseApiRuntimeConfiguration,
   parseDatabaseRuntimeConfiguration,
+  parseRedisRuntimeConfiguration,
   resolveDatabaseRuntimeConfiguration,
+  resolveRedisRuntimeConfiguration,
   type ApiRuntimeConfiguration,
   type ResolvedDatabaseRuntimeConfiguration,
+  type ResolvedRedisRuntimeConfiguration,
 } from '@oms/configuration';
 
 const WORKSPACE_MARKER = 'pnpm-workspace.yaml';
@@ -16,6 +19,7 @@ const LOCAL_ENVIRONMENT_FILE = '.env';
 export interface ApiBootstrapConfiguration {
   readonly api: ApiRuntimeConfiguration;
   readonly database: ResolvedDatabaseRuntimeConfiguration;
+  readonly redis: ResolvedRedisRuntimeConfiguration;
 }
 
 export function findRuntimeBaseDirectory(startDirectory: string): string {
@@ -53,10 +57,15 @@ export function parseBootstrapConfiguration(
 ): ApiBootstrapConfiguration {
   const api = parseApiRuntimeConfiguration(environment);
   const unresolvedDatabase = parseDatabaseRuntimeConfiguration(environment, api.environment);
+  const unresolvedRedis = parseRedisRuntimeConfiguration(environment, api.deploymentEnvironment);
   const database = resolveDatabaseRuntimeConfiguration(unresolvedDatabase, {
     baseDirectory,
     readFile: (path): string => readFileSync(path, 'utf8'),
   });
+  const redis = resolveRedisRuntimeConfiguration(unresolvedRedis, {
+    baseDirectory,
+    readFile: (path, maximumBytes): Uint8Array => readFileSync(path).subarray(0, maximumBytes),
+  });
 
-  return Object.freeze({ api, database });
+  return Object.freeze({ api, database, redis });
 }

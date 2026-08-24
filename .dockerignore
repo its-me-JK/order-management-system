@@ -1,0 +1,16 @@
+.git
+.github
+.local
+.pnpm-store
+.env
+.env.*
+!.env.example
+**/.integration-dist
+**/.next
+**/coverage
+**/dist
+**/node_modules
+**/out
+**/*.log
+docs
+report.*.json

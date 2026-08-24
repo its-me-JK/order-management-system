@@ -2,6 +2,7 @@ coverage/
 dist/
 **/dist/
 node_modules/
+apps/web/next-env.d.ts
 packages/database/.integration-dist/
 packages/database/src/generated/prisma/
 docs/

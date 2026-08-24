@@ -8,8 +8,7 @@
     "build": "nest build",
     "dev": "nest start --watch",
     "start": "node dist/main.js",
-    "test:integration:catalog": "pnpm --filter @oms/configuration run build && pnpm --filter @oms/database run build && pnpm --filter @oms/catalog run build && tsc --project tsconfig.integration.json && node --test --test-concurrency=1 .integration-dist/test/catalog.integration-test.js",
-    "test:integration": "pnpm --filter @oms/configuration run build && pnpm --filter @oms/database run build && pnpm --filter @oms/catalog run build && tsc --project tsconfig.integration.json && node --test --test-concurrency=1 .integration-dist/test/health.integration-test.js",
+    "test:integration": "pnpm --filter @oms/configuration run build && pnpm --filter @oms/database run build && pnpm --filter @oms/redis run build && tsc --project tsconfig.integration.json && node --test --test-concurrency=1 .integration-dist/test/health.integration-test.js",
     "typecheck": "tsc --noEmit --project tsconfig.json"
   },
   "dependencies": {
@@ -18,9 +17,9 @@
     "@nestjs/platform-express": "11.1.28",
     "@nestjs/swagger": "11.4.7",
     "@nestjs/terminus": "11.1.1",
-    "@oms/catalog": "workspace:*",
     "@oms/configuration": "workspace:*",
     "@oms/database": "workspace:*",
+    "@oms/redis": "workspace:*",
     "class-transformer": "0.5.1",
     "class-validator": "0.15.1",
     "express": "5.2.1",

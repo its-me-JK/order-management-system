@@ -7,6 +7,6 @@
     "sourceMap": false,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "test/**/*.integration-test.ts"],
+  "include": ["src/**/*.ts", "test/**/*.integration-test.ts", "test-support/**/*.ts"],
   "exclude": [".integration-dist", "dist", "node_modules", "src/**/*.spec.ts"]
 }

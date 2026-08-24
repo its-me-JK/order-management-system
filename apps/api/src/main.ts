@@ -1,8 +1,11 @@
 import 'reflect-metadata';
 
+import { resolve } from 'node:path';
+
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { createDatabaseRuntime } from '@oms/database';
+import { createRedisRuntime } from '@oms/redis';
 import { Logger } from 'nestjs-pino';
 
 import { configureApiApplication, createApiExpressAdapter } from './api.application';
@@ -26,6 +29,7 @@ async function bootstrap(): Promise<void> {
     application = await NestFactory.create<NestExpressApplication>(
       ApiModule.register({
         createDatabaseRuntime: () => createDatabaseRuntime(configuration.database),
+        createRedisRuntime: () => createRedisRuntime(configuration.redis),
         observability: {
           deploymentEnvironment: configuration.api.deploymentEnvironment,
           level: configuration.api.logging.level,
@@ -36,7 +40,13 @@ async function bootstrap(): Promise<void> {
     );
 
     application.useLogger(application.get(Logger));
-    configureApiApplication(application);
+    configureApiApplication(application, {
+      corsOrigin: configuration.api.corsOrigin,
+      staticDirectory: resolve(
+        runtimeBaseDirectory,
+        process.env['WEB_STATIC_DIR'] ?? 'apps/web/out',
+      ),
+    });
     application.enableShutdownHooks(['SIGINT', 'SIGTERM']);
 
     await application.listen(configuration.api.http.port, '0.0.0.0');

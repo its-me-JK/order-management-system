@@ -26,7 +26,8 @@ import {
   createApiExpressAdapter,
 } from './api.application';
 import { ApiModule } from './api.module';
-import { createDatabaseRuntimeFixture } from './platform/database/database-runtime.fixture';
+import { createDatabaseRuntimeFixture } from '../test-support/database-runtime.fixture';
+import { createRedisRuntimeFixture } from '../test-support/redis-runtime.fixture';
 
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const CORRELATION_ID = '019ABCDF-1357-7ACE-8BCD-0123456789AB';
@@ -177,6 +178,7 @@ async function startApi(): Promise<RunningApi> {
     imports: [
       ApiModule.register({
         createDatabaseRuntime: () => createDatabaseRuntimeFixture(databaseConnection()),
+        createRedisRuntime: createRedisRuntimeFixture,
         observability: {
           deploymentEnvironment: 'test',
           level: 'info',
@@ -424,7 +426,6 @@ describe('API Problem Details contract', (): void => {
   it.each([
     ['/api/v1/problem-probe/unexpected', UNEXPECTED_SECRET],
     ['/api/v1/problem-probe/unsupported-status', RESPONSE_SECRET],
-    ['/api/v1/problem-probe/unauthorized-without-challenge', RESPONSE_SECRET],
   ] as const)(
     'fails an unsafe exception at %s closed to 500',
     async (path, secret): Promise<void> => {
@@ -455,16 +456,16 @@ describe('API Problem Details contract', (): void => {
     },
   );
 
-  it('rejects 401 before authentication owns its challenge and removes unsafe headers', async (): Promise<void> => {
+  it('returns a sanitized bearer challenge for 401 and removes unsafe headers', async (): Promise<void> => {
     const response = await fetch(`${runningApi.baseUrl}/api/v1/problem-probe/unauthorized`);
     await expectProblem(response, {
-      status: 500,
-      title: 'Internal Server Error',
-      detail: 'The service could not complete the request.',
+      status: 401,
+      title: 'Unauthorized',
+      detail: 'Authentication is required.',
     });
     await allowResponseLoggingToComplete();
 
-    expect(response.headers.get('www-authenticate')).toBeNull();
+    expect(response.headers.get('www-authenticate')).toBe('Bearer');
     expect(response.headers.get('content-disposition')).toBeNull();
     expect(response.headers.get('etag')).toBeNull();
     expect(response.headers.get('last-modified')).toBeNull();
@@ -473,7 +474,23 @@ describe('API Problem Details contract', (): void => {
     expect(response.headers.get('retry-after')).toBeNull();
     expect(response.headers.get('x-internal-diagnostic')).toBeNull();
     expect(runningApi.logs.serialized()).not.toContain(RESPONSE_SECRET);
-    expect(runningApi.logs.records()).toHaveLength(2);
+    expect(runningApi.logs.records()).toHaveLength(1);
+  });
+
+  it('adds the bearer challenge when an unauthorized exception did not set one', async (): Promise<void> => {
+    const response = await fetch(
+      `${runningApi.baseUrl}/api/v1/problem-probe/unauthorized-without-challenge`,
+    );
+    const result = await expectProblem(response, {
+      status: 401,
+      title: 'Unauthorized',
+      detail: 'Authentication is required.',
+    });
+    await allowResponseLoggingToComplete();
+
+    expect(response.headers.get('www-authenticate')).toBe('Bearer');
+    expect(result.rawBody).not.toContain(RESPONSE_SECRET);
+    expect(runningApi.logs.records()).toHaveLength(1);
   });
 
   it('parses valid JSON after the early observability middleware', async (): Promise<void> => {

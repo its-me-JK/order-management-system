@@ -19,6 +19,7 @@ const apiRuntimeEnvironmentSchema = z.object({
     .transform((value) => value ?? DEFAULT_HTTP_PORT),
   DEPLOYMENT_ENVIRONMENT: deploymentEnvironmentSchema.optional(),
   LOG_LEVEL: logLevelSchema.optional(),
+  WEB_ORIGIN: z.string().optional(),
 });
 
 export type RuntimeEnvironment = 'development' | 'test' | 'production';
@@ -26,6 +27,7 @@ export type DeploymentEnvironment = z.infer<typeof deploymentEnvironmentSchema>;
 export type LogLevel = z.infer<typeof logLevelSchema>;
 
 export interface ApiRuntimeConfiguration {
+  readonly corsOrigin: string | null;
   readonly environment: RuntimeEnvironment;
   readonly deploymentEnvironment: DeploymentEnvironment;
   readonly http: Readonly<{
@@ -34,6 +36,38 @@ export interface ApiRuntimeConfiguration {
   readonly logging: Readonly<{
     level: LogLevel;
   }>;
+}
+
+function parseWebOrigin(
+  value: string | undefined,
+  deploymentEnvironment: DeploymentEnvironment,
+): string | null {
+  if (value === undefined || value === 'same-origin') {
+    return deploymentEnvironment === 'local' ? 'http://localhost:3001' : null;
+  }
+
+  try {
+    const url = new URL(value);
+    const isLocalHttp =
+      deploymentEnvironment === 'local' &&
+      url.protocol === 'http:' &&
+      ['localhost', '127.0.0.1'].includes(url.hostname);
+    const isDeployedHttps = deploymentEnvironment !== 'local' && url.protocol === 'https:';
+
+    if (
+      value !== url.origin ||
+      url.username !== '' ||
+      url.password !== '' ||
+      url.pathname !== '/' ||
+      (!isLocalHttp && !isDeployedHttps)
+    ) {
+      throw new Error('invalid origin');
+    }
+
+    return url.origin;
+  } catch {
+    throw new InvalidConfigurationError(['WEB_ORIGIN']);
+  }
 }
 
 export class InvalidConfigurationError extends Error {
@@ -82,6 +116,7 @@ export function parseApiRuntimeConfiguration(
         : 'debug');
 
   return Object.freeze({
+    corsOrigin: parseWebOrigin(result.data.WEB_ORIGIN, deploymentEnvironment),
     environment: result.data.NODE_ENV,
     deploymentEnvironment,
     http: Object.freeze({

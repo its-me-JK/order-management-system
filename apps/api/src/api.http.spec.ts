@@ -14,7 +14,8 @@ import type { DatabaseConnection } from '@oms/database';
 
 import { configureApiApplication, createApiExpressAdapter } from './api.application';
 import { ApiModule } from './api.module';
-import { createDatabaseRuntimeFixture } from './platform/database/database-runtime.fixture';
+import { createDatabaseRuntimeFixture } from '../test-support/database-runtime.fixture';
+import { createRedisRuntimeFixture } from '../test-support/redis-runtime.fixture';
 
 const LIVE_RESPONSE = {
   status: 'ok',
@@ -27,21 +28,26 @@ const READY_RESPONSE = {
   status: 'ok',
   info: {
     database: { status: 'up' },
+    redis: { status: 'up' },
   },
   error: {},
   details: {
     database: { status: 'up' },
+    redis: { status: 'up' },
   },
 } as const;
 
 const UNAVAILABLE_RESPONSE = {
   status: 'error',
-  info: {},
+  info: {
+    redis: { status: 'up' },
+  },
   error: {
     database: { status: 'down' },
   },
   details: {
     database: { status: 'down' },
+    redis: { status: 'up' },
   },
 } as const;
 
@@ -60,6 +66,7 @@ class RoutingProbeController {
 interface RunningApi {
   readonly application: INestApplication;
   readonly baseUrl: string;
+  readonly redisProbe: jest.MockedFunction<() => Promise<void>>;
 }
 
 interface HttpResult {
@@ -93,11 +100,14 @@ async function startApi(
   database: DatabaseConnection,
   healthCheckService?: HealthCheckServiceOverride,
   overwriteIdentityHeaders = false,
+  redisProbeImplementation: () => Promise<void> = (): Promise<void> => Promise.resolve(),
 ): Promise<RunningApi> {
+  const redisProbe = jest.fn(redisProbeImplementation);
   let moduleBuilder: TestingModuleBuilder = Test.createTestingModule({
     imports: [
       ApiModule.register({
         createDatabaseRuntime: () => createDatabaseRuntimeFixture(database),
+        createRedisRuntime: () => createRedisRuntimeFixture({ probe: redisProbe }),
         observability: {
           deploymentEnvironment: 'test',
           level: 'silent',
@@ -137,6 +147,7 @@ async function startApi(
   return {
     application,
     baseUrl: await application.getUrl(),
+    redisProbe,
   };
 }
 
@@ -164,12 +175,13 @@ describe('API operational health', (): void => {
       expect(result.response.headers.get('x-powered-by')).toBeNull();
       expect(result.body).toEqual(LIVE_RESPONSE);
       expect(database.probe).not.toHaveBeenCalled();
+      expect(runningApi.redisProbe).not.toHaveBeenCalled();
     } finally {
       await runningApi.application.close();
     }
   });
 
-  it('reports readiness after a successful database probe', async (): Promise<void> => {
+  it('reports readiness after successful MySQL and Redis probes', async (): Promise<void> => {
     const database = createFakeDatabase((): Promise<void> => Promise.resolve());
     const runningApi = await startApi(database.connection);
 
@@ -180,6 +192,32 @@ describe('API operational health', (): void => {
       expect(result.response.headers.get('cache-control')).toBe(EXPECTED_CACHE_CONTROL);
       expect(result.body).toEqual(READY_RESPONSE);
       expect(database.probe).toHaveBeenCalledTimes(1);
+      expect(runningApi.redisProbe).toHaveBeenCalledTimes(1);
+    } finally {
+      await runningApi.application.close();
+    }
+  });
+
+  it('reports a sanitized readiness failure when Redis is unavailable', async (): Promise<void> => {
+    const database = createFakeDatabase((): Promise<void> => Promise.resolve());
+    const runningApi = await startApi(database.connection, undefined, false, (): Promise<void> =>
+      Promise.reject(new Error('redis://private-host:6379')),
+    );
+
+    try {
+      const result = await getJson(runningApi.baseUrl, '/health/ready');
+
+      expect(result.response.status).toBe(503);
+      expect(result.body).toEqual({
+        status: 'error',
+        info: { database: { status: 'up' } },
+        error: { redis: { status: 'down' } },
+        details: {
+          database: { status: 'up' },
+          redis: { status: 'down' },
+        },
+      });
+      expect(result.rawBody).not.toContain('private-host');
     } finally {
       await runningApi.application.close();
     }
@@ -258,9 +296,9 @@ describe('API operational health', (): void => {
     } as const;
     const readyShutdown = {
       status: 'shutting_down',
-      info: { database: { status: 'up' } },
+      info: { database: { status: 'up' }, redis: { status: 'up' } },
       error: {},
-      details: { database: { status: 'up' } },
+      details: { database: { status: 'up' }, redis: { status: 'up' } },
     } as const;
     const healthCheckService: HealthCheckServiceOverride = {
       check: (healthIndicators): Promise<never> =>

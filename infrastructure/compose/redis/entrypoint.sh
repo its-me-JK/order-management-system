@@ -89,7 +89,7 @@ fi
 
 {
   printf '%s\n' 'user default off'
-  printf 'user oms_app on #%s ~oms:* +ping +eval +evalsha +time +get +set +pttl +del\n' \
+  printf 'user oms_app on #%s ~oms:* +ping +eval +get +set +del +incr +expire +quit\n' \
     "$password_sha256"
 } > "$acl_path"
 

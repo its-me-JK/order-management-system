@@ -1,13 +1,39 @@
-import 'reflect-metadata';
-
-import { NestFactory } from '@nestjs/core';
-
-import { WorkerModule } from './worker.module';
+import {
+  findWorkerBaseDirectory,
+  loadWorkerEnvironment,
+  parseWorkerConfiguration,
+} from './worker.configuration';
+import { createWorkerRuntime, type WorkerRuntime } from './worker.runtime';
 
 async function bootstrap(): Promise<void> {
-  const application = await NestFactory.createApplicationContext(WorkerModule);
+  const baseDirectory = findWorkerBaseDirectory(process.cwd());
 
-  application.enableShutdownHooks(['SIGINT', 'SIGTERM']);
+  loadWorkerEnvironment(baseDirectory);
+
+  const configuration = parseWorkerConfiguration(process.env, baseDirectory);
+  const runtime = await createWorkerRuntime(configuration);
+
+  await runtime.start();
+  installShutdown(runtime);
 }
 
-void bootstrap();
+function installShutdown(runtime: WorkerRuntime): void {
+  let shutdown: Promise<void> | undefined;
+
+  const stop = (): void => {
+    shutdown ??= runtime.close();
+    void shutdown.catch((): void => {
+      process.exitCode = 1;
+    });
+  };
+
+  process.once('SIGINT', stop);
+  process.once('SIGTERM', stop);
+}
+
+void bootstrap().catch((): void => {
+  process.stderr.write(
+    `${JSON.stringify({ event: 'worker.bootstrap_failed', level: 'error', service: 'oms-worker' })}\n`,
+  );
+  process.exitCode = 1;
+});

@@ -3,6 +3,7 @@ import { InvalidConfigurationError, parseApiRuntimeConfiguration } from '../src'
 describe('parseApiRuntimeConfiguration', (): void => {
   it('applies safe local defaults when optional values are absent', (): void => {
     expect(parseApiRuntimeConfiguration({})).toEqual({
+      corsOrigin: 'http://localhost:3001',
       deploymentEnvironment: 'local',
       environment: 'development',
       http: {
@@ -23,6 +24,7 @@ describe('parseApiRuntimeConfiguration', (): void => {
         PORT: '8080',
       }),
     ).toEqual({
+      corsOrigin: null,
       deploymentEnvironment: 'showcase',
       environment: 'production',
       http: {
@@ -36,6 +38,7 @@ describe('parseApiRuntimeConfiguration', (): void => {
 
   it('uses quiet test logging without mislabelling the deployment', (): void => {
     expect(parseApiRuntimeConfiguration({ NODE_ENV: 'test' })).toEqual({
+      corsOrigin: null,
       deploymentEnvironment: 'test',
       environment: 'test',
       http: {
@@ -152,6 +155,7 @@ describe('parseApiRuntimeConfiguration', (): void => {
     const snapshot = { ...environment };
 
     expect(parseApiRuntimeConfiguration(environment)).toEqual({
+      corsOrigin: null,
       deploymentEnvironment: 'test',
       environment: 'test',
       http: {

@@ -6,5 +6,12 @@
     "rootDir": "src",
     "types": ["node"]
   },
-  "exclude": ["dist", "node_modules", "src/**/*.fixture.ts", "src/**/*.spec.ts", "test"]
+  "exclude": [
+    "dist",
+    "node_modules",
+    "src/**/*.fixture.ts",
+    "src/**/*.spec.ts",
+    "test",
+    "test-support"
+  ]
 }

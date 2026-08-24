@@ -1,5 +1,5 @@
 export const SUPPORTED_PROBLEM_STATUSES = [
-  400, 403, 404, 408, 409, 413, 415, 422, 429, 500, 502, 503, 504,
+  400, 401, 403, 404, 408, 409, 413, 415, 422, 429, 500, 502, 503, 504,
 ] as const;
 
 export type SupportedProblemStatus = (typeof SUPPORTED_PROBLEM_STATUSES)[number];
@@ -16,6 +16,11 @@ const PROBLEM_DESCRIPTORS: Readonly<Record<SupportedProblemStatus, ProblemDescri
       status: 400,
       title: 'Bad Request',
       detail: 'The request is invalid.',
+    }),
+    401: Object.freeze({
+      status: 401,
+      title: 'Unauthorized',
+      detail: 'Authentication is required.',
     }),
     403: Object.freeze({
       status: 403,

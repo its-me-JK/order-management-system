@@ -18,16 +18,6 @@ export {
   type ResolvedDatabaseTlsConfiguration,
 } from './database-runtime.configuration';
 export {
-  parseIdentityCredentialAbuseConfiguration,
-  resolveIdentityCredentialAbuseConfiguration,
-  type IdentityCredentialAbuseBucketPolicy,
-  type IdentityCredentialAbuseConfiguration,
-  type IdentityCredentialAbuseHmacSecretSource,
-  type IdentityCredentialAbuseRefreshPolicy,
-  type IdentityCredentialAbuseSecretResolutionOptions,
-  type ResolvedIdentityCredentialAbuseConfiguration,
-} from './identity-credential-abuse.configuration';
-export {
   parseRedisRuntimeConfiguration,
   resolveRedisRuntimeConfiguration,
   type RedisCertificateAuthoritySource,

@@ -10,7 +10,6 @@ import {
 import type { NestExpressApplication } from '@nestjs/platform-express';
 
 import { ApiModule } from './api.module';
-import { CATALOG_PUBLIC_SKU_OPENAPI_SCHEMAS } from './features/catalog/delivery/http/catalog-public-sku.openapi.schemas';
 import { OPENAPI_HEADERS, OPENAPI_SCHEMAS } from './platform/openapi/openapi.schemas';
 
 export const API_DOCUMENTATION_PATH = '/docs';
@@ -95,14 +94,36 @@ export function createApiDocument(application: NestExpressApplication): OpenAPIO
     .setOpenAPIVersion('3.0.3')
     .setTitle('Order Management System API')
     .setDescription(
-      'Versioned order-management HTTP contracts and unversioned operational health endpoints.',
+      'Versioned contracts for authentication, catalog, inventory, orders, payments, and notifications.',
     )
     .setVersion('1.0.0')
     .setLicense('MIT', 'https://opensource.org/license/mit')
-    .addTag(
-      'Catalog',
-      'Anonymous public Product and SKU discovery without price or availability claims.',
+    .addBearerAuth(
+      {
+        bearerFormat: 'opaque',
+        description: 'Access token returned by the login, registration, or refresh endpoint.',
+        scheme: 'bearer',
+        type: 'http',
+      },
+      'access-token',
     )
+    .addCookieAuth(
+      'oms_refresh',
+      {
+        description: 'HttpOnly refresh credential set by login or registration.',
+        in: 'cookie',
+        type: 'apiKey',
+      },
+      'refresh-token',
+    )
+    .addTag('Authentication', 'Account registration and session management.')
+    .addTag('Catalog', 'Public Product and SKU discovery.')
+    .addTag('Catalog Administration', 'Administrator-only Product and SKU management.')
+    .addTag('Inventory', 'Availability reads and administrator stock adjustments.')
+    .addTag('Orders', 'Customer and administrator order workflows.')
+    .addTag('Order Administration', 'Administrator-only fulfilment transitions.')
+    .addTag('Payments', 'Payment status and administrator refunds.')
+    .addTag('Notifications', 'Authenticated user notifications.')
     .addTag(
       'Operational Health',
       'Sanitized liveness and readiness contracts for deployment automation.',
@@ -112,7 +133,7 @@ export function createApiDocument(application: NestExpressApplication): OpenAPIO
   configuration.components = {
     ...configuration.components,
     headers: { ...OPENAPI_HEADERS },
-    schemas: { ...OPENAPI_SCHEMAS, ...CATALOG_PUBLIC_SKU_OPENAPI_SCHEMAS },
+    schemas: { ...OPENAPI_SCHEMAS },
   };
 
   const document = SwaggerModule.createDocument(application, configuration, {

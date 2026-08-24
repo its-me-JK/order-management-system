@@ -83,15 +83,14 @@ export function ApiReadinessOperation(): MethodDecorator {
     }),
     ApiResponse({
       status: 503,
-      description: 'MySQL is unavailable or the API is shutting down.',
+      description: 'MySQL or Redis is unavailable, or the API is shutting down.',
       headers: OPERATIONAL_RESPONSE_HEADERS,
       content: {
         [JSON_MEDIA_TYPE]: {
           schema: {
             oneOf: [
               openApiSchemaReference(OPENAPI_SCHEMA_NAMES.readinessUnavailable),
-              openApiSchemaReference(OPENAPI_SCHEMA_NAMES.readinessShuttingDownAvailable),
-              openApiSchemaReference(OPENAPI_SCHEMA_NAMES.readinessShuttingDownUnavailable),
+              openApiSchemaReference(OPENAPI_SCHEMA_NAMES.readinessShuttingDown),
             ],
           },
         },

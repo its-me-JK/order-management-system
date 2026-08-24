@@ -1,3 +1,13 @@
+x-application-environment: &application-environment
+  NODE_ENV: development
+  DATABASE_HOST: mysql
+  DATABASE_PORT: 3306
+  DATABASE_NAME: ${DATABASE_NAME:-oms}
+  DATABASE_USER: ${DATABASE_USER:-oms_app}
+  DATABASE_PASSWORD_FILE: /run/secrets/mysql_app_password
+  DATABASE_TLS_MODE: disabled
+  DATABASE_CONNECTION_LIMIT: 10
+
 services:
   mysql:
     image: mysql:8.4.11@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
@@ -63,23 +73,139 @@ services:
       test:
         - CMD-SHELL
         - >-
-          exec setpriv --reuid redis --regid redis --clear-groups
-          sh -ec 'test "$$(id -u):$$(id -g)" = "999:1000";
-          redis-cli --raw ping 2>&1
-          | grep -qx "NOAUTH Authentication required."'
+          REDISCLI_AUTH="$$(cat /run/secrets/redis_password)"
+          redis-cli --user oms_app --no-auth-warning --raw ping | grep -qx PONG
       interval: 5s
       timeout: 3s
       retries: 20
       start_period: 5s
     stop_grace_period: 10s
 
+  rabbitmq:
+    image: rabbitmq:4.1.8-management-alpine@sha256:5ae1b436f98ed304168a55a90280dadfb0f1bfe5736d6e2e970e69f7f8fdf5e4
+    entrypoint:
+      - /bin/sh
+      - /usr/local/bin/oms-rabbitmq-entrypoint.sh
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-oms_app}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-oms}
+    ports:
+      - 127.0.0.1:${RABBITMQ_PORT:-5672}:5672
+      - 127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - ./infrastructure/compose/rabbitmq/entrypoint.sh:/usr/local/bin/oms-rabbitmq-entrypoint.sh:ro
+    secrets:
+      - source: rabbitmq_password
+        target: rabbitmq_password
+    healthcheck:
+      test: [CMD, rabbitmq-diagnostics, -q, check_running]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+    stop_grace_period: 30s
+
+  migrate:
+    image: oms-application:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: [node, infrastructure/container/run-migrations.mjs]
+    environment:
+      NODE_ENV: development
+      DATABASE_HOST: mysql
+      DATABASE_PORT: 3306
+      DATABASE_NAME: ${DATABASE_NAME:-oms}
+      DATABASE_MIGRATION_PASSWORD_FILE: /run/secrets/mysql_root_password
+      DATABASE_MIGRATION_USER: root
+    secrets:
+      - source: mysql_root_password
+        target: mysql_root_password
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: no
+
+  api:
+    image: oms-application:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: [node, apps/api/dist/main.js]
+    environment:
+      <<: *application-environment
+      DEPLOYMENT_ENVIRONMENT: local
+      DEMO_SEED: ${DEMO_SEED:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      PORT: 3000
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_USERNAME: oms_app
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      REDIS_TLS_MODE: disabled
+      WEB_ORIGIN: ${WEB_ORIGIN:-same-origin}
+      WEB_STATIC_DIR: /app/apps/web/out
+    secrets:
+      - source: mysql_app_password
+        target: mysql_app_password
+      - source: redis_password
+        target: redis_password
+    ports:
+      - 127.0.0.1:${API_PORT:-3000}:3000
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    stop_grace_period: 30s
+
+  worker:
+    image: oms-application:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: [node, apps/worker/dist/main.js]
+    environment:
+      <<: *application-environment
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_USER:-oms_app}
+      RABBITMQ_VHOST: ${RABBITMQ_VHOST:-oms}
+      RABBITMQ_PASSWORD_FILE: /run/secrets/rabbitmq_password
+    secrets:
+      - source: mysql_app_password
+        target: mysql_app_password
+      - source: rabbitmq_password
+        target: rabbitmq_password
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
+
 secrets:
   mysql_app_password:
     file: ${COMPOSE_MYSQL_APP_PASSWORD_FILE:-./.local/secrets/mysql-app-password}
   mysql_root_password:
     file: ${MYSQL_ROOT_PASSWORD_FILE:-./.local/secrets/mysql-root-password}
+  rabbitmq_password:
+    file: ${COMPOSE_RABBITMQ_PASSWORD_FILE:-./.local/secrets/rabbitmq-password}
   redis_password:
     file: ${COMPOSE_REDIS_PASSWORD_FILE:-./.local/secrets/redis-app-password}
 
 volumes:
   mysql_data:
+  rabbitmq_data:

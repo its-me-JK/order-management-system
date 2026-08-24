@@ -11,16 +11,16 @@ import {
 
 export const OPENAPI_SCHEMA_NAMES = Object.freeze({
   badRequestProblem: 'BadRequestProblem',
-  healthDatabaseDownComponents: 'OperationalHealthDatabaseDownComponents',
-  healthDatabaseUpComponents: 'OperationalHealthDatabaseUpComponents',
+  healthComponents: 'OperationalHealthComponents',
+  healthDependencies: 'OperationalHealthDependencies',
+  healthDependenciesUp: 'OperationalHealthDependenciesUp',
   healthEmptyComponents: 'OperationalHealthEmptyComponents',
   internalServerErrorProblem: 'InternalServerErrorProblem',
   livenessOk: 'OperationalHealthLivenessOk',
   livenessShuttingDown: 'OperationalHealthLivenessShuttingDown',
   problemDetails: 'ProblemDetails',
   readinessOk: 'OperationalHealthReadinessOk',
-  readinessShuttingDownAvailable: 'OperationalHealthReadinessShuttingDownAvailable',
-  readinessShuttingDownUnavailable: 'OperationalHealthReadinessShuttingDownUnavailable',
+  readinessShuttingDown: 'OperationalHealthReadinessShuttingDown',
   readinessUnavailable: 'OperationalHealthReadinessUnavailable',
   notFoundProblem: 'NotFoundProblem',
   serviceUnavailableProblem: 'ServiceUnavailableProblem',
@@ -50,25 +50,26 @@ export function openApiHeaderReference(name: OpenApiHeaderName): ReferenceObject
   return { $ref: `#/components/headers/${name}` };
 }
 
-function componentStatusSchema(status: 'down' | 'up'): SchemaObject {
+function componentStatusSchema(status?: 'down' | 'up'): SchemaObject {
   return {
     type: 'object',
     additionalProperties: false,
     properties: {
-      status: { type: 'string', enum: [status] },
+      status: { type: 'string', enum: status === undefined ? ['down', 'up'] : [status] },
     },
     required: ['status'],
   };
 }
 
-function databaseComponentsSchema(status: 'down' | 'up'): SchemaObject {
+function dependencyComponentsSchema(required: boolean, status?: 'down' | 'up'): SchemaObject {
   return {
     type: 'object',
     additionalProperties: false,
     properties: {
       database: componentStatusSchema(status),
+      redis: componentStatusSchema(status),
     },
-    required: ['database'],
+    ...(required ? { required: ['database', 'redis'] } : {}),
   };
 }
 
@@ -118,12 +119,9 @@ function statusProblemSchema(descriptor: ProblemDescriptor): SchemaObject {
 }
 
 const emptyComponents = openApiSchemaReference(OPENAPI_SCHEMA_NAMES.healthEmptyComponents);
-const databaseUpComponents = openApiSchemaReference(
-  OPENAPI_SCHEMA_NAMES.healthDatabaseUpComponents,
-);
-const databaseDownComponents = openApiSchemaReference(
-  OPENAPI_SCHEMA_NAMES.healthDatabaseDownComponents,
-);
+const dependenciesUp = openApiSchemaReference(OPENAPI_SCHEMA_NAMES.healthDependenciesUp);
+const dependencyComponents = openApiSchemaReference(OPENAPI_SCHEMA_NAMES.healthComponents);
+const dependencies = openApiSchemaReference(OPENAPI_SCHEMA_NAMES.healthDependencies);
 const internalServerError = internalServerErrorDescriptor();
 const badRequest = requiredProblemDescriptor(400);
 const notFound = requiredProblemDescriptor(404);
@@ -157,8 +155,9 @@ export const OPENAPI_SCHEMAS: Readonly<Record<string, SchemaObject>> = Object.fr
     additionalProperties: false,
     properties: {},
   },
-  [OPENAPI_SCHEMA_NAMES.healthDatabaseUpComponents]: databaseComponentsSchema('up'),
-  [OPENAPI_SCHEMA_NAMES.healthDatabaseDownComponents]: databaseComponentsSchema('down'),
+  [OPENAPI_SCHEMA_NAMES.healthComponents]: dependencyComponentsSchema(false),
+  [OPENAPI_SCHEMA_NAMES.healthDependencies]: dependencyComponentsSchema(true),
+  [OPENAPI_SCHEMA_NAMES.healthDependenciesUp]: dependencyComponentsSchema(true, 'up'),
   [OPENAPI_SCHEMA_NAMES.livenessOk]: healthEnvelopeSchema(
     'ok',
     emptyComponents,
@@ -173,27 +172,21 @@ export const OPENAPI_SCHEMAS: Readonly<Record<string, SchemaObject>> = Object.fr
   ),
   [OPENAPI_SCHEMA_NAMES.readinessOk]: healthEnvelopeSchema(
     'ok',
-    databaseUpComponents,
+    dependenciesUp,
     emptyComponents,
-    databaseUpComponents,
+    dependenciesUp,
   ),
   [OPENAPI_SCHEMA_NAMES.readinessUnavailable]: healthEnvelopeSchema(
     'error',
-    emptyComponents,
-    databaseDownComponents,
-    databaseDownComponents,
+    dependencyComponents,
+    dependencyComponents,
+    dependencies,
   ),
-  [OPENAPI_SCHEMA_NAMES.readinessShuttingDownAvailable]: healthEnvelopeSchema(
+  [OPENAPI_SCHEMA_NAMES.readinessShuttingDown]: healthEnvelopeSchema(
     'shutting_down',
-    databaseUpComponents,
-    emptyComponents,
-    databaseUpComponents,
-  ),
-  [OPENAPI_SCHEMA_NAMES.readinessShuttingDownUnavailable]: healthEnvelopeSchema(
-    'shutting_down',
-    emptyComponents,
-    databaseDownComponents,
-    databaseDownComponents,
+    dependencyComponents,
+    dependencyComponents,
+    dependencies,
   ),
 });
 

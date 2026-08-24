@@ -17,7 +17,8 @@ import { Logger, PinoLogger } from 'nestjs-pino';
 
 import { configureApiApplication, createApiExpressAdapter } from './api.application';
 import { ApiModule } from './api.module';
-import { createDatabaseRuntimeFixture } from './platform/database/database-runtime.fixture';
+import { createDatabaseRuntimeFixture } from '../test-support/database-runtime.fixture';
+import { createRedisRuntimeFixture } from '../test-support/redis-runtime.fixture';
 
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const INBOUND_REQUEST_ID = '550e8400-e29b-41d4-a716-446655440000';
@@ -198,6 +199,7 @@ async function startApi(
     imports: [
       ApiModule.register({
         createDatabaseRuntime: () => createDatabaseRuntimeFixture(database),
+        createRedisRuntime: createRedisRuntimeFixture,
         observability: {
           deploymentEnvironment: 'test',
           level: 'info',
@@ -459,9 +461,9 @@ describe('API HTTP observability contract', (): void => {
               ? { status: 'shutting_down', info: {}, error: {}, details: {} }
               : {
                   status: 'shutting_down',
-                  info: { database: { status: 'up' } },
+                  info: { database: { status: 'up' }, redis: { status: 'up' } },
                   error: {},
-                  details: { database: { status: 'up' } },
+                  details: { database: { status: 'up' }, redis: { status: 'up' } },
                 },
           ),
         ),

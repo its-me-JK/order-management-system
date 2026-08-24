@@ -18,6 +18,7 @@ import {
 import { configureApiApplication, createApiExpressAdapter } from '../src/api.application';
 import { ApiModule } from '../src/api.module';
 import { parseBootstrapConfiguration } from '../src/bootstrap.configuration';
+import { createRedisRuntimeFixture } from '../test-support/redis-runtime.fixture';
 
 const HTTP_SAFETY_TIMEOUT_MILLISECONDS = 5_000;
 const STALLED_PROBE_TIMEOUT_MILLISECONDS = 100;
@@ -47,7 +48,14 @@ if (existsSync(localEnvironmentFile)) {
 }
 
 function configuredDatabaseOptions(): DatabaseConnectionOptions {
-  return parseBootstrapConfiguration(process.env, repositoryRoot).database;
+  return parseBootstrapConfiguration(
+    {
+      ...process.env,
+      REDIS_PASSWORD: 'integration-fixture-only',
+      REDIS_PASSWORD_FILE: undefined,
+    },
+    repositoryRoot,
+  ).database;
 }
 
 interface RunningApi {
@@ -59,6 +67,7 @@ async function startApi(runtime: DatabaseRuntime): Promise<RunningApi> {
   const application = await NestFactory.create<NestExpressApplication>(
     ApiModule.register({
       createDatabaseRuntime: (): DatabaseRuntime => runtime,
+      createRedisRuntime: createRedisRuntimeFixture,
       observability: {
         deploymentEnvironment: 'test',
         level: 'silent',
@@ -151,9 +160,9 @@ void test('API readiness executes a real bounded query through the database faca
     assert.equal(readiness.response.status, 200);
     assert.deepEqual(readiness.body, {
       status: 'ok',
-      info: { database: { status: 'up' } },
+      info: { database: { status: 'up' }, redis: { status: 'up' } },
       error: {},
-      details: { database: { status: 'up' } },
+      details: { database: { status: 'up' }, redis: { status: 'up' } },
     });
   } finally {
     if (runningApi === undefined) {
@@ -167,6 +176,7 @@ void test('API readiness executes a real bounded query through the database faca
 });
 
 void test('a stalled MySQL handshake becomes a sanitized bounded readiness failure', async () => {
+  const databaseOptions = configuredDatabaseOptions();
   const sockets = new Set<Socket>();
   const server = createServer((socket): void => {
     sockets.add(socket);
@@ -176,7 +186,7 @@ void test('a stalled MySQL handshake becomes a sanitized bounded readiness failu
   });
   const port = await listen(server);
   const runtime = createDatabaseRuntime({
-    ...configuredDatabaseOptions(),
+    ...databaseOptions,
     acquireTimeoutMilliseconds: 1_000,
     connectTimeoutMilliseconds: 500,
     host: '127.0.0.1',
@@ -195,9 +205,9 @@ void test('a stalled MySQL handshake becomes a sanitized bounded readiness failu
     assert.equal(readiness.response.status, 503);
     assert.deepEqual(readiness.body, {
       status: 'error',
-      info: {},
+      info: { redis: { status: 'up' } },
       error: { database: { status: 'down' } },
-      details: { database: { status: 'down' } },
+      details: { database: { status: 'down' }, redis: { status: 'up' } },
     });
     assert.ok(
       durationMilliseconds < STALLED_PROBE_MAXIMUM_DURATION_MILLISECONDS,

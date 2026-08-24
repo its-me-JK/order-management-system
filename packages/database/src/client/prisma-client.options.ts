@@ -1,5 +1,4 @@
 import type { DatabaseConnectionOptions } from '../database.contract';
-import { databaseConnectionBudget } from './database-connection-budget';
 
 export interface PrismaMariaDbPoolOptions {
   readonly acquireTimeout: number;
@@ -23,12 +22,10 @@ export interface PrismaMariaDbPoolOptions {
 export function toPrismaMariaDbPoolOptions(
   options: DatabaseConnectionOptions,
 ): PrismaMariaDbPoolOptions {
-  const budget = databaseConnectionBudget(options);
-
   return {
     acquireTimeout: options.acquireTimeoutMilliseconds,
     connectTimeout: options.connectTimeoutMilliseconds,
-    connectionLimit: budget.prismaConnectionLimit,
+    connectionLimit: options.connectionLimit,
     database: options.database,
     host: options.host,
     idleTimeout: options.idleTimeoutSeconds,
