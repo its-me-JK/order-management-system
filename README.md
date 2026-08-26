@@ -1,8 +1,38 @@
 # Order Management System
 
-A portfolio-grade commerce backend that demonstrates the parts of order management that are harder than CRUD: atomic stock reservation, idempotent order creation, explicit state transitions, asynchronous payment processing, transactional event publication, and duplicate-safe consumers.
+A production-focused, full-stack Order Management System built to explore real-world backend engineering challenges beyond CRUD.
 
-The project is a pragmatic modular monolith. Business features live together in one NestJS API and one MySQL schema while asynchronous work runs in a separate worker process. The Next.js frontend is maintained in the same pnpm workspace and is exported as static assets for same-origin production delivery.
+### Engineering Highlights
+
+- 🔒 Idempotent order creation and atomic inventory reservation
+- 📨 Event-driven workflows with RabbitMQ
+- 📤 Transactional Outbox pattern for reliable event publication
+- ♻️ At-least-once delivery with duplicate-safe consumers
+- ⚡ Redis-backed authentication throttling
+- 🔐 Access/refresh credential rotation, CSRF protection and RBAC
+- 💳 Asynchronous payment processing
+- 📦 Inventory ledger with explicit order state transitions
+- 🐳 Fully containerized local environment with Docker Compose
+- 🧪 Automated tests, CI quality gates and end-to-end smoke testing
+
+### Tech Stack
+
+**Backend:** NestJS · Node.js · TypeScript · Prisma  
+**Frontend:** Next.js  
+**Database:** MySQL  
+**Caching:** Redis  
+**Messaging:** RabbitMQ  
+**Infrastructure:** Docker · Docker Compose  
+**API & Quality:** Swagger/OpenAPI · Jest · GitHub Actions
+
+---
+
+The system follows a **modular monolith** architecture: business features run within a NestJS API backed by MySQL, while asynchronous payment, notification and outbox processing runs through a separate worker process.
+
+MySQL remains the source of truth, Redis holds disposable runtime state, and RabbitMQ provides at-least-once event delivery.
+
+> **Why this project?**  
+> The goal is to demonstrate the engineering problems that appear after basic CRUD is solved: concurrency, idempotency, transactional consistency, asynchronous processing, duplicate delivery, authentication security and failure handling.
 
 ## Status
 
